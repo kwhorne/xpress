@@ -76,7 +76,11 @@ fn parse_step(s: &str) -> Result<Step, String> {
         None => (s.trim(), ""),
     };
     let args = parse_args(args_str)?;
-    let get = |k: &str| args.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
+    let get = |k: &str| {
+        args.iter()
+            .find(|(key, _)| key == k)
+            .map(|(_, v)| v.clone())
+    };
 
     match name {
         "optimise" | "optimize" => Ok(Step::Optimise),
@@ -88,8 +92,12 @@ fn parse_step(s: &str) -> Result<Step, String> {
             Ok(Step::Downscale { factor })
         }
         "crop" => {
-            let width = get("width").map(|v| v.parse::<u32>().map_err(|_| "bad width")).transpose()?;
-            let height = get("height").map(|v| v.parse::<u32>().map_err(|_| "bad height")).transpose()?;
+            let width = get("width")
+                .map(|v| v.parse::<u32>().map_err(|_| "bad width"))
+                .transpose()?;
+            let height = get("height")
+                .map(|v| v.parse::<u32>().map_err(|_| "bad height"))
+                .transpose()?;
             let long_edge = get("longEdge")
                 .or_else(|| get("long_edge"))
                 .map(|v| v.parse::<u32>().map_err(|_| "bad longEdge"))
@@ -102,7 +110,13 @@ fn parse_step(s: &str) -> Result<Step, String> {
             if width.is_none() && height.is_none() && long_edge.is_none() && aspect.is_none() {
                 return Err("crop requires width:, height:, longEdge: or ratio:".into());
             }
-            Ok(Step::Crop(CropArgs { width, height, long_edge, aspect, smart }))
+            Ok(Step::Crop(CropArgs {
+                width,
+                height,
+                long_edge,
+                aspect,
+                smart,
+            }))
         }
         "convert" => {
             let to = get("to").ok_or("convert requires to:")?;
@@ -111,15 +125,24 @@ fn parse_step(s: &str) -> Result<Step, String> {
         "stripExif" | "stripexif" | "strip_exif" => Ok(Step::StripExif),
         "removeAudio" | "removeaudio" | "remove_audio" => Ok(Step::RemoveAudio),
         "changeSpeed" | "change_speed" => {
-            let factor = get("factor").map(|v| parse_factor(&v)).transpose()?.ok_or("changeSpeed requires factor:")?;
+            let factor = get("factor")
+                .map(|v| parse_factor(&v))
+                .transpose()?
+                .ok_or("changeSpeed requires factor:")?;
             Ok(Step::ChangeSpeed { factor })
         }
         "capFps" | "cap_fps" => {
-            let fps = get("fps").ok_or("capFps requires fps:")?.parse::<i32>().map_err(|_| "bad fps")?;
+            let fps = get("fps")
+                .ok_or("capFps requires fps:")?
+                .parse::<i32>()
+                .map_err(|_| "bad fps")?;
             Ok(Step::CapFps { fps })
         }
         "lowerBitrate" | "lower_bitrate" => {
-            let kbps = get("kbps").ok_or("lowerBitrate requires kbps:")?.parse::<i32>().map_err(|_| "bad kbps")?;
+            let kbps = get("kbps")
+                .ok_or("lowerBitrate requires kbps:")?
+                .parse::<i32>()
+                .map_err(|_| "bad kbps")?;
             Ok(Step::LowerBitrate { kbps })
         }
         other => Err(format!("unknown step '{other}'")),
@@ -137,7 +160,9 @@ fn parse_args(s: &str) -> Result<Vec<(String, String)>, String> {
         if part.is_empty() {
             continue;
         }
-        let (k, v) = part.split_once(':').ok_or_else(|| format!("expected 'key: value' in '{part}'"))?;
+        let (k, v) = part
+            .split_once(':')
+            .ok_or_else(|| format!("expected 'key: value' in '{part}'"))?;
         let v = v.trim().trim_matches('"').trim_matches('\'').to_string();
         out.push((k.trim().to_string(), v));
     }
@@ -146,7 +171,10 @@ fn parse_args(s: &str) -> Result<Vec<(String, String)>, String> {
 
 fn parse_factor(v: &str) -> Result<f64, String> {
     if let Some(pct) = v.strip_suffix('%') {
-        let n: f64 = pct.trim().parse().map_err(|_| format!("bad percent '{v}'"))?;
+        let n: f64 = pct
+            .trim()
+            .parse()
+            .map_err(|_| format!("bad percent '{v}'"))?;
         Ok(n / 100.0)
     } else {
         v.parse::<f64>().map_err(|_| format!("bad factor '{v}'"))
@@ -154,7 +182,9 @@ fn parse_factor(v: &str) -> Result<f64, String> {
 }
 
 fn parse_ratio(v: &str) -> Result<(u32, u32), String> {
-    let (a, b) = v.split_once(':').ok_or_else(|| format!("bad ratio '{v}'"))?;
+    let (a, b) = v
+        .split_once(':')
+        .ok_or_else(|| format!("bad ratio '{v}'"))?;
     Ok((
         a.trim().parse().map_err(|_| "bad ratio")?,
         b.trim().parse().map_err(|_| "bad ratio")?,
@@ -196,7 +226,11 @@ pub fn run(
         (out.clone(), None)
     } else if final_ext == src_ext {
         // Same type: replace in place with a backup.
-        let b = if options.backup { Some(backup_file(source)?) } else { None };
+        let b = if options.backup {
+            Some(backup_file(source)?)
+        } else {
+            None
+        };
         (source.to_path_buf(), b)
     } else {
         // Type changed (e.g. convert): write alongside, keep the original.
@@ -238,7 +272,9 @@ fn step_output_ext(step: &Step, current: &Path) -> String {
         {
             "mp4".into()
         }
-        Step::Optimise | Step::Downscale { .. } if classify(current) == Some(MediaKind::Video) => "mp4".into(),
+        Step::Optimise | Step::Downscale { .. } if classify(current) == Some(MediaKind::Video) => {
+            "mp4".into()
+        }
         _ => cur,
     }
 }
@@ -272,7 +308,9 @@ fn apply_step(
             } else if let Some(a) = AudioFormat::from_target(to) {
                 audio::optimise(current, &opts, a, None)?;
             } else {
-                return Err(OptimiseError::Other(format!("convert: unknown format '{to}'")));
+                return Err(OptimiseError::Other(format!(
+                    "convert: unknown format '{to}'"
+                )));
             }
         }
         Step::StripExif => {
@@ -294,14 +332,20 @@ fn apply_step(
         }
     }
     if !target.exists() {
-        return Err(OptimiseError::Other(format!("step produced no output: {step:?}")));
+        return Err(OptimiseError::Other(format!(
+            "step produced no output: {step:?}"
+        )));
     }
     Ok(())
 }
 
 /// Render steps back to canonical DSL (for `pipeline show`).
 pub fn to_dsl(steps: &[Step]) -> String {
-    steps.iter().map(step_to_string).collect::<Vec<_>>().join(" -> ")
+    steps
+        .iter()
+        .map(step_to_string)
+        .collect::<Vec<_>>()
+        .join(" -> ")
 }
 
 fn step_to_string(step: &Step) -> String {
@@ -310,11 +354,21 @@ fn step_to_string(step: &Step) -> String {
         Step::Downscale { factor } => format!("downscale(factor: {factor})"),
         Step::Crop(a) => {
             let mut parts = Vec::new();
-            if let Some(w) = a.width { parts.push(format!("width: {w}")); }
-            if let Some(h) = a.height { parts.push(format!("height: {h}")); }
-            if let Some(l) = a.long_edge { parts.push(format!("longEdge: {l}")); }
-            if let Some((x, y)) = a.aspect { parts.push(format!("ratio: {x}:{y}")); }
-            if a.smart { parts.push("smart: true".into()); }
+            if let Some(w) = a.width {
+                parts.push(format!("width: {w}"));
+            }
+            if let Some(h) = a.height {
+                parts.push(format!("height: {h}"));
+            }
+            if let Some(l) = a.long_edge {
+                parts.push(format!("longEdge: {l}"));
+            }
+            if let Some((x, y)) = a.aspect {
+                parts.push(format!("ratio: {x}:{y}"));
+            }
+            if a.smart {
+                parts.push("smart: true".into());
+            }
             format!("crop({})", parts.join(", "))
         }
         Step::Convert { to } => format!("convert(to: {to})"),
@@ -332,9 +386,16 @@ mod tests {
 
     #[test]
     fn parse_chain() {
-        let steps = parse("crop(width: 1600) -> convert(to: webp) -> downscale(factor: 50%)").unwrap();
+        let steps =
+            parse("crop(width: 1600) -> convert(to: webp) -> downscale(factor: 50%)").unwrap();
         assert_eq!(steps.len(), 3);
-        assert!(matches!(steps[0], Step::Crop(CropArgs { width: Some(1600), .. })));
+        assert!(matches!(
+            steps[0],
+            Step::Crop(CropArgs {
+                width: Some(1600),
+                ..
+            })
+        ));
         assert!(matches!(&steps[1], Step::Convert { to } if to == "webp"));
         assert!(matches!(steps[2], Step::Downscale { factor } if (factor - 0.5).abs() < 1e-9));
     }
@@ -350,7 +411,19 @@ mod tests {
     #[test]
     fn ratio_and_longedge() {
         let steps = parse("crop(ratio: 16:9) -> crop(longEdge: 1920)").unwrap();
-        assert!(matches!(steps[0], Step::Crop(CropArgs { aspect: Some((16, 9)), .. })));
-        assert!(matches!(steps[1], Step::Crop(CropArgs { long_edge: Some(1920), .. })));
+        assert!(matches!(
+            steps[0],
+            Step::Crop(CropArgs {
+                aspect: Some((16, 9)),
+                ..
+            })
+        ));
+        assert!(matches!(
+            steps[1],
+            Step::Crop(CropArgs {
+                long_edge: Some(1920),
+                ..
+            })
+        ));
     }
 }

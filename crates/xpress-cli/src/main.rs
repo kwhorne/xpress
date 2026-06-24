@@ -287,7 +287,12 @@ fn run_bundle() -> Result<()> {
             dir.display()
         );
     } else {
-        println!("{} extracted {n} binar{} to {}", render::CHECK, if n == 1 { "y" } else { "ies" }, dir.display());
+        println!(
+            "{} extracted {n} binar{} to {}",
+            render::CHECK,
+            if n == 1 { "y" } else { "ies" },
+            dir.display()
+        );
     }
     Ok(())
 }
@@ -326,7 +331,10 @@ fn run_downscale(args: DownscaleArgs) -> Result<()> {
             if !single {
                 opts.output = None; // per-file output only makes sense for a single input
             }
-            (f.clone(), xpress_core::scale::downscale_file(f, args.factor, &opts))
+            (
+                f.clone(),
+                xpress_core::scale::downscale_file(f, args.factor, &opts),
+            )
         })
         .collect();
     render::summarise(&results);
@@ -364,7 +372,12 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         }
         let results: Vec<_> = files
             .iter()
-            .map(|f| (f.clone(), xpress_core::audio::optimise(f, &options, format, args.bitrate)))
+            .map(|f| {
+                (
+                    f.clone(),
+                    xpress_core::audio::optimise(f, &options, format, args.bitrate),
+                )
+            })
             .collect();
         render::summarise(&results);
         return Ok(());
@@ -410,7 +423,8 @@ fn run_pipeline(cmd: PipelineCmd) -> Result<()> {
     match cmd {
         PipelineCmd::Add { name, dsl } => {
             // Validate before saving.
-            xpress_core::pipeline::parse(&dsl).map_err(|e| anyhow::anyhow!("invalid pipeline: {e}"))?;
+            xpress_core::pipeline::parse(&dsl)
+                .map_err(|e| anyhow::anyhow!("invalid pipeline: {e}"))?;
             let mut store = Store::load();
             store.pipelines.insert(name.clone(), dsl.clone());
             store.save()?;
@@ -462,13 +476,21 @@ fn run_pipeline(cmd: PipelineCmd) -> Result<()> {
             }
             Ok(())
         }
-        PipelineCmd::Attach { source, pipeline, r#type } => {
+        PipelineCmd::Attach {
+            source,
+            pipeline,
+            r#type,
+        } => {
             // Validate the pipeline (name or DSL) before saving.
             let dsl = {
                 let s = Store::load();
-                s.pipelines.get(&pipeline).cloned().unwrap_or_else(|| pipeline.clone())
+                s.pipelines
+                    .get(&pipeline)
+                    .cloned()
+                    .unwrap_or_else(|| pipeline.clone())
             };
-            xpress_core::pipeline::parse(&dsl).map_err(|e| anyhow::anyhow!("invalid pipeline: {e}"))?;
+            xpress_core::pipeline::parse(&dsl)
+                .map_err(|e| anyhow::anyhow!("invalid pipeline: {e}"))?;
             let mut store = Store::load();
             store.automations.retain(|a| a.source != source);
             store.automations.push(xpress_core::store::Automation {
@@ -477,7 +499,11 @@ fn run_pipeline(cmd: PipelineCmd) -> Result<()> {
                 pipeline: pipeline.clone(),
             });
             store.save()?;
-            println!("{} attached '{pipeline}' to {source} [{}]", render::CHECK, r#type);
+            println!(
+                "{} attached '{pipeline}' to {source} [{}]",
+                render::CHECK,
+                r#type
+            );
             Ok(())
         }
         PipelineCmd::Detach { source } => {
@@ -503,7 +529,8 @@ fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
         .get(&args.pipeline)
         .cloned()
         .unwrap_or_else(|| args.pipeline.clone());
-    let steps = xpress_core::pipeline::parse(&dsl).map_err(|e| anyhow::anyhow!("invalid pipeline: {e}"))?;
+    let steps =
+        xpress_core::pipeline::parse(&dsl).map_err(|e| anyhow::anyhow!("invalid pipeline: {e}"))?;
 
     let files = collect_files(&args.items, args.common.recursive, &[]);
     if files.is_empty() {

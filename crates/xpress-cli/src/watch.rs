@@ -30,7 +30,11 @@ struct FolderTarget {
 }
 
 fn resolve_steps(store: &Store, spec: &str) -> Result<Vec<Step>> {
-    let dsl = store.pipelines.get(spec).cloned().unwrap_or_else(|| spec.to_string());
+    let dsl = store
+        .pipelines
+        .get(spec)
+        .cloned()
+        .unwrap_or_else(|| spec.to_string());
     pipeline::parse(&dsl).map_err(|e| anyhow::anyhow!("invalid pipeline '{spec}': {e}"))
 }
 
@@ -62,7 +66,11 @@ pub fn run(
         let steps = resolve_steps(&store, &spec)?;
         for folder in cli_folders {
             if !folder.is_dir() {
-                eprintln!("{} not a folder, skipping: {}", render::WARN, folder.display());
+                eprintln!(
+                    "{} not a folder, skipping: {}",
+                    render::WARN,
+                    folder.display()
+                );
                 continue;
             }
             let folder = folder.canonicalize().unwrap_or(folder);
@@ -80,7 +88,11 @@ pub fn run(
             }
             let folder = PathBuf::from(shellexpand_home(&a.source));
             if !folder.is_dir() {
-                eprintln!("{} automation folder missing, skipping: {}", render::WARN, folder.display());
+                eprintln!(
+                    "{} automation folder missing, skipping: {}",
+                    render::WARN,
+                    folder.display()
+                );
                 continue;
             }
             let folder = folder.canonicalize().unwrap_or(folder);
@@ -96,8 +108,7 @@ pub fn run(
         }
     }
 
-    let clipboard_enabled = clipboard
-        || store.automations.iter().any(|a| a.source == "clipboard");
+    let clipboard_enabled = clipboard || store.automations.iter().any(|a| a.source == "clipboard");
 
     if targets.is_empty() && !clipboard_enabled {
         bail!("nothing to watch — pass folders, add automations (`xpress pipeline attach`), or use --clipboard");
@@ -146,10 +157,20 @@ fn folder_loop(
     let mut watcher = notify::recommended_watcher(move |res| {
         let _ = tx.send(res);
     })?;
-    let mode = if recursive { RecursiveMode::Recursive } else { RecursiveMode::NonRecursive };
+    let mode = if recursive {
+        RecursiveMode::Recursive
+    } else {
+        RecursiveMode::NonRecursive
+    };
     for t in &targets {
         watcher.watch(&t.folder, mode)?;
-        println!("{} watching {} [{}] -> {}", render::CHECK, t.folder.display(), t.file_type, t.label);
+        println!(
+            "{} watching {} [{}] -> {}",
+            render::CHECK,
+            t.folder.display(),
+            t.file_type,
+            t.label
+        );
     }
     println!("(press Ctrl-C to stop)\n");
 
@@ -193,7 +214,10 @@ fn process_path(
     options: &OptimiseOptions,
     processed: &mut HashMap<PathBuf, SystemTime>,
 ) {
-    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
     // Skip hidden / backup / temp files.
     if name.starts_with('.') || name.ends_with(".orig") || name.ends_with('~') {
         return;
@@ -209,9 +233,10 @@ fn process_path(
     }
 
     // Find the first target whose folder contains this path and type matches.
-    let Some(target) = targets.iter().find(|t| {
-        path.starts_with(&t.folder) && type_matches(&t.file_type, kind)
-    }) else {
+    let Some(target) = targets
+        .iter()
+        .find(|t| path.starts_with(&t.folder) && type_matches(&t.file_type, kind))
+    else {
         return;
     };
 
@@ -237,7 +262,12 @@ fn process_path(
                 }
             }
         }
-        Err(e) => eprintln!("{} {} {} {e}", render::ERROR_X, path.display(), render::ARROW),
+        Err(e) => eprintln!(
+            "{} {} {} {e}",
+            render::ERROR_X,
+            path.display(),
+            render::ARROW
+        ),
     }
 }
 
@@ -314,9 +344,15 @@ fn handle_clipboard_image(
     let res = xpress_core::tools::run(
         xpress_core::tools::Tool::Ffmpeg,
         [
-            "-y", "-f", "rawvideo", "-pix_fmt", "rgba",
-            "-s", &format!("{}x{}", img.width, img.height),
-            "-i", &raw.display().to_string(),
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+            "-s",
+            &format!("{}x{}", img.width, img.height),
+            "-i",
+            &raw.display().to_string(),
             &png.display().to_string(),
         ],
     );
@@ -326,7 +362,10 @@ fn handle_clipboard_image(
     }
 
     // Optimise (or run the configured pipeline) on the saved PNG, in place.
-    let opts = OptimiseOptions { backup: false, ..options.clone() };
+    let opts = OptimiseOptions {
+        backup: false,
+        ..options.clone()
+    };
     let result = if steps.is_empty() {
         xpress_core::image::optimise(&png, &opts)
     } else {
@@ -360,5 +399,8 @@ fn clipboard_loop(
     _options: OptimiseOptions,
     _steps: Vec<Step>,
 ) {
-    eprintln!("{} clipboard support not built in (enable the `clipboard` feature)", render::WARN);
+    eprintln!(
+        "{} clipboard support not built in (enable the `clipboard` feature)",
+        render::WARN
+    );
 }

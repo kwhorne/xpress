@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install Linux GUI/clipboard dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev libxdo-dev \
+            libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev \
+            libxkbcommon-dev libgl1-mesa-dev
+
+      - name: Build release binaries
+        run: |
+          cargo build --release --target ${{ matrix.target }} -p xpress-cli
+          cargo build --release --target ${{ matrix.target }} -p xpress-gui
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          dist="xpress-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "$dist"
+          bin_dir="target/${{ matrix.target }}/release"
+          cp "$bin_dir/xpress" "$dist/"
+          cp "$bin_dir/xpress-gui" "$dist/"
+          cp README.md LICENSE NOTICE.md "$dist/"
+          tar -czf "$dist.tar.gz" "$dist"
+          shasum -a 256 "$dist.tar.gz" > "$dist.tar.gz.sha256"
+
+      - name: Upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            xpress-*.tar.gz
+            xpress-*.tar.gz.sha256
+          generate_release_notes: true

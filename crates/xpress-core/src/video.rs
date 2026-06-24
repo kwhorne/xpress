@@ -4,14 +4,17 @@ use std::path::Path;
 
 use tempfile::TempDir;
 
+use crate::filetype::MediaKind;
 use crate::result::{
     backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
 };
 use crate::tools::{self, Tool};
-use crate::filetype::MediaKind;
 
 /// Optimise a video in place (or to `options.output`), re-encoding to H.264/mp4.
-pub fn optimise(path: &Path, options: &OptimiseOptions) -> Result<OptimisationResult, OptimiseError> {
+pub fn optimise(
+    path: &Path,
+    options: &OptimiseOptions,
+) -> Result<OptimisationResult, OptimiseError> {
     optimise_with_filter(path, options, None)
 }
 
@@ -19,21 +22,39 @@ pub fn optimise(path: &Path, options: &OptimiseOptions) -> Result<OptimisationRe
 pub fn remove_audio(src: &Path, dst: &Path) -> Result<(), OptimiseError> {
     tools::run(
         Tool::Ffmpeg,
-        ["-y", "-i", &src.display().to_string(), "-c", "copy", "-an",
-         "-hide_banner", "-nostats", &dst.display().to_string()],
+        [
+            "-y",
+            "-i",
+            &src.display().to_string(),
+            "-c",
+            "copy",
+            "-an",
+            "-hide_banner",
+            "-nostats",
+            &dst.display().to_string(),
+        ],
     )?;
     Ok(())
 }
 
 /// Change playback speed by `factor` (e.g. 2.0 = twice as fast). Re-encodes via
 /// setpts (video) and atempo (audio). Writes to `dst`.
-pub fn change_speed(src: &Path, dst: &Path, factor: f64, options: &OptimiseOptions) -> Result<(), OptimiseError> {
+pub fn change_speed(
+    src: &Path,
+    dst: &Path,
+    factor: f64,
+    options: &OptimiseOptions,
+) -> Result<(), OptimiseError> {
     let f = factor.clamp(0.25, 8.0);
     let pts = 1.0 / f;
     let mut args: Vec<String> = vec![
-        "-y".into(), "-i".into(), src.display().to_string(),
-        "-filter:v".into(), format!("setpts={pts:.5}*PTS"),
-        "-filter:a".into(), format!("atempo={f:.5}"),
+        "-y".into(),
+        "-i".into(),
+        src.display().to_string(),
+        "-filter:v".into(),
+        format!("setpts={pts:.5}*PTS"),
+        "-filter:a".into(),
+        format!("atempo={f:.5}"),
     ];
     args.extend(options.compression.video_h264_args(tools::is_arm64()));
     args.extend(["-hide_banner", "-nostats"].map(String::from));
@@ -43,10 +64,18 @@ pub fn change_speed(src: &Path, dst: &Path, factor: f64, options: &OptimiseOptio
 }
 
 /// Cap the frame rate at `fps`. Writes to `dst`.
-pub fn cap_fps(src: &Path, dst: &Path, fps: i32, options: &OptimiseOptions) -> Result<(), OptimiseError> {
+pub fn cap_fps(
+    src: &Path,
+    dst: &Path,
+    fps: i32,
+    options: &OptimiseOptions,
+) -> Result<(), OptimiseError> {
     let mut args: Vec<String> = vec![
-        "-y".into(), "-i".into(), src.display().to_string(),
-        "-vf".into(), format!("fps=fps={}", fps.max(1)),
+        "-y".into(),
+        "-i".into(),
+        src.display().to_string(),
+        "-vf".into(),
+        format!("fps=fps={}", fps.max(1)),
     ];
     args.extend(options.compression.video_h264_args(tools::is_arm64()));
     args.extend(["-hide_banner", "-nostats"].map(String::from));
@@ -69,12 +98,9 @@ pub fn optimise_with_filter(
     let cq = options.compression;
 
     let tmp = TempDir::new()?;
-    let temp_out = tmp.path().join(
-        path.with_extension("mp4")
-            .file_name()
-            .unwrap()
-            .to_owned(),
-    );
+    let temp_out = tmp
+        .path()
+        .join(path.with_extension("mp4").file_name().unwrap());
 
     let build = |reencode_audio: bool| -> Vec<String> {
         // ffmpeg -y -i <in> [-vf <filter>] <encoderArgs> [-c:a copy -map ...] -movflags +faststart <out>

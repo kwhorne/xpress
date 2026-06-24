@@ -196,7 +196,14 @@ impl CompressionQuality {
         let s = |v: &str| v.to_string();
         match self.tier {
             CompressionTier::Lossless => {
-                vec![s("-vcodec"), s("h264"), s("-tag:v"), s("avc1"), s("-crf"), s("17")]
+                vec![
+                    s("-vcodec"),
+                    s("h264"),
+                    s("-tag:v"),
+                    s("avc1"),
+                    s("-crf"),
+                    s("17"),
+                ]
             }
             CompressionTier::Fast => {
                 if arm {
@@ -214,22 +221,48 @@ impl CompressionQuality {
                         s("avc1"),
                     ]
                 } else if self.video_uses_auto_crf() {
-                    vec![s("-vcodec"), s("h264"), s("-tag:v"), s("avc1"), s("-preset"), s("veryfast")]
+                    vec![
+                        s("-vcodec"),
+                        s("h264"),
+                        s("-tag:v"),
+                        s("avc1"),
+                        s("-preset"),
+                        s("veryfast"),
+                    ]
                 } else {
                     vec![
-                        s("-vcodec"), s("h264"), s("-tag:v"), s("avc1"),
-                        s("-preset"), s("veryfast"), s("-crf"), self.video_h264_crf().to_string(),
+                        s("-vcodec"),
+                        s("h264"),
+                        s("-tag:v"),
+                        s("avc1"),
+                        s("-preset"),
+                        s("veryfast"),
+                        s("-crf"),
+                        self.video_h264_crf().to_string(),
                     ]
                 }
             }
             // .smaller / .custom / .adaptive -> efficient software libx264
             _ => {
                 if self.video_uses_auto_crf() {
-                    vec![s("-vcodec"), s("h264"), s("-tag:v"), s("avc1"), s("-preset"), s("slower")]
+                    vec![
+                        s("-vcodec"),
+                        s("h264"),
+                        s("-tag:v"),
+                        s("avc1"),
+                        s("-preset"),
+                        s("slower"),
+                    ]
                 } else {
                     vec![
-                        s("-vcodec"), s("h264"), s("-tag:v"), s("avc1"),
-                        s("-preset"), s(self.video_h264_preset()), s("-crf"), self.video_h264_crf().to_string(),
+                        s("-vcodec"),
+                        s("h264"),
+                        s("-tag:v"),
+                        s("avc1"),
+                        s("-preset"),
+                        s(self.video_h264_preset()),
+                        s("-crf"),
+                        self.video_h264_crf().to_string(),
                     ]
                 }
             }
@@ -255,7 +288,10 @@ mod tests {
     fn aggressive_preset_anchors() {
         let cq = CompressionQuality::aggressive();
         assert!(cq.image_is_aggressive());
-        assert_eq!(cq.gifsicle_args(), vec!["-O3", "--lossy=80", "--colors=202"]);
+        assert_eq!(
+            cq.gifsicle_args(),
+            vec!["-O3", "--lossy=80", "--colors=202"]
+        );
     }
 
     #[test]

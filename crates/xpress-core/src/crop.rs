@@ -3,8 +3,8 @@
 //! Images go through `vips`/`vipsthumbnail` (with a centre/attention smart crop);
 //! videos use ffmpeg `scale=`/`crop=` expressions. The result is then optimised.
 
-use std::path::PathBuf;
 use std::path::Path;
+use std::path::PathBuf;
 
 use tempfile::TempDir;
 
@@ -60,8 +60,14 @@ impl CropSpec {
             });
         }
         if let Some((a, b)) = s.split_once('x') {
-            let w: u32 = a.trim().parse().map_err(|_| format!("bad width in '{s}'"))?;
-            let h: u32 = b.trim().parse().map_err(|_| format!("bad height in '{s}'"))?;
+            let w: u32 = a
+                .trim()
+                .parse()
+                .map_err(|_| format!("bad width in '{s}'"))?;
+            let h: u32 = b
+                .trim()
+                .parse()
+                .map_err(|_| format!("bad height in '{s}'"))?;
             return Ok(CropSpec::size(w, h));
         }
         let n: u32 = s.parse().map_err(|_| format!("bad size '{s}'"))?;
@@ -91,7 +97,11 @@ impl CropSpec {
 }
 
 fn even(n: u32) -> u32 {
-    if n % 2 == 0 { n } else { n.saturating_sub(1).max(2) }
+    if n.is_multiple_of(2) {
+        n
+    } else {
+        n.saturating_sub(1).max(2)
+    }
 }
 
 /// How the source maps to the target.
@@ -126,8 +136,12 @@ fn plan_for_image(sw: u32, sh: u32, spec: &CropSpec) -> Plan {
     }
     match (spec.width, spec.height) {
         (Some(w), Some(h)) => Plan::Cover(w, h),
-        (Some(w), None) => Plan::Resize(w, even(((w as f64) * sh as f64 / sw as f64).round() as u32)),
-        (None, Some(h)) => Plan::Resize(even(((h as f64) * sw as f64 / sh as f64).round() as u32), h),
+        (Some(w), None) => {
+            Plan::Resize(w, even(((w as f64) * sh as f64 / sw as f64).round() as u32))
+        }
+        (None, Some(h)) => {
+            Plan::Resize(even(((h as f64) * sw as f64 / sh as f64).round() as u32), h)
+        }
         (None, None) => Plan::Resize(sw, sh),
     }
 }
@@ -155,8 +169,9 @@ fn crop_image(
     old_size: u64,
     options: &OptimiseOptions,
 ) -> Result<OptimisationResult, OptimiseError> {
-    let (sw, sh) = image_dimensions(path)
-        .ok_or_else(|| OptimiseError::Other(format!("could not read dimensions of {}", path.display())))?;
+    let (sw, sh) = image_dimensions(path).ok_or_else(|| {
+        OptimiseError::Other(format!("could not read dimensions of {}", path.display()))
+    })?;
     let plan = plan_for_image(sw, sh, spec);
 
     let tmp = TempDir::new()?;
@@ -168,7 +183,11 @@ fn crop_image(
     match plan {
         Plan::Resize(w, h) => {
             if tools::is_available(Tool::Vipsthumbnail) {
-                tools::run_with_retries(Tool::Vipsthumbnail, ["-s", &format!("{w}x{h}"), "-o", &dst, &src], 2)?;
+                tools::run_with_retries(
+                    Tool::Vipsthumbnail,
+                    ["-s", &format!("{w}x{h}"), "-o", &dst, &src],
+                    2,
+                )?;
             } else if tools::is_available(Tool::Vips) {
                 let f = (w as f64 / sw as f64).min(h as f64 / sh as f64);
                 tools::run_with_retries(Tool::Vips, ["resize", &src, &dst, &format!("{f:.5}")], 2)?;
@@ -181,21 +200,57 @@ fn crop_image(
                 let crop = if spec.smart { "attention" } else { "centre" };
                 tools::run_with_retries(
                     Tool::Vipsthumbnail,
-                    ["-s", &format!("{w}x{h}"), "--smartcrop", crop, "-o", &dst, &src],
+                    [
+                        "-s",
+                        &format!("{w}x{h}"),
+                        "--smartcrop",
+                        crop,
+                        "-o",
+                        &dst,
+                        &src,
+                    ],
                     2,
                 )?;
             } else {
-                ffmpeg_vf(&src, &dst, &format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"))?;
+                ffmpeg_vf(
+                    &src,
+                    &dst,
+                    &format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"),
+                )?;
             }
         }
         Plan::CropOnly(w, h) => {
             if tools::is_available(Tool::Vips) {
                 let x = (sw - w) / 2;
                 let y = (sh - h) / 2;
-                tools::run_with_retries(Tool::Vips, ["crop", &src, &dst, &x.to_string(), &y.to_string(), &w.to_string(), &h.to_string()], 2)?;
+                tools::run_with_retries(
+                    Tool::Vips,
+                    [
+                        "crop",
+                        &src,
+                        &dst,
+                        &x.to_string(),
+                        &y.to_string(),
+                        &w.to_string(),
+                        &h.to_string(),
+                    ],
+                    2,
+                )?;
             } else if use_vips {
                 let crop = if spec.smart { "attention" } else { "centre" };
-                tools::run_with_retries(Tool::Vipsthumbnail, ["-s", &format!("{w}x{h}"), "--smartcrop", crop, "-o", &dst, &src], 2)?;
+                tools::run_with_retries(
+                    Tool::Vipsthumbnail,
+                    [
+                        "-s",
+                        &format!("{w}x{h}"),
+                        "--smartcrop",
+                        crop,
+                        "-o",
+                        &dst,
+                        &src,
+                    ],
+                    2,
+                )?;
             } else {
                 ffmpeg_vf(&src, &dst, &format!("crop={w}:{h}:(iw-{w})/2:(ih-{h})/2"))?;
             }
@@ -216,12 +271,12 @@ fn crop_video(
         format!("scale='if(gt(iw,ih),{n},-2)':'if(gt(iw,ih),-2,{n})'")
     } else if let Some((aw, ah)) = spec.aspect {
         // largest centred rect of the ratio
-        format!(
-            "crop='min(iw,ih*{aw}/{ah})':'min(ih,iw*{ah}/{aw})'",
-        )
+        format!("crop='min(iw,ih*{aw}/{ah})':'min(ih,iw*{ah}/{aw})'",)
     } else {
         match (spec.width, spec.height) {
-            (Some(w), Some(h)) => format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"),
+            (Some(w), Some(h)) => {
+                format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}")
+            }
             (Some(w), None) => format!("scale={w}:-2"),
             (None, Some(h)) => format!("scale=-2:{h}"),
             (None, None) => return Err(OptimiseError::Other("crop: no target size given".into())),

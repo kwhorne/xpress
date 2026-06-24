@@ -51,7 +51,10 @@ impl AudioFormat {
     }
 
     pub fn is_lossless(&self) -> bool {
-        matches!(self, AudioFormat::Wav | AudioFormat::Flac | AudioFormat::Aiff)
+        matches!(
+            self,
+            AudioFormat::Wav | AudioFormat::Flac | AudioFormat::Aiff
+        )
     }
 
     pub fn from_target(target: &str) -> Option<AudioFormat> {
@@ -117,20 +120,35 @@ impl AudioFormat {
     }
 
     /// ffmpeg encoding args, using VBR where supported.
-    pub fn encoding_args(&self, bitrate: i32, aggressive: bool, input_sample_rate: Option<f64>) -> Vec<String> {
+    pub fn encoding_args(
+        &self,
+        bitrate: i32,
+        aggressive: bool,
+        input_sample_rate: Option<f64>,
+    ) -> Vec<String> {
         let codec = self.ffmpeg_codec().to_string();
         match self {
             AudioFormat::Aac => vec![
-                "-c:a".into(), codec, "-b:a".into(), format!("{bitrate}k"),
-                "-aac_at_mode".into(), "cvbr".into(),
+                "-c:a".into(),
+                codec,
+                "-b:a".into(),
+                format!("{bitrate}k"),
+                "-aac_at_mode".into(),
+                "cvbr".into(),
             ],
             AudioFormat::Mp3 => vec![
-                "-c:a".into(), codec, "-q:a".into(),
+                "-c:a".into(),
+                codec,
+                "-q:a".into(),
                 Self::lame_vbr_quality(bitrate).to_string(),
             ],
             AudioFormat::Opus => vec![
-                "-c:a".into(), codec, "-b:a".into(), format!("{bitrate}k"),
-                "-vbr".into(), "on".into(),
+                "-c:a".into(),
+                codec,
+                "-b:a".into(),
+                format!("{bitrate}k"),
+                "-vbr".into(),
+                "on".into(),
             ],
             AudioFormat::Wav => {
                 if aggressive {
@@ -146,7 +164,9 @@ impl AudioFormat {
                 }
             }
             AudioFormat::Flac => vec![
-                "-c:a".into(), codec, "-compression_level".into(),
+                "-c:a".into(),
+                codec,
+                "-compression_level".into(),
                 if aggressive { "12".into() } else { "8".into() },
             ],
             AudioFormat::Aiff => {

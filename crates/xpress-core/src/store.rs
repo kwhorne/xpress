@@ -37,7 +37,8 @@ fn all_type() -> String {
 
 fn config_path() -> Option<PathBuf> {
     let dir = if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join("Library/Application Support/xpress"))
+        std::env::var_os("HOME")
+            .map(|h| PathBuf::from(h).join("Library/Application Support/xpress"))
     } else if cfg!(target_os = "windows") {
         std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("xpress"))
     } else {
@@ -61,8 +62,8 @@ impl Store {
     }
 
     pub fn save(&self) -> std::io::Result<()> {
-        let path = config_path()
-            .ok_or_else(|| std::io::Error::other("could not determine config dir"))?;
+        let path =
+            config_path().ok_or_else(|| std::io::Error::other("could not determine config dir"))?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }

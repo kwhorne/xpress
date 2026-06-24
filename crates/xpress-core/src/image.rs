@@ -12,11 +12,15 @@ use crate::result::{
 use crate::tools::{self, Tool};
 
 /// Optimise an image in place (or to `options.output`).
-pub fn optimise(path: &Path, options: &OptimiseOptions) -> Result<OptimisationResult, OptimiseError> {
+pub fn optimise(
+    path: &Path,
+    options: &OptimiseOptions,
+) -> Result<OptimisationResult, OptimiseError> {
     if !path.is_file() {
         return Err(OptimiseError::NotFound(path.to_path_buf()));
     }
-    let ext = extension_lower(path).ok_or_else(|| OptimiseError::Unsupported(path.to_path_buf()))?;
+    let ext =
+        extension_lower(path).ok_or_else(|| OptimiseError::Unsupported(path.to_path_buf()))?;
     let old_size = file_size(path);
     let cq = options.compression;
 
@@ -109,6 +113,7 @@ pub enum ImageFormat {
 }
 
 impl ImageFormat {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<ImageFormat> {
         match s.to_ascii_lowercase().as_str() {
             "webp" => Some(ImageFormat::Webp),
@@ -161,7 +166,17 @@ pub fn convert(
             // cwebp -mt -q <q> -sharp_yuv -metadata all <src> -o <out>
             tools::run_with_retries(
                 Tool::Cwebp,
-                ["-mt", "-q", &q.to_string(), "-sharp_yuv", "-metadata", "all", &src, "-o", &out],
+                [
+                    "-mt",
+                    "-q",
+                    &q.to_string(),
+                    "-sharp_yuv",
+                    "-metadata",
+                    "all",
+                    &src,
+                    "-o",
+                    &out,
+                ],
                 2,
             )?;
         }

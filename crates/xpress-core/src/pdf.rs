@@ -4,11 +4,11 @@ use std::path::Path;
 
 use tempfile::TempDir;
 
+use crate::filetype::MediaKind;
 use crate::result::{
     backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
 };
 use crate::tools::{self, Tool};
-use crate::filetype::MediaKind;
 
 pub const PDF_DPI_NO_DOWNSAMPLE: i32 = 300;
 pub const PDF_DPI_MIN: i32 = 48;

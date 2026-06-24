@@ -58,7 +58,8 @@ pub fn collect_files(inputs: &[PathBuf], recursive: bool, kinds: &[MediaKind]) -
                 }
             }
         } else if input.is_dir() {
-            let walker = walkdir::WalkDir::new(input).max_depth(if recursive { usize::MAX } else { 1 });
+            let walker =
+                walkdir::WalkDir::new(input).max_depth(if recursive { usize::MAX } else { 1 });
             for entry in walker.into_iter().filter_map(Result::ok) {
                 let p = entry.path();
                 if p.is_file() {
@@ -86,11 +87,6 @@ pub fn optimise_many(
     use rayon::prelude::*;
     files
         .par_iter()
-        .map(|f| {
-            (
-                f.clone(),
-                optimise_file(f, options, audio_target, pdf_dpi),
-            )
-        })
+        .map(|f| (f.clone(), optimise_file(f, options, audio_target, pdf_dpi)))
         .collect()
 }

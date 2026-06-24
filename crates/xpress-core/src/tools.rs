@@ -180,7 +180,11 @@ pub fn copy_exif(src: &Path, dst: &Path, strip_metadata: bool, exclude_tags: &[&
     if !is_available(Tool::Exiftool) {
         return;
     }
-    let mut args: Vec<String> = vec!["-overwrite_original".into(), "-TagsFromFile".into(), src.display().to_string()];
+    let mut args: Vec<String> = vec![
+        "-overwrite_original".into(),
+        "-TagsFromFile".into(),
+        src.display().to_string(),
+    ];
     if strip_metadata {
         // Keep only orientation/colour-critical tags when stripping.
         args.push("-all=".into());

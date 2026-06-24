@@ -98,17 +98,22 @@ impl XpressApp {
         let options = self.options();
         if self.use_pipeline {
             match xpress_core::pipeline::parse(&self.pipeline_dsl) {
-                Ok(steps) => work::spawn_pipeline(path, steps, options, ctx.clone(), self.tx.clone()),
+                Ok(steps) => {
+                    work::spawn_pipeline(path, steps, options, ctx.clone(), self.tx.clone())
+                }
                 Err(e) => {
                     self.in_flight -= 1;
-                    self.cards.insert(0, Card {
-                        title: "Invalid pipeline".into(),
-                        detail: e,
-                        saved_pct: 0.0,
-                        ok: false,
-                        texture: None,
-                        pending_thumb: None,
-                    });
+                    self.cards.insert(
+                        0,
+                        Card {
+                            title: "Invalid pipeline".into(),
+                            detail: e,
+                            saved_pct: 0.0,
+                            ok: false,
+                            texture: None,
+                            pending_thumb: None,
+                        },
+                    );
                 }
             }
         } else {
@@ -119,14 +124,17 @@ impl XpressApp {
     fn optimise_clipboard(&mut self, ctx: &egui::Context) {
         match clipboard_image_to_file() {
             Ok(path) => self.submit(path, ctx),
-            Err(e) => self.cards.insert(0, Card {
-                title: "Clipboard".into(),
-                detail: e,
-                saved_pct: 0.0,
-                ok: false,
-                texture: None,
-                pending_thumb: None,
-            }),
+            Err(e) => self.cards.insert(
+                0,
+                Card {
+                    title: "Clipboard".into(),
+                    detail: e,
+                    saved_pct: 0.0,
+                    ok: false,
+                    texture: None,
+                    pending_thumb: None,
+                },
+            ),
         }
     }
 
@@ -228,7 +236,10 @@ impl XpressApp {
             ui.horizontal(|ui| {
                 ui.checkbox(&mut self.backup, "backup");
                 ui.checkbox(&mut self.strip_metadata, "strip metadata");
-                if ui.checkbox(&mut self.always_on_top, "float on top").changed() {
+                if ui
+                    .checkbox(&mut self.always_on_top, "float on top")
+                    .changed()
+                {
                     let level = if self.always_on_top {
                         egui::WindowLevel::AlwaysOnTop
                     } else {
@@ -340,12 +351,9 @@ fn clipboard_image_to_file() -> Result<PathBuf, String> {
     let img = clipboard
         .get_image()
         .map_err(|_| "no image on the clipboard".to_string())?;
-    let buf = image::RgbaImage::from_raw(
-        img.width as u32,
-        img.height as u32,
-        img.bytes.into_owned(),
-    )
-    .ok_or_else(|| "could not decode clipboard image".to_string())?;
+    let buf =
+        image::RgbaImage::from_raw(img.width as u32, img.height as u32, img.bytes.into_owned())
+            .ok_or_else(|| "could not decode clipboard image".to_string())?;
 
     let dir = dirs_pictures().join("xpress");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;

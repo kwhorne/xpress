@@ -22,7 +22,7 @@ pub fn image_dimensions(path: &Path) -> Option<(u32, u32)> {
 }
 
 fn even(n: u32) -> u32 {
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         n
     } else {
         n.saturating_sub(1).max(2)
