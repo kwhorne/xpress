@@ -1,0 +1,25 @@
+[package]
+name = "xpress-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command-line interface for xpress"
+
+[[bin]]
+name = "xpress"
+path = "src/main.rs"
+
+[dependencies]
+xpress-core = { path = "../xpress-core" }
+anyhow.workspace = true
+clap.workspace = true
+notify = "7"
+ctrlc = "3"
+arboard = { version = "3", optional = true }
+
+[features]
+default = ["clipboard"]
+# Embed vendored binaries into the `xpress` executable (see xpress-core).
+embed-tools = ["xpress-core/embed-tools"]
+# Clipboard watching (pulls in arboard + platform GUI libraries).
+clipboard = ["dep:arboard"]

@@ -1,0 +1,7 @@
+# Ignore all fetched binaries; keep structure + docs only.
+*
+!.gitignore
+!README.md
+!current/
+current/*
+!current/.gitkeep

@@ -1,0 +1,26 @@
+[package]
+name = "xpress-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core optimisation engine for xpress (ported from Clop)"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+which.workspace = true
+walkdir.workspace = true
+rayon.workspace = true
+num_cpus.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+regex.workspace = true
+tempfile.workspace = true
+imagesize = "0.13"
+include_dir = { version = "0.7", optional = true }
+
+[features]
+# Embed the binaries under `vendor/bin/<target>/` into the executable and extract
+# them to the per-user bundle dir on first run. Off by default so the crate
+# builds without any vendored binaries present.
+embed-tools = ["dep:include_dir"]
