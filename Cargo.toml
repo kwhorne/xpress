@@ -5,6 +5,7 @@ members = [
     "crates/xpress-cli",
     "crates/xpress-gui",
 ]
+exclude = ["tools/icon-gen"]
 
 [workspace.package]
 version = "0.1.0"

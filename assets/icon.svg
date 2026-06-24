@@ -1,0 +1,35 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="160" y1="120" x2="864" y2="904" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFB13E"/>
+      <stop offset="0.55" stop-color="#FF7A18"/>
+      <stop offset="1" stop-color="#E8430C"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="512" y1="100" x2="512" y2="560" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="glyph" x1="512" y1="330" x2="512" y2="694" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#FFF1E0"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#7A2400" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- squircle background -->
+  <rect x="100" y="100" width="824" height="824" rx="188" ry="188" fill="url(#bg)"/>
+  <!-- top sheen for depth -->
+  <rect x="100" y="100" width="824" height="824" rx="188" ry="188" fill="url(#sheen)"/>
+  <!-- subtle inner edge -->
+  <rect x="106" y="106" width="812" height="812" rx="182" ry="182" fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="3"/>
+
+  <!-- compression glyph: two chevrons pointing inward -->
+  <g filter="url(#shadow)" fill="none" stroke="url(#glyph)" stroke-width="86" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M372 338 L500 512 L372 686"/>
+    <path d="M652 338 L524 512 L652 686"/>
+  </g>
+  <!-- center seam dot for balance -->
+  <circle cx="512" cy="512" r="30" fill="url(#glyph)" filter="url(#shadow)"/>
+</svg>

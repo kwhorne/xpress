@@ -60,6 +60,14 @@ signed-for-local-use `xpress-*-app.zip`. For public distribution, sign with a
 Developer ID and notarise (commands are documented at the bottom of
 `scripts/make-app.sh`).
 
+The app icon lives at `assets/AppIcon.icns`. To regenerate it from the vector
+source after editing `assets/icon.svg`:
+
+```sh
+cargo run --manifest-path tools/icon-gen/Cargo.toml --release -- assets/icon.svg assets/xpress.iconset
+iconutil -c icns assets/xpress.iconset -o assets/AppIcon.icns
+```
+
 ## Optimisation tools
 
 xpress shells out to external binaries. Resolution order:

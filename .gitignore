@@ -5,3 +5,8 @@
 # Cargo.lock is committed: this is a binary project, so we want reproducible builds.
 dist/
 dist-app/
+
+# Generated icon intermediates (regenerate from assets/icon.svg)
+assets/xpress.iconset/
+tools/icon-gen/target/
+tools/icon-gen/Cargo.lock
