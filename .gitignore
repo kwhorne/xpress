@@ -1,4 +1,5 @@
 /target
 **/*.rs.bk
-Cargo.lock
 .DS_Store
+
+# Cargo.lock is committed: this is a binary project, so we want reproducible builds.
