@@ -59,10 +59,24 @@ jobs:
           tar -czf "$dist.tar.gz" "$dist"
           shasum -a 256 "$dist.tar.gz" > "$dist.tar.gz.sha256"
 
+      - name: Build macOS .app bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="target/${{ matrix.target }}/release"
+          scripts/make-app.sh --gui "$bin_dir/xpress-gui" --cli "$bin_dir/xpress" \
+            --out dist-app --version "${GITHUB_REF_NAME#v}"
+          app_zip="xpress-${GITHUB_REF_NAME}-${{ matrix.target }}-app.zip"
+          ditto -c -k --keepParent dist-app/xpress.app "$app_zip"
+          shasum -a 256 "$app_zip" > "$app_zip.sha256"
+
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             xpress-*.tar.gz
             xpress-*.tar.gz.sha256
+            xpress-*-app.zip
+            xpress-*-app.zip.sha256
           generate_release_notes: true

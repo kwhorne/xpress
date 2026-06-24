@@ -1,5 +1,9 @@
 # xpress
 
+[![CI](https://github.com/kwhorne/xpress/actions/workflows/ci.yml/badge.svg)](https://github.com/kwhorne/xpress/actions/workflows/ci.yml)
+[![Release](https://github.com/kwhorne/xpress/actions/workflows/release.yml/badge.svg)](https://github.com/kwhorne/xpress/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 An **image, video, PDF and audio optimiser** written in Rust. Copy large, paste
 small, send fast.
 
@@ -42,6 +46,19 @@ cargo run -p xpress-gui --release
 * A **compression** slider, *aggressive* / *backup* / *strip metadata* toggles, an
   inline **pipeline** field, and a **float on top** option.
 * Work runs off the UI thread, so the window stays responsive.
+
+### Build a macOS `.app`
+
+```sh
+cargo build --release -p xpress-gui -p xpress-cli
+scripts/make-app.sh                 # -> dist/xpress.app (ad-hoc signed)
+scripts/make-app.sh --tools         # also bundle ffmpeg/pngquant/... into the app
+```
+
+The app is ad-hoc signed so it runs locally. Tagged releases also publish a
+signed-for-local-use `xpress-*-app.zip`. For public distribution, sign with a
+Developer ID and notarise (commands are documented at the bottom of
+`scripts/make-app.sh`).
 
 ## Optimisation tools
 
