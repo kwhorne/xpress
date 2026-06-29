@@ -372,13 +372,18 @@ fn handle_clipboard_image(
         pipeline::run(&png, steps, &opts)
     };
     match result {
-        Ok(r) => println!(
-            "{} clipboard image {} {}  (-{:.0}%)",
-            render::CHECK,
-            render::ARROW,
-            r.output.display(),
-            r.saved_percent()
-        ),
+        Ok(r) => {
+            // Put the optimised PNG back on the clipboard so paste yields the smaller file.
+            let back = xpress_core::clipboard::set_clipboard_png(&r.output);
+            println!(
+                "{} clipboard image {} {}  (-{:.0}%){}",
+                render::CHECK,
+                render::ARROW,
+                r.output.display(),
+                r.saved_percent(),
+                if back { "  [copied back]" } else { "" }
+            );
+        }
         Err(e) => bail!("{e}"),
     }
     Ok(())

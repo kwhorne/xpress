@@ -48,7 +48,9 @@ xpress watch --clipboard ~/Inbox    # clipboard + a folder
 ```
 
 When an image is copied, xpress encodes it to PNG, optimises it (or runs the
-`--pipeline` if given), and saves the result to `~/Pictures/xpress`.
+`--pipeline` if given), saves the result to `~/Pictures/xpress`, and on macOS
+**copies the optimised PNG back onto the clipboard** so the next paste yields the
+smaller file (“copy large, paste small”).
 
 Requires the `clipboard` feature (on by default) and `ffmpeg` for the
 raw→PNG step. Add a clipboard automation so plain `xpress watch` includes it:

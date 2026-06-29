@@ -174,7 +174,7 @@ fn pipeline_crop_then_convert() {
 #[test]
 fn video_to_gif() {
     common::install_stubs();
-    let dir = tmpdir("gif");
+    let dir = tmpdir("vgif");
     let f = dir.join("clip.mov");
     common::write_dummy(&f, 8000);
     let r = video::to_gif(&f, &opts(), 15, None).unwrap();

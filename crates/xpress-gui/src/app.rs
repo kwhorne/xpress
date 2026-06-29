@@ -146,20 +146,28 @@ impl XpressApp {
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_default();
+            let from_clipboard = done.source.starts_with(clipboard_dir());
             let card = match done.result {
-                Ok(r) => Card {
-                    title: name,
-                    detail: format!(
+                Ok(r) => {
+                    // For clipboard-sourced images, copy the optimised PNG back so paste is small.
+                    let mut detail = format!(
                         "{} → {}{}",
                         human(r.old_size),
                         human(r.new_size),
                         if r.aggressive { "  (aggressive)" } else { "" }
-                    ),
-                    saved_pct: r.saved_percent(),
-                    ok: true,
-                    texture: None,
-                    pending_thumb: done.thumbnail,
-                },
+                    );
+                    if from_clipboard && xpress_core::clipboard::set_clipboard_png(&r.output) {
+                        detail.push_str("  [copied back]");
+                    }
+                    Card {
+                        title: name,
+                        detail,
+                        saved_pct: r.saved_percent(),
+                        ok: true,
+                        texture: None,
+                        pending_thumb: done.thumbnail,
+                    }
+                }
                 Err(e) => Card {
                     title: name,
                     detail: e,
@@ -364,6 +372,10 @@ fn clipboard_image_to_file() -> Result<PathBuf, String> {
     let path = dir.join(format!("clip-{ts}.png"));
     buf.save(&path).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+fn clipboard_dir() -> PathBuf {
+    dirs_pictures().join("xpress")
 }
 
 fn dirs_pictures() -> PathBuf {

@@ -7,6 +7,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Clipboard “paste small”: on macOS the optimised image is written back to the
+  clipboard as PNG (in both `watch --clipboard` and the GUI's ⌘⇧O).
 - `convert --to gif` (and pipeline `convert(to: gif)`) to turn videos into GIFs
   (gifski when available, otherwise ffmpeg).
 - `optimise --max-size <budget>` and a `targetSize(bytes:)` pipeline step to

@@ -7,6 +7,7 @@
 pub mod audio;
 pub mod budget;
 pub mod bundled;
+pub mod clipboard;
 pub mod compression;
 pub mod crop;
 pub mod filetype;
