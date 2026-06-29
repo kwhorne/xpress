@@ -38,7 +38,7 @@ brew install ffmpeg pngquant jpegoptim gifsicle ghostscript vips gifski webp exi
 ./target/release/xpress optimise photo.png screencast.mov document.pdf
 ```
 
-See [`../CHANGELOG.md`](../CHANGELOG.md) for the release history (current: 0.2.1).
+See [`../CHANGELOG.md`](../CHANGELOG.md) for the release history (current: 0.3.0).
 
 > xpress is an independent MIT-licensed project, inspired by the functionality of
 > Clop. It contains no Clop source code — see [`../NOTICE.md`](../NOTICE.md).

@@ -206,7 +206,7 @@ Originals are backed up next to the file as `.<name>.orig` unless `--no-backup`.
 - `restore`/`clean-backups`, a user `config.json`, `--json`/`--quiet`, live progress.
 - Integration test suite (stub tools), hardened paths, MSRV 1.87, CI/release `.dmg`.
 
-**Phase 7 — formats & editing (0.2.1)** ✅
+**Phase 7 — formats & editing (0.3.0)** ✅
 - Video codec conversion (`mp4`/`hevc`/`av1`/`webm`) with a `--hw` toggle.
 - Non-destructive PDF `crop-pdf`/`uncrop-pdf` and `extract-pages`.
 - Pipeline steps: `normalize`, `watermark`, `copyToClipboard`, `runScript`.
