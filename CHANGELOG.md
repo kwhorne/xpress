@@ -7,6 +7,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- PDF: non-destructive `crop-pdf` (sets the page CropBox) and `uncrop-pdf`
+  (removes it), plus `extract-pages` to render pages to PNG/JPEG.
+- New pipeline steps: `normalize(lufs:)` (audio loudness), `watermark(image:,
+  position:, opacity:, scale:)`, `copyToClipboard`, and `runScript(code:|path:)`.
 - Video codec conversion: `convert --to mp4|hevc|av1|webm` (and the same in the
   pipeline DSL), with a `--hw` flag for VideoToolbox on Apple Silicon.
 - Adaptive image optimisation is now transparency-aware: PNGs with an alpha

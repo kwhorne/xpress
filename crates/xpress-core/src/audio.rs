@@ -183,6 +183,26 @@ impl AudioFormat {
     }
 }
 
+/// Loudness-normalise an audio file to `lufs` integrated loudness (EBU R128)
+/// using ffmpeg's `loudnorm` filter. Writes to `dst` (re-encodes).
+pub fn normalize(src: &Path, dst: &Path, lufs: f64) -> Result<(), OptimiseError> {
+    let filter = format!("loudnorm=I={lufs:.1}:TP=-1.5:LRA=11");
+    tools::run(
+        Tool::Ffmpeg,
+        [
+            "-y",
+            "-i",
+            &src.display().to_string(),
+            "-af",
+            &filter,
+            "-hide_banner",
+            "-nostats",
+            &dst.display().to_string(),
+        ],
+    )?;
+    Ok(())
+}
+
 /// Target bitrate (kbps) for a format from a compression value.
 pub fn audio_bitrate(cq: CompressionQuality, format: AudioFormat) -> Option<i32> {
     let (lo, hi) = format.bitrate_range()?;

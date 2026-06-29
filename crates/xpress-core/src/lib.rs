@@ -11,6 +11,7 @@ pub mod clipboard;
 pub mod compression;
 pub mod config;
 pub mod crop;
+pub mod effects;
 pub mod filetype;
 pub mod image;
 pub mod pdf;

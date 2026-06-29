@@ -24,16 +24,42 @@ use crate::{scale, video};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Step {
     Optimise,
-    Downscale { factor: f64 },
+    Downscale {
+        factor: f64,
+    },
     Crop(CropArgs),
-    Convert { to: String },
+    Convert {
+        to: String,
+    },
     StripExif,
     RemoveAudio,
-    ChangeSpeed { factor: f64 },
-    CapFps { fps: i32 },
-    LowerBitrate { kbps: i32 },
-    TargetSize { bytes: u64 },
+    ChangeSpeed {
+        factor: f64,
+    },
+    CapFps {
+        fps: i32,
+    },
+    LowerBitrate {
+        kbps: i32,
+    },
+    TargetSize {
+        bytes: u64,
+    },
     Adaptive,
+    Normalize {
+        lufs: f64,
+    },
+    Watermark {
+        image: String,
+        position: String,
+        opacity: f64,
+        scale: f64,
+    },
+    CopyToClipboard,
+    RunScript {
+        code: Option<String>,
+        path: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -156,6 +182,36 @@ fn parse_step(s: &str) -> Result<Step, String> {
             })
         }
         "adaptive" => Ok(Step::Adaptive),
+        "normalize" | "normalise" => {
+            let lufs = get("lufs")
+                .map(|v| v.parse::<f64>().map_err(|_| "bad lufs"))
+                .transpose()?
+                .unwrap_or(-16.0);
+            Ok(Step::Normalize { lufs })
+        }
+        "watermark" => {
+            let image = get("image").ok_or("watermark requires image:")?;
+            let position = get("position").unwrap_or_else(|| "bottomRight".into());
+            let opacity = get("opacity")
+                .map(|v| v.parse::<f64>().map_err(|_| "bad opacity"))
+                .transpose()?
+                .unwrap_or(1.0);
+            let scale = get("scale")
+                .map(|v| v.parse::<f64>().map_err(|_| "bad scale"))
+                .transpose()?
+                .unwrap_or(0.15);
+            Ok(Step::Watermark {
+                image,
+                position,
+                opacity,
+                scale,
+            })
+        }
+        "copyToClipboard" | "copy_to_clipboard" => Ok(Step::CopyToClipboard),
+        "runScript" | "run_script" => Ok(Step::RunScript {
+            code: get("code"),
+            path: get("path"),
+        }),
         other => Err(format!("unknown step '{other}'")),
     }
 }
@@ -368,6 +424,35 @@ fn apply_step(
                 crate::optimise_file(current, &opts, AudioFormat::SameAsInput, None)?;
             }
         }
+        Step::Normalize { lufs } => {
+            audio::normalize(current, target, *lufs)?;
+        }
+        Step::Watermark {
+            image: img,
+            position,
+            opacity,
+            scale,
+        } => {
+            let overlay = std::path::PathBuf::from(img);
+            crate::effects::watermark(
+                current,
+                target,
+                &overlay,
+                crate::effects::Position::parse(position),
+                *opacity,
+                *scale,
+            )?;
+        }
+        Step::CopyToClipboard => {
+            // Pass the file through unchanged, and copy it to the clipboard.
+            std::fs::copy(current, target)?;
+            crate::clipboard::set_clipboard_png(target);
+        }
+        Step::RunScript { code, path } => {
+            // Pass the file through; run the user's script with $FILE set to it.
+            std::fs::copy(current, target)?;
+            run_user_script(code.as_deref(), path.as_deref(), target)?;
+        }
     }
     if !target.exists() {
         return Err(OptimiseError::Other(format!(
@@ -417,7 +502,51 @@ fn step_to_string(step: &Step) -> String {
         Step::LowerBitrate { kbps } => format!("lowerBitrate(kbps: {kbps})"),
         Step::TargetSize { bytes } => format!("targetSize(bytes: {bytes})"),
         Step::Adaptive => "adaptive".into(),
+        Step::Normalize { lufs } => format!("normalize(lufs: {lufs})"),
+        Step::Watermark { image, position, opacity, scale } => format!(
+            "watermark(image: \"{image}\", position: {position}, opacity: {opacity}, scale: {scale})"
+        ),
+        Step::CopyToClipboard => "copyToClipboard".into(),
+        Step::RunScript { code, path } => {
+            if let Some(p) = path {
+                format!("runScript(path: \"{p}\")")
+            } else {
+                format!("runScript(code: \"{}\")", code.as_deref().unwrap_or(""))
+            }
+        }
     }
+}
+
+fn run_user_script(
+    code: Option<&str>,
+    path: Option<&str>,
+    file: &std::path::Path,
+) -> Result<(), OptimiseError> {
+    use std::process::Command;
+    let mut cmd = if let Some(script) = path {
+        let mut c = Command::new("sh");
+        c.arg(script).arg(file);
+        c
+    } else if let Some(code) = code {
+        let mut c = Command::new("sh");
+        c.arg("-c").arg(code);
+        c
+    } else {
+        return Err(OptimiseError::Other(
+            "runScript requires code: or path:".into(),
+        ));
+    };
+    cmd.env("FILE", file);
+    let status = cmd
+        .status()
+        .map_err(|e| OptimiseError::Other(format!("runScript failed to launch: {e}")))?;
+    if !status.success() {
+        return Err(OptimiseError::Other(format!(
+            "runScript exited with status {}",
+            status.code().unwrap_or(-1)
+        )));
+    }
+    Ok(())
 }
 
 /// Parse a size like `500000`, `500kb`, `1.5mb`.

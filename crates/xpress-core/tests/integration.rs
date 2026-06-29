@@ -105,6 +105,30 @@ fn convert_png_to_webp() {
 }
 
 #[test]
+fn pdf_crop_and_uncrop() {
+    common::install_stubs();
+    let dir = tmpdir("pdfcrop");
+    let f = dir.join("doc.pdf");
+    common::write_pdf(&f);
+
+    let cropped = dir.join("cropped.pdf");
+    pdf::crop(&f, &cropped, (16.0, 9.0)).unwrap();
+    let bytes = std::fs::read(&cropped).unwrap();
+    assert!(
+        bytes.windows(7).any(|w| w == b"CropBox"),
+        "crop should add a CropBox"
+    );
+
+    let uncropped = dir.join("uncropped.pdf");
+    pdf::uncrop(&cropped, &uncropped).unwrap();
+    let bytes2 = std::fs::read(&uncropped).unwrap();
+    assert!(
+        !bytes2.windows(7).any(|w| w == b"CropBox"),
+        "uncrop should remove the CropBox"
+    );
+}
+
+#[test]
 fn pdf_optimise() {
     common::install_stubs();
     let dir = tmpdir("pdf");
@@ -239,6 +263,31 @@ fn template_expands_output() {
     let out =
         xpress_core::template::expand("%f-small.%e", std::path::Path::new("/x/photo.png"), &mut c);
     assert_eq!(out, std::path::PathBuf::from("photo-small.png"));
+}
+
+#[test]
+fn pipeline_run_script_passthrough() {
+    common::install_stubs();
+    let dir = tmpdir("script");
+    let f = dir.join("s.png");
+    common::write_png(&f);
+    let marker = dir.join("ran.txt");
+    let steps =
+        pipeline::parse(&format!("runScript(code: \"touch {}\")", marker.display())).unwrap();
+    let r = pipeline::run(&f, &steps, &opts()).unwrap();
+    assert!(r.output.exists());
+    assert!(marker.exists(), "script should have run");
+}
+
+#[test]
+fn pipeline_normalize_audio() {
+    common::install_stubs();
+    let dir = tmpdir("norm");
+    let f = dir.join("a.mp3");
+    common::write_dummy(&f, 4000);
+    let steps = pipeline::parse("normalize(lufs: -16)").unwrap();
+    let r = pipeline::run(&f, &steps, &opts()).unwrap();
+    assert!(r.output.exists());
 }
 
 #[test]

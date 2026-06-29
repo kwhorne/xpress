@@ -110,6 +110,30 @@ pub fn write_dummy(path: &Path, size: usize) {
     std::fs::write(path, vec![b'x'; size]).unwrap();
 }
 
+/// Write a minimal valid one-page PDF (US Letter) using lopdf.
+pub fn write_pdf(path: &Path) {
+    use lopdf::{dictionary, Document, Object};
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+    });
+    let pages = dictionary! {
+        "Type" => "Pages",
+        "Kids" => vec![page_id.into()],
+        "Count" => 1,
+    };
+    doc.objects.insert(pages_id, Object::Dictionary(pages));
+    let catalog_id = doc.add_object(dictionary! {
+        "Type" => "Catalog",
+        "Pages" => pages_id,
+    });
+    doc.trailer.set("Root", catalog_id);
+    doc.save(path).unwrap();
+}
+
 /// A minimal base64 decoder (avoids adding a dependency to the test harness).
 fn base64_decode(s: &str) -> Vec<u8> {
     const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

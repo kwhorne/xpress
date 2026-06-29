@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Core optimisation engine for xpress (ported from Clop)"
+description = "Core optimisation engine for xpress"
 
 [dependencies]
 anyhow.workspace = true
@@ -18,7 +18,11 @@ serde_json.workspace = true
 regex.workspace = true
 tempfile.workspace = true
 imagesize = "0.13"
+lopdf = { version = "0.36", default-features = false }
 include_dir = { version = "0.7", optional = true }
+
+[dev-dependencies]
+lopdf = { version = "0.36", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

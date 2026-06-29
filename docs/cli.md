@@ -13,6 +13,9 @@ xpress <COMMAND>
 | `pipeline` | Run, save and manage pipelines |
 | `watch` | Watch folders / clipboard and optimise automatically |
 | `strip-exif` | Delete EXIF metadata from images |
+| `crop-pdf` | Crop PDFs to an aspect ratio (non-destructive) |
+| `uncrop-pdf` | Revert a non-destructive PDF crop |
+| `extract-pages` | Render PDF pages to images |
 | `restore` | Restore originals from `.orig` backups |
 | `clean-backups` | Delete `.orig` backups |
 | `bundle` | Extract embedded binaries to the bundle dir |
@@ -95,13 +98,15 @@ xpress downscale -f 0.75 recording.mov
 xpress convert [OPTIONS] -t <FORMAT> <ITEMS>...
 ```
 
-- `-t, --to` — image (`webp|avif|heic|jxl|png|jpeg`), audio (`aac|mp3|opus|wav|flac|aiff`), or `gif` (from video).
+- `-t, --to` — image (`webp|avif|heic|jxl|png|jpeg`), audio (`aac|mp3|opus|wav|flac|aiff`), or video (`gif|mp4|hevc|av1|webm`).
 - `--bitrate <kbps>` — explicit audio bitrate.
+- `--hw` — use a hardware (VideoToolbox) encoder for video on Apple Silicon.
 
 ```sh
 xpress convert --to webp screenshot.png
 xpress convert --to mp3 --bitrate 192 recording.wav
 xpress convert --to gif screencast.mov
+xpress convert --to hevc --hw clip.mov
 ```
 
 ## crop
@@ -152,6 +157,18 @@ xpress strip-exif [-r] <ITEMS>...
 ```
 
 Removes metadata from images in place (needs `exiftool`).
+
+## crop-pdf / uncrop-pdf / extract-pages
+
+```sh
+xpress crop-pdf --ratio 16:9 slides.pdf          # sets the page CropBox
+xpress crop-pdf --ratio 1.91:1 --suffix "-cropped" doc.pdf
+xpress uncrop-pdf slides.pdf                      # removes the CropBox
+xpress extract-pages --format png --dpi 150 doc.pdf
+```
+
+Cropping is non-destructive (it only sets/removes the `/CropBox`), so
+`uncrop-pdf` fully reverts it. `extract-pages` renders via ghostscript.
 
 ## restore / clean-backups
 

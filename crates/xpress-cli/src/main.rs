@@ -50,6 +50,12 @@ enum Command {
     Pipeline(PipelineCmd),
     /// Watch folders (and/or the clipboard) and optimise automatically.
     Watch(WatchArgs),
+    /// Crop PDFs to an aspect ratio non-destructively (sets the page CropBox).
+    CropPdf(CropPdfArgs),
+    /// Revert a non-destructive PDF crop (removes the CropBox).
+    UncropPdf(FilesArg),
+    /// Render PDF pages to images (png/jpeg) via ghostscript.
+    ExtractPages(ExtractPagesArgs),
     /// Restore originals from `.orig` backups.
     Restore(FilesArg),
     /// Delete `.orig` backups.
@@ -260,6 +266,37 @@ struct FilesArg {
     items: Vec<PathBuf>,
 }
 
+#[derive(Args)]
+struct CropPdfArgs {
+    /// Aspect ratio, e.g. `16:9` or `1.91:1`.
+    #[arg(short, long)]
+    ratio: String,
+    /// Write next to the original with this suffix instead of in place.
+    #[arg(long, default_value = "")]
+    suffix: String,
+    #[arg(short, long)]
+    recursive: bool,
+    #[arg(required = true)]
+    items: Vec<PathBuf>,
+}
+
+#[derive(Args)]
+struct ExtractPagesArgs {
+    /// Output image format: png | jpeg.
+    #[arg(long, default_value = "png")]
+    format: String,
+    /// Render resolution in DPI.
+    #[arg(long, default_value_t = 150)]
+    dpi: i32,
+    /// Output directory (default: alongside each PDF).
+    #[arg(short, long)]
+    out: Option<PathBuf>,
+    #[arg(short, long)]
+    recursive: bool,
+    #[arg(required = true)]
+    items: Vec<PathBuf>,
+}
+
 /// Parse a human size like `500kb`, `1.5mb`, `250000`.
 fn parse_size(v: &str) -> Result<u64, String> {
     let s = v.trim().to_ascii_lowercase();
@@ -355,6 +392,9 @@ fn run() -> Result<()> {
                 options,
             )
         }
+        Command::CropPdf(args) => run_crop_pdf(args),
+        Command::UncropPdf(args) => run_uncrop_pdf(args),
+        Command::ExtractPages(args) => run_extract_pages(args),
         Command::Restore(args) => run_restore(args),
         Command::CleanBackups(args) => run_clean_backups(args),
         Command::StripExif(args) => run_strip_exif(args),
@@ -738,6 +778,99 @@ fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
         xpress_core::pipeline::run(f, &steps, o)
     });
     render::summarise(&results, args.common.output_mode());
+    Ok(())
+}
+
+fn parse_ratio(s: &str) -> Result<(f64, f64)> {
+    let (a, b) = s
+        .split_once(':')
+        .ok_or_else(|| anyhow::anyhow!("ratio must look like 16:9"))?;
+    Ok((a.trim().parse()?, b.trim().parse()?))
+}
+
+fn run_crop_pdf(args: CropPdfArgs) -> Result<()> {
+    let aspect = parse_ratio(&args.ratio)?;
+    let files = collect_files(&args.items, args.recursive, &[MediaKind::Pdf]);
+    if files.is_empty() {
+        bail!("no PDFs found");
+    }
+    let mut n = 0;
+    for f in &files {
+        let out = if args.suffix.is_empty() {
+            f.clone()
+        } else {
+            let stem = f.file_stem().unwrap_or_default().to_string_lossy();
+            f.with_file_name(format!("{stem}{}.pdf", args.suffix))
+        };
+        // Crop to a temp then move, so in-place crop is safe.
+        let tmp = std::env::temp_dir().join(format!("xpress-crop-{}.pdf", std::process::id()));
+        match xpress_core::pdf::crop(f, &tmp, aspect).and_then(|_| {
+            std::fs::rename(&tmp, &out)
+                .or_else(|_| std::fs::copy(&tmp, &out).map(|_| ()))
+                .map_err(xpress_core::result::OptimiseError::Io)
+        }) {
+            Ok(()) => {
+                n += 1;
+                println!(
+                    "{} cropped {} {} {}",
+                    render::CHECK,
+                    f.display(),
+                    render::ARROW,
+                    out.display()
+                );
+            }
+            Err(e) => eprintln!("{} {} {} {e}", render::ERROR_X, f.display(), render::ARROW),
+        }
+    }
+    println!("\n{n} cropped");
+    Ok(())
+}
+
+fn run_uncrop_pdf(args: FilesArg) -> Result<()> {
+    let files = collect_files(&args.items, args.recursive, &[MediaKind::Pdf]);
+    if files.is_empty() {
+        bail!("no PDFs found");
+    }
+    let mut n = 0;
+    for f in &files {
+        let tmp = std::env::temp_dir().join(format!("xpress-uncrop-{}.pdf", std::process::id()));
+        match xpress_core::pdf::uncrop(f, &tmp).and_then(|_| {
+            std::fs::rename(&tmp, f)
+                .or_else(|_| std::fs::copy(&tmp, f).map(|_| ()))
+                .map_err(xpress_core::result::OptimiseError::Io)
+        }) {
+            Ok(()) => {
+                n += 1;
+                println!("{} uncropped {}", render::CHECK, f.display());
+            }
+            Err(e) => eprintln!("{} {} {} {e}", render::ERROR_X, f.display(), render::ARROW),
+        }
+    }
+    println!("\n{n} uncropped");
+    Ok(())
+}
+
+fn run_extract_pages(args: ExtractPagesArgs) -> Result<()> {
+    let files = collect_files(&args.items, args.recursive, &[MediaKind::Pdf]);
+    if files.is_empty() {
+        bail!("no PDFs found");
+    }
+    for f in &files {
+        let out_dir = args
+            .out
+            .clone()
+            .unwrap_or_else(|| f.parent().map(|p| p.to_path_buf()).unwrap_or_default());
+        match xpress_core::pdf::extract_pages(f, &out_dir, &args.format, args.dpi) {
+            Ok(pages) => println!(
+                "{} {} {} {} page(s)",
+                render::CHECK,
+                f.display(),
+                render::ARROW,
+                pages.len()
+            ),
+            Err(e) => eprintln!("{} {} {} {e}", render::ERROR_X, f.display(), render::ARROW),
+        }
+    }
     Ok(())
 }
 

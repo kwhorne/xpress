@@ -22,9 +22,13 @@ xpress pipeline run web *.png
 | `optimise` | — | all | Optimise in place using the current compression value. |
 | `downscale` | `factor:` (`0.5` or `50%`) | image, video | Scale keeping aspect ratio. |
 | `crop` | `width:`, `height:`, `longEdge:`, `ratio:` (`16:9`), `smart:` | image, video | Resize/crop to a size or aspect ratio. |
-| `convert` | `to:` (image/audio format, or `gif` from video) | image, audio, video | Changes the file type. |
-| `adaptive` | — | image | Try multiple formats, keep the smallest. |
+| `convert` | `to:` image/audio format, or video target (`gif`, `mp4`, `hevc`, `av1`, `webm`) | image, audio, video | Changes the file type. |
+| `adaptive` | — | image | Try multiple formats, keep the smallest (alpha-aware). |
 | `targetSize` | `bytes:` (`500kb`, `1.5mb`) | all | Compress to fit a byte budget. |
+| `normalize` | `lufs:` (default −16) | audio | Loudness-normalise (EBU R128). |
+| `watermark` | `image:`, `position:`, `opacity:`, `scale:` | image, video | Overlay a watermark. |
+| `copyToClipboard` | — | image | Copy the result to the clipboard (macOS). |
+| `runScript` | `code:` or `path:` | all | Run a shell script (`$FILE` = current file). |
 | `stripExif` | — | image | Remove metadata. |
 | `removeAudio` | — | video | Drop the audio track. |
 | `changeSpeed` | `factor:` | video | `2.0` = twice as fast. |
