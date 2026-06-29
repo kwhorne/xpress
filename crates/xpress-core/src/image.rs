@@ -12,6 +12,28 @@ use crate::result::{
 };
 use crate::tools::{self, Tool};
 
+/// Cheap transparency check: reads the PNG IHDR colour-type byte (6 = RGBA,
+/// 4 = gray+alpha). Non-PNG inputs conservatively report no alpha.
+pub fn has_alpha(path: &Path) -> bool {
+    let Some(ext) = extension_lower(path) else {
+        return false;
+    };
+    if ext != "png" {
+        return false;
+    }
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    // PNG signature(8) + IHDR len(4) + "IHDR"(4) + w(4) + h(4) + bitdepth(1)
+    // + colour type at byte offset 25.
+    let mut header = [0u8; 26];
+    if f.read_exact(&mut header).is_err() {
+        return false;
+    }
+    matches!(header[25], 4 | 6)
+}
+
 /// Optimise an image in place (or to `options.output`).
 pub fn optimise(
     path: &Path,
@@ -131,11 +153,14 @@ pub fn optimise_adaptive(
         candidates.push((c_same, f));
     }
 
-    // Candidate 2 + 3: JPEG and PNG conversions (unique temp names).
-    for (i, fmt) in [ImageFormat::Jpeg, ImageFormat::Png]
-        .into_iter()
-        .enumerate()
-    {
+    // Only offer a JPEG candidate when the source has no transparency, so we
+    // never silently flatten an alpha channel.
+    let formats: &[ImageFormat] = if has_alpha(path) {
+        &[ImageFormat::Png]
+    } else {
+        &[ImageFormat::Jpeg, ImageFormat::Png]
+    };
+    for (i, fmt) in formats.iter().copied().enumerate() {
         let c = tmp.path().join(format!("c{}.{}", i + 1, fmt.extension()));
         let opts = OptimiseOptions {
             output: Some(c.clone()),

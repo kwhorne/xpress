@@ -183,6 +183,36 @@ fn video_to_gif() {
 }
 
 #[test]
+fn video_convert_hevc() {
+    common::install_stubs();
+    let dir = tmpdir("hevc");
+    let f = dir.join("clip.mov");
+    common::write_dummy(&f, 8000);
+    let r = video::convert_codec(&f, video::VideoCodec::Hevc, &opts(), false).unwrap();
+    assert_eq!(r.output.extension().unwrap(), "mp4");
+    assert!(r.output.exists());
+}
+
+#[test]
+fn video_convert_vp9_webm() {
+    common::install_stubs();
+    let dir = tmpdir("vp9");
+    let f = dir.join("clip.mov");
+    common::write_dummy(&f, 8000);
+    let r = video::convert_codec(&f, video::VideoCodec::Vp9, &opts(), false).unwrap();
+    assert_eq!(r.output.extension().unwrap(), "webm");
+}
+
+#[test]
+fn alpha_detection() {
+    common::install_stubs();
+    let dir = tmpdir("alpha");
+    let jpg = dir.join("x.jpg");
+    common::write_dummy(&jpg, 100);
+    assert!(!image::has_alpha(&jpg), "non-png reports no alpha");
+}
+
+#[test]
 fn target_size_budget() {
     common::install_stubs();
     let dir = tmpdir("budget");

@@ -63,6 +63,158 @@ pub fn change_speed(
     Ok(())
 }
 
+/// Target codecs for explicit video conversion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VideoCodec {
+    H264,
+    Hevc,
+    Av1,
+    Vp9,
+}
+
+impl VideoCodec {
+    pub fn from_target(s: &str) -> Option<VideoCodec> {
+        match s.to_ascii_lowercase().as_str() {
+            "mp4" | "h264" | "avc" => Some(VideoCodec::H264),
+            "hevc" | "h265" | "x265" => Some(VideoCodec::Hevc),
+            "av1" => Some(VideoCodec::Av1),
+            "webm" | "vp9" => Some(VideoCodec::Vp9),
+            _ => None,
+        }
+    }
+
+    pub fn container_ext(&self) -> &'static str {
+        match self {
+            VideoCodec::H264 | VideoCodec::Hevc | VideoCodec::Av1 => "mp4",
+            VideoCodec::Vp9 => "webm",
+        }
+    }
+}
+
+/// Convert a video to a specific codec/container. `hw` requests a hardware
+/// encoder (VideoToolbox) on Apple Silicon where applicable.
+pub fn convert_codec(
+    path: &Path,
+    codec: VideoCodec,
+    options: &OptimiseOptions,
+    hw: bool,
+) -> Result<OptimisationResult, OptimiseError> {
+    if !path.is_file() {
+        return Err(OptimiseError::NotFound(path.to_path_buf()));
+    }
+    let old_size = file_size(path);
+    let cq = options.compression;
+    let crf = cq.video_h264_crf(); // 17..32 baseline
+    let arm = tools::is_arm64();
+    let s = |v: &str| v.to_string();
+
+    let ext = codec.container_ext();
+    let webm = codec == VideoCodec::Vp9;
+
+    let vcodec_args: Vec<String> = match codec {
+        VideoCodec::H264 => cq.video_h264_args(arm && hw),
+        VideoCodec::Hevc => {
+            if arm && hw {
+                vec![s("-vcodec"), s("hevc_videotoolbox"), s("-tag:v"), s("hvc1")]
+            } else {
+                vec![
+                    s("-vcodec"),
+                    s("libx265"),
+                    s("-tag:v"),
+                    s("hvc1"),
+                    s("-preset"),
+                    s(cq.video_h264_preset()),
+                    s("-crf"),
+                    crf.to_string(),
+                ]
+            }
+        }
+        VideoCodec::Av1 => {
+            // SVT-AV1 CRF scale ~0..63. Map 5..100 -> 24..50.
+            let av1_crf = 24 + ((cq.factor.max(5) - 5) as f64 / 95.0 * 26.0).round() as i32;
+            vec![
+                s("-vcodec"),
+                s("libsvtav1"),
+                s("-crf"),
+                av1_crf.to_string(),
+                s("-preset"),
+                s("6"),
+            ]
+        }
+        VideoCodec::Vp9 => {
+            let vp9_crf = 24 + ((cq.factor.max(5) - 5) as f64 / 95.0 * 24.0).round() as i32;
+            vec![
+                s("-vcodec"),
+                s("libvpx-vp9"),
+                s("-crf"),
+                vp9_crf.to_string(),
+                s("-b:v"),
+                s("0"),
+            ]
+        }
+    };
+
+    let tmp = TempDir::new()?;
+    let temp_out = tmp
+        .path()
+        .join(format!("{}.{ext}", crate::result::file_stem_lossy(path)));
+
+    let build = |reencode_audio: bool| -> Vec<String> {
+        let mut args: Vec<String> = vec![s("-y"), s("-i"), path.display().to_string()];
+        args.extend(vcodec_args.clone());
+        if webm {
+            args.extend(
+                [
+                    "-c:a", "libopus", "-b:a", "128k", "-map", "0:v", "-map", "0:a?",
+                ]
+                .map(String::from),
+            );
+        } else if reencode_audio {
+            args.extend(["-c:a", "aac", "-b:a", "192k"].map(String::from));
+        } else {
+            args.extend(["-c:a", "copy", "-map", "0:v", "-map", "0:a?"].map(String::from));
+        }
+        if !webm {
+            args.extend(["-movflags", "+faststart"].map(String::from));
+        }
+        args.extend(["-hide_banner", "-nostats"].map(String::from));
+        args.push(temp_out.display().to_string());
+        args
+    };
+
+    if tools::run(Tool::Ffmpeg, build(false)).is_err() {
+        tools::run(Tool::Ffmpeg, build(true))?;
+    }
+
+    let new_size = file_size(&temp_out);
+    let dest = options
+        .output
+        .clone()
+        .unwrap_or_else(|| path.with_extension(ext));
+    let backup = if options.backup && options.output.is_none() && dest == path {
+        Some(backup_file(path)?)
+    } else {
+        None
+    };
+    std::fs::copy(&temp_out, &dest)?;
+    if options.preserve_dates {
+        copy_dates(path, &dest);
+    }
+    if options.output.is_none() && dest != path && path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+
+    Ok(OptimisationResult {
+        kind: MediaKind::Video,
+        source: path.to_path_buf(),
+        output: dest,
+        backup,
+        old_size,
+        new_size,
+        aggressive: cq.image_is_aggressive(),
+    })
+}
+
 /// Convert a video to an animated GIF.
 ///
 /// Uses `gifski` (best quality) when available, extracting frames with ffmpeg;

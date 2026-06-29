@@ -175,6 +175,9 @@ struct ConvertArgs {
     /// Explicit audio bitrate in kbps.
     #[arg(long)]
     bitrate: Option<i32>,
+    /// Use a hardware encoder (VideoToolbox) for video codecs on Apple Silicon.
+    #[arg(long)]
+    hw: bool,
     #[arg(required = true)]
     items: Vec<PathBuf>,
 }
@@ -490,6 +493,31 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         });
         render::summarise(&results, args.common.output_mode());
         return Ok(());
+    }
+
+    // Video codec conversion (mp4/hevc/av1/webm).
+    if let Some(codec) = xpress_core::video::VideoCodec::from_target(&args.to) {
+        let files = collect_files(&args.items, args.common.recursive, &[MediaKind::Video]);
+        if !files.is_empty() {
+            let single = files.len() == 1;
+            let counter = std::cell::Cell::new(1u64);
+            let jobs: Vec<_> = files
+                .iter()
+                .map(|f| {
+                    (
+                        f.clone(),
+                        per_file_options(&args.common, f, &counter, single),
+                    )
+                })
+                .collect();
+            let hw = args.hw;
+            let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
+                xpress_core::video::convert_codec(f, codec, o, hw)
+            });
+            render::summarise(&results, args.common.output_mode());
+            return Ok(());
+        }
+        // No videos matched; fall through (e.g. `mp4` given but only images present).
     }
 
     // Dispatch on the target: image format vs audio format.

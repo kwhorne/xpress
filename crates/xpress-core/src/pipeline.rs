@@ -271,6 +271,10 @@ fn step_output_ext(step: &Step, current: &Path) -> String {
         Step::Convert { to } => {
             if to.eq_ignore_ascii_case("gif") {
                 "gif".to_string()
+            } else if classify(current) == Some(MediaKind::Video) {
+                video::VideoCodec::from_target(to)
+                    .map(|c| c.container_ext().to_string())
+                    .unwrap_or(cur)
             } else if let Some(f) = ImageFormat::from_str(to) {
                 f.extension().to_string()
             } else if let Some(a) = AudioFormat::from_target(to) {
@@ -316,8 +320,17 @@ fn apply_step(
             crop::crop_file(current, &args.to_spec(), &opts)?;
         }
         Step::Convert { to } => {
-            if to.eq_ignore_ascii_case("gif") && classify(current) == Some(MediaKind::Video) {
+            let is_video = classify(current) == Some(MediaKind::Video);
+            if to.eq_ignore_ascii_case("gif") && is_video {
                 video::to_gif(current, &opts, 15, None)?;
+            } else if is_video {
+                if let Some(codec) = video::VideoCodec::from_target(to) {
+                    video::convert_codec(current, codec, &opts, true)?;
+                } else {
+                    return Err(OptimiseError::Other(format!(
+                        "convert: '{to}' is not a video target"
+                    )));
+                }
             } else if let Some(f) = ImageFormat::from_str(to) {
                 image::convert(current, f, &opts)?;
             } else if let Some(a) = AudioFormat::from_target(to) {

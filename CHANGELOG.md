@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Video codec conversion: `convert --to mp4|hevc|av1|webm` (and the same in the
+  pipeline DSL), with a `--hw` flag for VideoToolbox on Apple Silicon.
+- Adaptive image optimisation is now transparency-aware: PNGs with an alpha
+  channel never get a JPEG candidate (no silent flattening).
+
 ## [0.2.0] - 2026-06-29
 
 ### Added
