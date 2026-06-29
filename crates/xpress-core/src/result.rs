@@ -85,6 +85,20 @@ impl Default for OptimiseOptions {
     }
 }
 
+/// The file name of `path`, or a safe fallback when it has none (e.g. `/` or `..`).
+pub fn file_name_lossy(path: &Path) -> std::ffi::OsString {
+    path.file_name()
+        .map(|n| n.to_owned())
+        .unwrap_or_else(|| std::ffi::OsString::from("file"))
+}
+
+/// The file stem of `path`, or `"file"` when it has none.
+pub fn file_stem_lossy(path: &Path) -> String {
+    path.file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_string())
+}
+
 pub fn file_size(path: &Path) -> u64 {
     fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }

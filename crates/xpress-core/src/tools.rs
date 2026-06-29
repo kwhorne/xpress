@@ -89,9 +89,22 @@ pub fn bundle_dir() -> Option<PathBuf> {
     }
 }
 
+/// A process-wide override for the bin directory, checked before everything else.
+/// Used by tests (and embeddable hosts) to avoid relying on environment variables.
+static BIN_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+/// Set the highest-priority directory to resolve tools from. Idempotent: the
+/// first value set wins for the lifetime of the process.
+pub fn set_bin_dir_override(dir: PathBuf) {
+    let _ = BIN_OVERRIDE.set(dir);
+}
+
 /// Candidate bin directories, in resolution order (excluding `PATH`).
 fn bin_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
+    if let Some(dir) = BIN_OVERRIDE.get() {
+        dirs.push(dir.clone());
+    }
     if let Ok(dir) = std::env::var("XPRESS_BIN_DIR") {
         dirs.push(PathBuf::from(dir));
     }

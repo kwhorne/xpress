@@ -83,6 +83,12 @@ struct CommonOpts {
     /// Output file (single input) or directory (multiple inputs).
     #[arg(short, long)]
     output: Option<PathBuf>,
+    /// Output results as JSON (for scripting).
+    #[arg(long)]
+    json: bool,
+    /// Only print errors and the final summary line.
+    #[arg(short, long)]
+    quiet: bool,
 }
 
 impl CommonOpts {
@@ -93,6 +99,16 @@ impl CommonOpts {
             CompressionQuality::new(CompressionTier::Custom, f)
         } else {
             CompressionQuality::normal()
+        }
+    }
+
+    fn output_mode(&self) -> render::OutputMode {
+        if self.json {
+            render::OutputMode::Json
+        } else if self.quiet {
+            render::OutputMode::Quiet
+        } else {
+            render::OutputMode::Normal
         }
     }
 
@@ -305,7 +321,7 @@ fn run_optimise(args: OptimiseArgs) -> Result<()> {
     }
     let options = args.common.to_options();
     let results = optimise_many(&files, &options, AudioFormat::SameAsInput, args.pdf_dpi);
-    render::summarise(&results);
+    render::summarise(&results, args.common.output_mode());
     Ok(())
 }
 
@@ -337,7 +353,7 @@ fn run_downscale(args: DownscaleArgs) -> Result<()> {
             )
         })
         .collect();
-    render::summarise(&results);
+    render::summarise(&results, args.common.output_mode());
     Ok(())
 }
 
@@ -361,7 +377,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
                 (f.clone(), xpress_core::image::convert(f, format, &opts))
             })
             .collect();
-        render::summarise(&results);
+        render::summarise(&results, args.common.output_mode());
         return Ok(());
     }
 
@@ -379,7 +395,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
                 )
             })
             .collect();
-        render::summarise(&results);
+        render::summarise(&results, args.common.output_mode());
         return Ok(());
     }
 
@@ -414,7 +430,7 @@ fn run_crop(args: CropArgs) -> Result<()> {
             (f.clone(), xpress_core::crop::crop_file(f, &spec, &opts))
         })
         .collect();
-    render::summarise(&results);
+    render::summarise(&results, args.common.output_mode());
     Ok(())
 }
 
@@ -548,7 +564,7 @@ fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
             (f.clone(), xpress_core::pipeline::run(f, &steps, &opts))
         })
         .collect();
-    render::summarise(&results);
+    render::summarise(&results, args.common.output_mode());
     Ok(())
 }
 

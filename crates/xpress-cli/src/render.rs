@@ -25,8 +25,64 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
+/// How to render results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputMode {
+    Normal,
+    Quiet,
+    Json,
+}
+
+fn kind_str(kind: xpress_core::filetype::MediaKind) -> &'static str {
+    use xpress_core::filetype::MediaKind::*;
+    match kind {
+        Image => "image",
+        Video => "video",
+        Audio => "audio",
+        Pdf => "pdf",
+    }
+}
+
+/// Emit results as a JSON array (one object per file).
+fn summarise_json(results: &[(PathBuf, Result<OptimisationResult, OptimiseError>)]) {
+    let items: Vec<serde_json::Value> = results
+        .iter()
+        .map(|(path, res)| match res {
+            Ok(r) => serde_json::json!({
+                "source": path.display().to_string(),
+                "output": r.output.display().to_string(),
+                "kind": kind_str(r.kind),
+                "ok": true,
+                "old_size": r.old_size,
+                "new_size": r.new_size,
+                "saved_bytes": r.saved_bytes(),
+                "saved_percent": (r.saved_percent() * 100.0).round() / 100.0,
+                "aggressive": r.aggressive,
+                "improved": r.improved(),
+            }),
+            Err(e) => serde_json::json!({
+                "source": path.display().to_string(),
+                "ok": false,
+                "error": e.to_string(),
+            }),
+        })
+        .collect();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&items).unwrap_or_else(|_| "[]".into())
+    );
+}
+
 /// Print a per-file summary plus aggregate savings.
-pub fn summarise(results: &[(PathBuf, Result<OptimisationResult, OptimiseError>)]) {
+pub fn summarise(
+    results: &[(PathBuf, Result<OptimisationResult, OptimiseError>)],
+    mode: OutputMode,
+) {
+    if mode == OutputMode::Json {
+        summarise_json(results);
+        return;
+    }
+    let quiet = mode == OutputMode::Quiet;
     let mut total_old = 0u64;
     let mut total_new = 0u64;
     let mut ok = 0usize;
@@ -38,7 +94,9 @@ pub fn summarise(results: &[(PathBuf, Result<OptimisationResult, OptimiseError>)
                 total_old += r.old_size;
                 total_new += r.new_size;
                 ok += 1;
-                if r.improved() {
+                if quiet {
+                    // no per-file lines in quiet mode
+                } else if r.improved() {
                     println!(
                         "{CHECK} {} {ARROW} {}  ({} {ARROW} {}, -{:.0}%){}",
                         path.display(),

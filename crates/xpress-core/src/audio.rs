@@ -222,7 +222,7 @@ pub fn optimise(
     let out_ext = format.file_extension();
     let temp_out = tmp.path().join(format!(
         "{}.{out_ext}",
-        path.file_stem().unwrap().to_string_lossy()
+        crate::result::file_stem_lossy(path)
     ));
 
     let mut args: Vec<String> = vec!["-y".into(), "-i".into(), path.display().to_string()];

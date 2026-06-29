@@ -175,7 +175,7 @@ fn crop_image(
     let plan = plan_for_image(sw, sh, spec);
 
     let tmp = TempDir::new()?;
-    let cropped = tmp.path().join(path.file_name().unwrap());
+    let cropped = tmp.path().join(crate::result::file_name_lossy(path));
     let src = path.display().to_string();
     let dst = cropped.display().to_string();
 

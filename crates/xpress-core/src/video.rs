@@ -100,7 +100,7 @@ pub fn optimise_with_filter(
     let tmp = TempDir::new()?;
     let temp_out = tmp
         .path()
-        .join(path.with_extension("mp4").file_name().unwrap());
+        .join(crate::result::file_name_lossy(&path.with_extension("mp4")));
 
     let build = |reencode_audio: bool| -> Vec<String> {
         // ffmpeg -y -i <in> [-vf <filter>] <encoderArgs> [-c:a copy -map ...] -movflags +faststart <out>

@@ -162,7 +162,7 @@ pub fn optimise(
     let lossy = effective_dpi < PDF_DPI_NO_DOWNSAMPLE;
 
     let tmp = TempDir::new()?;
-    let temp_out = tmp.path().join(path.file_name().unwrap());
+    let temp_out = tmp.path().join(crate::result::file_name_lossy(path));
 
     let args = gs_args(
         &path.display().to_string(),

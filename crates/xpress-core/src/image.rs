@@ -7,7 +7,8 @@ use tempfile::TempDir;
 use crate::compression::CompressionQuality;
 use crate::filetype::{extension_lower, MediaKind};
 use crate::result::{
-    backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
+    backup_file, copy_dates, file_name_lossy, file_size, file_stem_lossy, OptimisationResult,
+    OptimiseError, OptimiseOptions,
 };
 use crate::tools::{self, Tool};
 
@@ -25,7 +26,7 @@ pub fn optimise(
     let cq = options.compression;
 
     let tmp = TempDir::new()?;
-    let temp_out = tmp.path().join(path.file_name().unwrap());
+    let temp_out = tmp.path().join(file_name_lossy(path));
 
     match ext.as_str() {
         "jpg" | "jpeg" => optimise_jpeg(path, &temp_out, cq)?,
@@ -153,11 +154,9 @@ pub fn convert(
     let q = cq.conversion_quality();
 
     let tmp = TempDir::new()?;
-    let temp_out = tmp.path().join(format!(
-        "{}.{}",
-        path.file_stem().unwrap().to_string_lossy(),
-        format.extension()
-    ));
+    let temp_out = tmp
+        .path()
+        .join(format!("{}.{}", file_stem_lossy(path), format.extension()));
     let src = path.display().to_string();
     let out = temp_out.display().to_string();
 

@@ -68,7 +68,7 @@ fn downscale_image(
 ) -> Result<OptimisationResult, OptimiseError> {
     let ext = extension_lower(path).unwrap_or_default();
     let tmp = TempDir::new()?;
-    let scaled = tmp.path().join(path.file_name().unwrap());
+    let scaled = tmp.path().join(crate::result::file_name_lossy(path));
 
     if ext == "gif" {
         // gifsicle --scale <factor> --output <out> <src>

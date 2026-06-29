@@ -205,7 +205,7 @@ pub fn run(
     let work = TempDir::new()?;
 
     // The working file starts as a copy of the source.
-    let mut current = work.path().join(source.file_name().unwrap());
+    let mut current = work.path().join(crate::result::file_name_lossy(source));
     std::fs::copy(source, &current)?;
 
     let mut counter = 0usize;
