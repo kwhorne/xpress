@@ -21,14 +21,18 @@ The engine is UI-agnostic: both the CLI and the GUI call into `xpress-core`.
 | `compression` | `CompressionQuality`: maps one 5–100 factor to each tool's native quality knob. |
 | `tools` | Locate external binaries (env / sibling / bundle / PATH) and run them with retries. |
 | `filetype` | Classify paths into `Image`/`Video`/`Audio`/`Pdf` by extension. |
-| `image` | JPEG (jpegoptim), PNG (pngquant), GIF (gifsicle); format conversion. |
-| `video` | ffmpeg H.264 path; remove-audio, change-speed, cap-fps. |
+| `image` | JPEG (jpegoptim), PNG (pngquant), GIF (gifsicle); format conversion; adaptive. |
+| `video` | ffmpeg H.264 path; video→GIF; remove-audio, change-speed, cap-fps. |
 | `pdf` | ghostscript (`pdfwrite`) with downsampling control. |
 | `audio` | ffmpeg encoders + `AudioFormat` (aac/mp3/opus/wav/flac/aiff). |
 | `scale` | Resolution downscale (vips/ffmpeg/gifsicle). |
 | `crop` | Crop/resize to size, aspect ratio or long edge. |
+| `budget` | Compress to a byte budget by ramping the compression factor. |
 | `pipeline` | Parse + run the step DSL. |
+| `template` | Expand output filename templates (`%f`, `%e`, `%i`, date/time, …). |
 | `store` | Persist saved pipelines and folder automations (JSON). |
+| `config` | User defaults (compression/backup/…) from `config.json`. |
+| `clipboard` | Write an optimised PNG back to the clipboard (macOS). |
 | `bundled` | Optional embedded binaries (`embed-tools`). |
 | `result` | `OptimisationResult`, backup/dates/size helpers, `OptimiseOptions`. |
 

@@ -200,9 +200,16 @@ Originals are backed up next to the file as `.<name>.orig` unless `--no-backup`.
 - Background (off-thread) optimisation; compression + pipeline controls.
 - Global hotkey (⌘⇧O) to optimise the clipboard image; always-on-top mode.
 
+**Phase 6 — robustness & polish (0.2.0)** ✅
+- Clipboard “paste small”: optimised PNG written back to the clipboard (macOS).
+- `convert --to gif`, `--max-size` budget, `--adaptive`, output filename templates.
+- `restore`/`clean-backups`, a user `config.json`, `--json`/`--quiet`, live progress.
+- Integration test suite (stub tools), hardened paths, MSRV 1.87, CI/release `.dmg`.
+
 ### Possible next steps
-- Crop window / interactive crop, batch review window, uploads/sharing.
-- Packaging: `.app` bundle + code signing; embed binaries via `embed-tools`.
+- macOS Developer ID signing + notarisation (needs an Apple certificate).
+- Interactive crop window, batch review window, uploads/sharing.
+- GUI drag-out of results into other apps (needs a non-egui drag source).
 
 ## Development
 
