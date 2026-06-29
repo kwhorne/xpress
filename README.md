@@ -206,10 +206,17 @@ Originals are backed up next to the file as `.<name>.orig` unless `--no-backup`.
 - `restore`/`clean-backups`, a user `config.json`, `--json`/`--quiet`, live progress.
 - Integration test suite (stub tools), hardened paths, MSRV 1.87, CI/release `.dmg`.
 
+**Phase 7 — formats & editing (0.2.1)** ✅
+- Video codec conversion (`mp4`/`hevc`/`av1`/`webm`) with a `--hw` toggle.
+- Non-destructive PDF `crop-pdf`/`uncrop-pdf` and `extract-pages`.
+- Pipeline steps: `normalize`, `watermark`, `copyToClipboard`, `runScript`.
+- Alpha-aware adaptive; GUI interactive crop tool + Reveal/Copy on result cards.
+- Integrations guide (Shortcuts, Folder Actions, Photos, uploads).
+
 ### Possible next steps
 - macOS Developer ID signing + notarisation (needs an Apple certificate).
-- Interactive crop window, batch review window, uploads/sharing.
-- GUI drag-out of results into other apps (needs a non-egui drag source).
+- Native GUI drag-out into other apps (needs a non-egui drag source).
+- Native Photos/Shortcuts app target (Xcode App Intents/PhotoKit).
 
 ## Development
 

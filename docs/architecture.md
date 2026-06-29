@@ -23,10 +23,11 @@ The engine is UI-agnostic: both the CLI and the GUI call into `xpress-core`.
 | `filetype` | Classify paths into `Image`/`Video`/`Audio`/`Pdf` by extension. |
 | `image` | JPEG (jpegoptim), PNG (pngquant), GIF (gifsicle); format conversion; adaptive. |
 | `video` | ffmpeg H.264 path; video→GIF; remove-audio, change-speed, cap-fps. |
-| `pdf` | ghostscript (`pdfwrite`) with downsampling control. |
+| `pdf` | ghostscript optimise; non-destructive crop/uncrop (lopdf); page extraction. |
 | `audio` | ffmpeg encoders + `AudioFormat` (aac/mp3/opus/wav/flac/aiff). |
 | `scale` | Resolution downscale (vips/ffmpeg/gifsicle). |
-| `crop` | Crop/resize to size, aspect ratio or long edge. |
+| `crop` | Crop/resize to size, aspect ratio, long edge, or an arbitrary rect. |
+| `effects` | Watermark overlay (ffmpeg) for images and video. |
 | `budget` | Compress to a byte budget by ramping the compression factor. |
 | `pipeline` | Parse + run the step DSL. |
 | `template` | Expand output filename templates (`%f`, `%e`, `%i`, date/time, …). |
