@@ -9,6 +9,7 @@ pub mod budget;
 pub mod bundled;
 pub mod clipboard;
 pub mod compression;
+pub mod config;
 pub mod crop;
 pub mod filetype;
 pub mod image;

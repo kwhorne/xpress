@@ -55,6 +55,8 @@ enum Command {
     CleanBackups(FilesArg),
     /// Delete EXIF metadata from images.
     StripExif(FilesArg),
+    /// Show the config file path and current default values.
+    Config,
     /// Extract bundled binaries into the per-user bundle dir.
     Bundle,
     /// Check which external tools are available.
@@ -96,13 +98,13 @@ struct CommonOpts {
 }
 
 impl CommonOpts {
-    fn compression_quality(&self) -> CompressionQuality {
-        if self.aggressive {
+    fn compression_quality(&self, cfg: &xpress_core::config::Config) -> CompressionQuality {
+        if self.aggressive || cfg.aggressive {
             CompressionQuality::aggressive()
         } else if let Some(f) = self.compression {
             CompressionQuality::new(CompressionTier::Custom, f)
         } else {
-            CompressionQuality::normal()
+            CompressionQuality::new(CompressionTier::Custom, cfg.compression)
         }
     }
 
@@ -117,11 +119,13 @@ impl CommonOpts {
     }
 
     fn to_options(&self) -> OptimiseOptions {
+        // Flags override config; config overrides built-in defaults.
+        let cfg = xpress_core::config::Config::load();
         OptimiseOptions {
-            compression: self.compression_quality(),
-            backup: !self.no_backup,
-            strip_metadata: self.strip_metadata,
-            preserve_dates: !self.no_preserve_dates,
+            compression: self.compression_quality(&cfg),
+            backup: !self.no_backup && cfg.backup,
+            strip_metadata: self.strip_metadata || cfg.strip_metadata,
+            preserve_dates: !self.no_preserve_dates && cfg.preserve_dates,
             output: self.output.clone(),
             allow_larger: self.allow_larger,
         }
@@ -350,6 +354,22 @@ fn run() -> Result<()> {
         Command::Restore(args) => run_restore(args),
         Command::CleanBackups(args) => run_clean_backups(args),
         Command::StripExif(args) => run_strip_exif(args),
+        Command::Config => {
+            let cfg = xpress_core::config::Config::load();
+            if let Some(p) = xpress_core::config::Config::path() {
+                println!("Config file: {}", p.display());
+                if !p.exists() {
+                    println!("(not created yet — using built-in defaults)");
+                }
+            }
+            println!("\nDefaults:");
+            println!("  compression   = {}", cfg.compression);
+            println!("  aggressive    = {}", cfg.aggressive);
+            println!("  backup        = {}", cfg.backup);
+            println!("  strip_metadata= {}", cfg.strip_metadata);
+            println!("  preserve_dates= {}", cfg.preserve_dates);
+            Ok(())
+        }
         Command::Bundle => run_bundle(),
         Command::Doctor => {
             render::doctor();

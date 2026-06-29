@@ -19,6 +19,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `%r`, `%%`).
 - `--json` and `--quiet` output modes.
 - `restore` and `clean-backups` commands to manage `.orig` backups.
+- A user config file (`config.json`) for default compression and behaviours, plus
+  a `config` command to show it.
 - Integration test suite using stub tools.
 - MSRV declared (Rust 1.87) and a `rust-toolchain.toml`; GitHub issue/PR templates.
 

@@ -157,6 +157,26 @@ xpress restore [-r] <files|folders>        # move .orig backups back into place
 xpress clean-backups [-r] <files|folders>  # delete .orig backups
 ```
 
+## config
+
+```sh
+xpress config   # show the config file path and current defaults
+```
+
+Defaults are read from a JSON config file (`~/Library/Application Support/xpress/config.json`,
+or the XDG/`APPDATA` equivalent). Command-line flags override the config; the
+config overrides the built-in defaults. Recognised keys:
+
+```json
+{
+  "compression": 30,
+  "aggressive": false,
+  "backup": true,
+  "strip_metadata": false,
+  "preserve_dates": true
+}
+```
+
 ## doctor / bundle
 
 ```sh
