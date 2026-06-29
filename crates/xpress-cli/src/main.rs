@@ -49,6 +49,10 @@ enum Command {
     Pipeline(PipelineCmd),
     /// Watch folders (and/or the clipboard) and optimise automatically.
     Watch(WatchArgs),
+    /// Restore originals from `.orig` backups.
+    Restore(FilesArg),
+    /// Delete `.orig` backups.
+    CleanBackups(FilesArg),
     /// Delete EXIF metadata from images.
     StripExif(FilesArg),
     /// Extract bundled binaries into the per-user bundle dir.
@@ -343,6 +347,8 @@ fn run() -> Result<()> {
                 options,
             )
         }
+        Command::Restore(args) => run_restore(args),
+        Command::CleanBackups(args) => run_clean_backups(args),
         Command::StripExif(args) => run_strip_exif(args),
         Command::Bundle => run_bundle(),
         Command::Doctor => {
@@ -665,6 +671,54 @@ fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
         })
         .collect();
     render::summarise(&results, args.common.output_mode());
+    Ok(())
+}
+
+fn run_restore(args: FilesArg) -> Result<()> {
+    let backups = xpress_core::result::find_backups(&args.items, args.recursive);
+    if backups.is_empty() {
+        bail!("no .orig backups found");
+    }
+    let mut n = 0;
+    for (backup, original) in &backups {
+        match std::fs::rename(backup, original) {
+            Ok(()) => {
+                n += 1;
+                println!("{} restored {}", render::CHECK, original.display());
+            }
+            Err(e) => eprintln!(
+                "{} {} {} {e}",
+                render::ERROR_X,
+                original.display(),
+                render::ARROW
+            ),
+        }
+    }
+    println!("\n{n} restored");
+    Ok(())
+}
+
+fn run_clean_backups(args: FilesArg) -> Result<()> {
+    let backups = xpress_core::result::find_backups(&args.items, args.recursive);
+    if backups.is_empty() {
+        bail!("no .orig backups found");
+    }
+    let mut n = 0;
+    for (backup, _) in &backups {
+        match std::fs::remove_file(backup) {
+            Ok(()) => {
+                n += 1;
+                println!("{} removed {}", render::CHECK, backup.display());
+            }
+            Err(e) => eprintln!(
+                "{} {} {} {e}",
+                render::ERROR_X,
+                backup.display(),
+                render::ARROW
+            ),
+        }
+    }
+    println!("\n{n} backups deleted");
     Ok(())
 }
 

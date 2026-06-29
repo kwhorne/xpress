@@ -13,6 +13,8 @@ xpress <COMMAND>
 | `pipeline` | Run, save and manage pipelines |
 | `watch` | Watch folders / clipboard and optimise automatically |
 | `strip-exif` | Delete EXIF metadata from images |
+| `restore` | Restore originals from `.orig` backups |
+| `clean-backups` | Delete `.orig` backups |
 | `bundle` | Extract embedded binaries to the bundle dir |
 | `doctor` | Report which external tools are available |
 
@@ -147,6 +149,13 @@ xpress strip-exif [-r] <ITEMS>...
 ```
 
 Removes metadata from images in place (needs `exiftool`).
+
+## restore / clean-backups
+
+```sh
+xpress restore [-r] <files|folders>        # move .orig backups back into place
+xpress clean-backups [-r] <files|folders>  # delete .orig backups
+```
 
 ## doctor / bundle
 

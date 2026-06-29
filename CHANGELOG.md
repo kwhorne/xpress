@@ -18,7 +18,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Output filename templates for `--output` (`%f`, `%e`, `%P`, date/time, `%i`,
   `%r`, `%%`).
 - `--json` and `--quiet` output modes.
+- `restore` and `clean-backups` commands to manage `.orig` backups.
 - Integration test suite using stub tools.
+- MSRV declared (Rust 1.87) and a `rust-toolchain.toml`; GitHub issue/PR templates.
 
 ### Fixed
 - `convert` to PNG/JPEG no longer optimises a file in place onto itself.

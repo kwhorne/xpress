@@ -103,17 +103,68 @@ pub fn file_size(path: &Path) -> u64 {
     fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
 
-/// Backup `path` to a hidden sibling `.<name>.orig`. Returns the backup path.
-pub fn backup_file(path: &Path) -> std::io::Result<PathBuf> {
+/// The backup path (`.<name>.orig`) for a given file.
+pub fn backup_path(path: &Path) -> PathBuf {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "file".into());
-    let backup = path.with_file_name(format!(".{name}.orig"));
+    path.with_file_name(format!(".{name}.orig"))
+}
+
+/// If `backup` is a `.<name>.orig` file, return the original path it restores to.
+pub fn original_for_backup(backup: &Path) -> Option<PathBuf> {
+    let name = backup.file_name()?.to_string_lossy();
+    let inner = name.strip_prefix('.')?.strip_suffix(".orig")?;
+    if inner.is_empty() {
+        return None;
+    }
+    Some(backup.with_file_name(inner))
+}
+
+/// Backup `path` to a hidden sibling `.<name>.orig`. Returns the backup path.
+pub fn backup_file(path: &Path) -> std::io::Result<PathBuf> {
+    let backup = backup_path(path);
     if !backup.exists() {
         fs::copy(path, &backup)?;
     }
     Ok(backup)
+}
+
+/// Find `.<name>.orig` backups under the given inputs (files or folders).
+/// Returns `(backup, original)` pairs.
+pub fn find_backups(inputs: &[PathBuf], recursive: bool) -> Vec<(PathBuf, PathBuf)> {
+    let mut out = Vec::new();
+    for input in inputs {
+        if input.is_file() {
+            if let Some(orig) = original_for_backup(input) {
+                out.push((input.clone(), orig));
+            } else {
+                // A normal file: offer its backup if present.
+                let b = backup_path(input);
+                if b.exists() {
+                    out.push((b, input.clone()));
+                }
+            }
+        } else if input.is_dir() {
+            let depth = if recursive { usize::MAX } else { 1 };
+            for entry in walkdir::WalkDir::new(input)
+                .max_depth(depth)
+                .into_iter()
+                .filter_map(Result::ok)
+            {
+                let p = entry.path();
+                if p.is_file() {
+                    if let Some(orig) = original_for_backup(p) {
+                        out.push((p.to_path_buf(), orig));
+                    }
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Copy creation/modification times from `src` to `dst` (mtime only, portably).

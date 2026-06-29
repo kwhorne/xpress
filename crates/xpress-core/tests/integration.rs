@@ -212,6 +212,25 @@ fn template_expands_output() {
 }
 
 #[test]
+fn backup_then_restore_roundtrip() {
+    common::install_stubs();
+    let dir = tmpdir("restore");
+    let f = dir.join("a.png");
+    common::write_png(&f);
+    let original = std::fs::metadata(&f).unwrap().len();
+
+    image::optimise(&f, &opts()).unwrap();
+    assert!(std::fs::metadata(&f).unwrap().len() < original);
+
+    let backups = xpress_core::result::find_backups(std::slice::from_ref(&dir), false);
+    assert_eq!(backups.len(), 1);
+    let (backup, orig_path) = &backups[0];
+    assert_eq!(orig_path, &f);
+    std::fs::rename(backup, orig_path).unwrap();
+    assert_eq!(std::fs::metadata(&f).unwrap().len(), original);
+}
+
+#[test]
 fn collect_files_filters_by_kind() {
     common::install_stubs();
     let dir = tmpdir("collect");
