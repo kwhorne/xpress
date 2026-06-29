@@ -32,7 +32,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Binary bundling**: per-user bundle dir resolution, `scripts/fetch-tools.sh`,
   and an `embed-tools` feature that bakes binaries into the executable.
 - **CI/Release**: GitHub Actions for fmt + clippy + tests, and tagged releases
-  building macOS (arm64/x86_64) and Linux binaries.
+  building macOS (arm64/x86_64) and Linux binaries, a macOS `.app` zip, and a
+  macOS `.dmg` (with an Applications shortcut for drag-installing).
 
 ### Notes
 - xpress is an independent project under the MIT License, inspired by the

@@ -67,8 +67,12 @@ scripts/make-app.sh                 # -> dist/xpress.app (ad-hoc signed)
 scripts/make-app.sh --tools         # also bundle ffmpeg/pngquant/... into the app
 ```
 
-The app is ad-hoc signed so it runs locally. Tagged releases also publish a
-signed-for-local-use `xpress-*-app.zip`. For public distribution, sign with a
+```sh
+scripts/make-dmg.sh                 # -> dist/xpress.dmg (drag-to-Applications)
+```
+
+The app is ad-hoc signed so it runs locally. Tagged releases publish a
+`xpress-*-app.zip` and a `xpress-*.dmg`. For public distribution, sign with a
 Developer ID and notarise (commands are documented at the bottom of
 `scripts/make-app.sh`).
 

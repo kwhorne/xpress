@@ -26,10 +26,12 @@ Clipboard images are saved to `~/Pictures/xpress`.
 cargo build --release -p xpress-gui -p xpress-cli
 scripts/make-app.sh                 # -> dist/xpress.app  (ad-hoc signed)
 scripts/make-app.sh --tools         # also bundle ffmpeg/pngquant/... inside
+scripts/make-dmg.sh                 # -> dist/xpress.dmg  (drag-to-Applications)
 ```
 
 The bundle is ad-hoc signed so it runs locally and includes the app icon from
-`assets/AppIcon.icns`. Tagged releases also publish `xpress-*-app.zip`.
+`assets/AppIcon.icns`. Tagged releases publish both `xpress-*-app.zip` and a
+`xpress-*.dmg` disk image (with an Applications shortcut for drag-installing).
 
 ### Distribution (Developer ID + notarisation)
 
