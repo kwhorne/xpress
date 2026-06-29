@@ -33,6 +33,9 @@ Most commands accept these shared options:
 | `--allow-larger` | Keep the result even if it is larger than the input |
 | `-o, --output <PATH>` | Output file (single input) or directory (multiple inputs) |
 
+While a batch runs in a terminal, a live spinner shows `[done/total]` and elapsed
+time; it is suppressed under `--quiet`/`--json` or when output is piped.
+
 Originals are backed up next to the file as `.<name>.orig` unless `--no-backup`.
 Compression is a single percentage that each encoder maps to its native quality
 knob (jpegoptim `--max`, pngquant `--quality`, gifsicle `-O/--lossy`, libx264

@@ -7,6 +7,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- Live progress: batch commands show a spinner with a `[done/total]` counter and
+  elapsed time on a terminal (suppressed under `--quiet`/`--json` and when piped).
 - Clipboard “paste small”: on macOS the optimised image is written back to the
   clipboard as PNG (in both `watch --clipboard` and the GUI's ⌘⇧O).
 - `convert --to gif` (and pipeline `convert(to: gif)`) to turn videos into GIFs

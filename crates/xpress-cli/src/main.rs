@@ -7,6 +7,7 @@
 //!   xpress strip-exif <items...>
 //!   xpress doctor
 
+mod progress;
 mod render;
 mod watch;
 
@@ -400,44 +401,36 @@ fn run_bundle() -> Result<()> {
 }
 
 fn run_optimise(args: OptimiseArgs) -> Result<()> {
-    use rayon::prelude::*;
-
     let kinds: Vec<MediaKind> = args.kind.into_iter().collect();
     let files = collect_files(&args.items, args.common.recursive, &kinds);
     if files.is_empty() {
         bail!("no optimisable files found");
     }
     let mode = args.common.output_mode();
-    let options = args.common.to_options();
     let single = files.len() == 1;
-
-    // Resolve per-file output paths up front (sequential, so `%i` numbers nicely).
-    let mut counter = 1u64;
+    let counter = std::cell::Cell::new(1u64);
     let jobs: Vec<(PathBuf, OptimiseOptions)> = files
         .iter()
         .map(|f| {
-            let mut o = options.clone();
-            o.output = resolve_output(&args.common.output, f, &mut counter, single);
-            (f.clone(), o)
+            (
+                f.clone(),
+                per_file_options(&args.common, f, &counter, single),
+            )
         })
         .collect();
 
     let max_size = args.max_size;
     let adaptive = args.adaptive;
     let pdf_dpi = args.pdf_dpi;
-    let results: Vec<_> = jobs
-        .par_iter()
-        .map(|(f, o)| {
-            let r = if let Some(max) = max_size {
-                xpress_core::budget::optimise_to_budget(f, max, o)
-            } else if adaptive && xpress_core::filetype::classify(f) == Some(MediaKind::Image) {
-                xpress_core::image::optimise_adaptive(f, o)
-            } else {
-                xpress_core::optimise_file(f, o, AudioFormat::SameAsInput, pdf_dpi)
-            };
-            (f.clone(), r)
-        })
-        .collect();
+    let results = progress::run_jobs(jobs, mode, |f, o| {
+        if let Some(max) = max_size {
+            xpress_core::budget::optimise_to_budget(f, max, o)
+        } else if adaptive && xpress_core::filetype::classify(f) == Some(MediaKind::Image) {
+            xpress_core::image::optimise_adaptive(f, o)
+        } else {
+            xpress_core::optimise_file(f, o, AudioFormat::SameAsInput, pdf_dpi)
+        }
+    });
     render::summarise(&results, mode);
     Ok(())
 }
@@ -457,16 +450,19 @@ fn run_downscale(args: DownscaleArgs) -> Result<()> {
     }
     let single = files.len() == 1;
     let counter = std::cell::Cell::new(1u64);
-    let results: Vec<_> = files
+    let jobs: Vec<_> = files
         .iter()
         .map(|f| {
-            let opts = per_file_options(&args.common, f, &counter, single);
             (
                 f.clone(),
-                xpress_core::scale::downscale_file(f, args.factor, &opts),
+                per_file_options(&args.common, f, &counter, single),
             )
         })
         .collect();
+    let factor = args.factor;
+    let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
+        xpress_core::scale::downscale_file(f, factor, o)
+    });
     render::summarise(&results, args.common.output_mode());
     Ok(())
 }
@@ -480,13 +476,18 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         }
         let single = files.len() == 1;
         let counter = std::cell::Cell::new(1u64);
-        let results: Vec<_> = files
+        let jobs: Vec<_> = files
             .iter()
             .map(|f| {
-                let opts = per_file_options(&args.common, f, &counter, single);
-                (f.clone(), xpress_core::video::to_gif(f, &opts, 15, None))
+                (
+                    f.clone(),
+                    per_file_options(&args.common, f, &counter, single),
+                )
             })
             .collect();
+        let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
+            xpress_core::video::to_gif(f, o, 15, None)
+        });
         render::summarise(&results, args.common.output_mode());
         return Ok(());
     }
@@ -499,13 +500,18 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         }
         let single = files.len() == 1;
         let counter = std::cell::Cell::new(1u64);
-        let results: Vec<_> = files
+        let jobs: Vec<_> = files
             .iter()
             .map(|f| {
-                let opts = per_file_options(&args.common, f, &counter, single);
-                (f.clone(), xpress_core::image::convert(f, format, &opts))
+                (
+                    f.clone(),
+                    per_file_options(&args.common, f, &counter, single),
+                )
             })
             .collect();
+        let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
+            xpress_core::image::convert(f, format, o)
+        });
         render::summarise(&results, args.common.output_mode());
         return Ok(());
     }
@@ -517,16 +523,19 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         }
         let single = files.len() == 1;
         let counter = std::cell::Cell::new(1u64);
-        let results: Vec<_> = files
+        let jobs: Vec<_> = files
             .iter()
             .map(|f| {
-                let opts = per_file_options(&args.common, f, &counter, single);
                 (
                     f.clone(),
-                    xpress_core::audio::optimise(f, &opts, format, args.bitrate),
+                    per_file_options(&args.common, f, &counter, single),
                 )
             })
             .collect();
+        let bitrate = args.bitrate;
+        let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
+            xpress_core::audio::optimise(f, o, format, bitrate)
+        });
         render::summarise(&results, args.common.output_mode());
         return Ok(());
     }
@@ -552,13 +561,18 @@ fn run_crop(args: CropArgs) -> Result<()> {
     }
     let single = files.len() == 1;
     let counter = std::cell::Cell::new(1u64);
-    let results: Vec<_> = files
+    let jobs: Vec<_> = files
         .iter()
         .map(|f| {
-            let opts = per_file_options(&args.common, f, &counter, single);
-            (f.clone(), xpress_core::crop::crop_file(f, &spec, &opts))
+            (
+                f.clone(),
+                per_file_options(&args.common, f, &counter, single),
+            )
         })
         .collect();
+    let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
+        xpress_core::crop::crop_file(f, &spec, o)
+    });
     render::summarise(&results, args.common.output_mode());
     Ok(())
 }
@@ -683,13 +697,18 @@ fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
     }
     let single = files.len() == 1;
     let counter = std::cell::Cell::new(1u64);
-    let results: Vec<_> = files
+    let jobs: Vec<_> = files
         .iter()
         .map(|f| {
-            let opts = per_file_options(&args.common, f, &counter, single);
-            (f.clone(), xpress_core::pipeline::run(f, &steps, &opts))
+            (
+                f.clone(),
+                per_file_options(&args.common, f, &counter, single),
+            )
         })
         .collect();
+    let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
+        xpress_core::pipeline::run(f, &steps, o)
+    });
     render::summarise(&results, args.common.output_mode());
     Ok(())
 }
