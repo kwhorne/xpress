@@ -146,6 +146,68 @@ fn plan_for_image(sw: u32, sh: u32, spec: &CropSpec) -> Plan {
     }
 }
 
+/// Crop a file to a normalised rectangle (`x`, `y`, `w`, `h` in 0.0–1.0 of the
+/// source, origin top-left), then optimise it. Used by the GUI crop tool.
+pub fn crop_rect(
+    path: &Path,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    options: &OptimiseOptions,
+) -> Result<OptimisationResult, OptimiseError> {
+    if !path.is_file() {
+        return Err(OptimiseError::NotFound(path.to_path_buf()));
+    }
+    let x = x.clamp(0.0, 1.0);
+    let y = y.clamp(0.0, 1.0);
+    let w = w.clamp(0.01, 1.0 - x);
+    let h = h.clamp(0.01, 1.0 - y);
+    let old_size = file_size(path);
+
+    match classify(path) {
+        Some(MediaKind::Image) => {
+            let (sw, sh) = image_dimensions(path).ok_or_else(|| {
+                OptimiseError::Other(format!("could not read dimensions of {}", path.display()))
+            })?;
+            let px = (x * sw as f64).round() as u32;
+            let py = (y * sh as f64).round() as u32;
+            let pw = ((w * sw as f64).round() as u32).max(1).min(sw - px);
+            let ph = ((h * sh as f64).round() as u32).max(1).min(sh - py);
+
+            let tmp = TempDir::new()?;
+            let cropped = tmp.path().join(crate::result::file_name_lossy(path));
+            let src = path.display().to_string();
+            let dst = cropped.display().to_string();
+            if tools::is_available(Tool::Vips) {
+                tools::run_with_retries(
+                    Tool::Vips,
+                    [
+                        "crop",
+                        &src,
+                        &dst,
+                        &px.to_string(),
+                        &py.to_string(),
+                        &pw.to_string(),
+                        &ph.to_string(),
+                    ],
+                    2,
+                )?;
+            } else {
+                ffmpeg_vf(&src, &dst, &format!("crop={pw}:{ph}:{px}:{py}"))?;
+            }
+            finalise_image(path, &cropped, old_size, options)
+        }
+        Some(MediaKind::Video) => {
+            let vf = format!("crop=iw*{w:.5}:ih*{h:.5}:iw*{x:.5}:ih*{y:.5}");
+            let mut r = video::optimise_with_filter(path, options, Some(&vf))?;
+            r.old_size = old_size;
+            Ok(r)
+        }
+        _ => Err(OptimiseError::Unsupported(path.to_path_buf())),
+    }
+}
+
 /// Crop/resize a file then optimise it.
 pub fn crop_file(
     path: &Path,

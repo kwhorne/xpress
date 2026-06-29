@@ -7,6 +7,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- GUI: an interactive **crop** tool (drag a region, apply), plus **Reveal** and
+  **Copy** actions on each result card.
+- `crop::crop_rect` in the engine for arbitrary normalised-rectangle crops.
+- Integrations guide (Shortcuts via Run Shell Script, Folder Actions, Photos
+  export flow, uploads via `runScript`).
 - PDF: non-destructive `crop-pdf` (sets the page CropBox) and `uncrop-pdf`
   (removes it), plus `extract-pages` to render pages to PNG/JPEG.
 - New pipeline steps: `normalize(lufs:)` (audio loudness), `watermark(image:,

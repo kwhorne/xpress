@@ -1,6 +1,6 @@
 //! The egui application: controls, drop zone, result cards, and the global hotkey.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use eframe::egui;
@@ -18,8 +18,17 @@ struct Card {
     detail: String,
     saved_pct: f64,
     ok: bool,
+    output: Option<PathBuf>,
     texture: Option<egui::TextureHandle>,
     pending_thumb: Option<egui::ColorImage>,
+}
+
+struct CropState {
+    path: PathBuf,
+    texture: egui::TextureHandle,
+    tex_size: egui::Vec2,
+    start: Option<egui::Pos2>,
+    sel: Option<egui::Rect>,
 }
 
 pub struct XpressApp {
@@ -39,6 +48,8 @@ pub struct XpressApp {
 
     _hotkey_manager: Option<GlobalHotKeyManager>,
     clipboard_hotkey: Option<HotKey>,
+
+    crop: Option<CropState>,
 }
 
 impl XpressApp {
@@ -71,7 +82,24 @@ impl XpressApp {
             rx,
             _hotkey_manager: manager,
             clipboard_hotkey: hotkey,
+            crop: None,
         }
+    }
+
+    fn enter_crop(&mut self, path: PathBuf, ctx: &egui::Context) {
+        let Ok(img) = image::open(&path) else { return };
+        let disp = img.thumbnail(1400, 1400).to_rgba8();
+        let (w, h) = (disp.width(), disp.height());
+        let color =
+            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], disp.as_raw());
+        let texture = ctx.load_texture("crop", color, egui::TextureOptions::LINEAR);
+        self.crop = Some(CropState {
+            path,
+            texture,
+            tex_size: egui::vec2(w as f32, h as f32),
+            start: None,
+            sel: None,
+        });
     }
 
     fn options(&self) -> OptimiseOptions {
@@ -110,6 +138,7 @@ impl XpressApp {
                             detail: e,
                             saved_pct: 0.0,
                             ok: false,
+                            output: None,
                             texture: None,
                             pending_thumb: None,
                         },
@@ -131,6 +160,7 @@ impl XpressApp {
                     detail: e,
                     saved_pct: 0.0,
                     ok: false,
+                    output: None,
                     texture: None,
                     pending_thumb: None,
                 },
@@ -164,6 +194,7 @@ impl XpressApp {
                         detail,
                         saved_pct: r.saved_percent(),
                         ok: true,
+                        output: Some(r.output.clone()),
                         texture: None,
                         pending_thumb: done.thumbnail,
                     }
@@ -173,6 +204,7 @@ impl XpressApp {
                     detail: e,
                     saved_pct: 0.0,
                     ok: false,
+                    output: None,
                     texture: None,
                     pending_thumb: None,
                 },
@@ -208,8 +240,12 @@ impl eframe::App for XpressApp {
             self.submit(path, ctx);
         }
 
-        self.draw_controls(ctx);
-        self.draw_results(ctx);
+        if self.crop.is_some() {
+            self.draw_crop(ctx);
+        } else {
+            self.draw_controls(ctx);
+            self.draw_results(ctx);
+        }
 
         // Keep a steady repaint while work is in flight.
         if self.in_flight > 0 {
@@ -278,12 +314,166 @@ impl XpressApp {
                 if ui.button("Optimise clipboard").clicked() {
                     self.optimise_clipboard(ctx);
                 }
+                if ui.button("Crop image…").clicked() {
+                    if let Some(p) = rfd::FileDialog::new()
+                        .add_filter(
+                            "images",
+                            &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff"],
+                        )
+                        .pick_file()
+                    {
+                        self.enter_crop(p, ctx);
+                    }
+                }
                 if !self.cards.is_empty() && ui.button("Clear").clicked() {
                     self.cards.clear();
                 }
             });
             ui.add_space(6.0);
         });
+    }
+
+    fn draw_crop(&mut self, ctx: &egui::Context) {
+        let mut apply = false;
+        let mut cancel = false;
+        egui::TopBottomPanel::top("crop_top").show(ctx, |ui| {
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.heading("Crop");
+                if let Some(c) = &self.crop {
+                    ui.label(
+                        egui::RichText::new(
+                            c.path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default(),
+                        )
+                        .weak(),
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                    let has_sel = self.crop.as_ref().and_then(|c| c.sel).is_some();
+                    if ui
+                        .add_enabled(has_sel, egui::Button::new("Apply crop"))
+                        .clicked()
+                    {
+                        apply = true;
+                    }
+                });
+            });
+            ui.label(
+                egui::RichText::new("Drag to select a region.")
+                    .weak()
+                    .small(),
+            );
+            ui.add_space(4.0);
+        });
+
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let Some(crop) = self.crop.as_mut() else {
+                return;
+            };
+            let avail = ui.available_size();
+            // Fit the image into the available area, preserving aspect.
+            let fit = (avail.x / crop.tex_size.x).min(avail.y / crop.tex_size.y);
+            let scale = fit.clamp(0.01, 1.0);
+            let img_size = crop.tex_size * scale;
+            let (rect, resp) = ui.allocate_exact_size(img_size, egui::Sense::drag());
+            let painter = ui.painter_at(rect);
+            painter.image(
+                crop.texture.id(),
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
+
+            if let Some(p) = resp.interact_pointer_pos() {
+                let p = egui::pos2(
+                    p.x.clamp(rect.min.x, rect.max.x),
+                    p.y.clamp(rect.min.y, rect.max.y),
+                );
+                if resp.drag_started() {
+                    crop.start = Some(p);
+                }
+                if let Some(s) = crop.start {
+                    crop.sel = Some(egui::Rect::from_two_pos(s, p));
+                }
+            }
+
+            if let Some(sel) = crop.sel {
+                // Dim outside the selection.
+                let dim = egui::Color32::from_black_alpha(120);
+                painter.rect_filled(
+                    egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x, sel.min.y)),
+                    0.0,
+                    dim,
+                );
+                painter.rect_filled(
+                    egui::Rect::from_min_max(egui::pos2(rect.min.x, sel.max.y), rect.max),
+                    0.0,
+                    dim,
+                );
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(rect.min.x, sel.min.y),
+                        egui::pos2(sel.min.x, sel.max.y),
+                    ),
+                    0.0,
+                    dim,
+                );
+                painter.rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(sel.max.x, sel.min.y),
+                        egui::pos2(rect.max.x, sel.max.y),
+                    ),
+                    0.0,
+                    dim,
+                );
+                painter.rect_stroke(
+                    sel,
+                    0.0,
+                    egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 122, 24)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+
+            // Stash geometry for apply.
+            ui.memory_mut(|m| {
+                m.data.insert_temp(egui::Id::new("crop_rect"), rect);
+            });
+        });
+
+        if cancel {
+            self.crop = None;
+        } else if apply {
+            self.apply_crop(ctx);
+        }
+    }
+
+    fn apply_crop(&mut self, ctx: &egui::Context) {
+        let Some(crop) = self.crop.take() else { return };
+        let Some(sel) = crop.sel else { return };
+        let img_rect: Option<egui::Rect> =
+            ctx.memory_mut(|m| m.data.get_temp(egui::Id::new("crop_rect")));
+        let Some(rect) = img_rect else { return };
+        let nx = ((sel.min.x - rect.min.x) / rect.width()).clamp(0.0, 1.0) as f64;
+        let ny = ((sel.min.y - rect.min.y) / rect.height()).clamp(0.0, 1.0) as f64;
+        let nw = (sel.width() / rect.width()).clamp(0.01, 1.0) as f64;
+        let nh = (sel.height() / rect.height()).clamp(0.01, 1.0) as f64;
+        self.in_flight += 1;
+        work::spawn_crop(
+            crop.path,
+            nx,
+            ny,
+            nw,
+            nh,
+            self.options(),
+            ctx.clone(),
+            self.tx.clone(),
+        );
     }
 
     fn draw_results(&mut self, ctx: &egui::Context) {
@@ -330,6 +520,16 @@ impl XpressApp {
                                     egui::Color32::from_rgb(190, 80, 80)
                                 };
                                 ui.label(egui::RichText::new(&card.detail).color(color));
+                                if let Some(out) = &card.output {
+                                    ui.horizontal(|ui| {
+                                        if ui.small_button("Reveal").clicked() {
+                                            reveal_in_file_manager(out);
+                                        }
+                                        if ui.small_button("Copy").clicked() {
+                                            xpress_core::clipboard::set_clipboard_png(out);
+                                        }
+                                    });
+                                }
                             });
                             if card.ok && card.saved_pct > 0.0 {
                                 ui.with_layout(
@@ -372,6 +572,24 @@ fn clipboard_image_to_file() -> Result<PathBuf, String> {
     let path = dir.join(format!("clip-{ts}.png"));
     buf.save(&path).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+/// Reveal a file in the OS file manager (Finder/Explorer/file manager).
+fn reveal_in_file_manager(path: &Path) {
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open")
+        .arg("-R")
+        .arg(path)
+        .spawn();
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("explorer")
+        .arg(format!("/select,{}", path.display()))
+        .spawn();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let dir = path.parent().unwrap_or(path);
+        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+    }
 }
 
 fn clipboard_dir() -> PathBuf {

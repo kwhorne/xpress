@@ -16,6 +16,10 @@ cargo run -p xpress-gui --release
 - **Controls**: a compression slider (5–100), `aggressive`, `backup`,
   `strip metadata`, an inline **pipeline** field, and a **float on top** toggle.
 - **Open files…** picker, and **Optimise clipboard** / **Clear** buttons.
+- **Crop image…** opens an interactive crop tool: drag a region and **Apply crop**.
+- Each result card has **Reveal** (show in the file manager) and **Copy** (put the
+  image on the clipboard). Native drag-*out* isn't supported by the egui shell
+  yet — see [integrations](integrations.md).
 - Work runs off the UI thread, so the window stays responsive while encoding.
 
 Clipboard images are saved to `~/Pictures/xpress`.

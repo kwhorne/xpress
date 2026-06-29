@@ -62,6 +62,35 @@ pub fn spawn_pipeline(
     });
 }
 
+/// Crop a file to a normalised rectangle on a background thread.
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_crop(
+    path: PathBuf,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    options: OptimiseOptions,
+    ctx: egui::Context,
+    tx: Sender<Msg>,
+) {
+    std::thread::spawn(move || {
+        let result =
+            xpress_core::crop::crop_rect(&path, x, y, w, h, &options).map_err(|e| e.to_string());
+        let thumbnail = result
+            .as_ref()
+            .ok()
+            .filter(|r| classify(&r.output) == Some(MediaKind::Image))
+            .and_then(|r| make_thumbnail(&r.output));
+        let _ = tx.send(Msg::Done(Box::new(Done {
+            source: path,
+            result,
+            thumbnail,
+        })));
+        ctx.request_repaint();
+    });
+}
+
 /// Decode an image and downscale it to a small preview for the result card.
 pub fn make_thumbnail(path: &std::path::Path) -> Option<egui::ColorImage> {
     let img = image::open(path).ok()?;
