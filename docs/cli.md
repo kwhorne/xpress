@@ -46,11 +46,26 @@ Auto-detects each file's type. Extra options:
 
 - `--kind image|video|pdf|audio` — restrict to one media kind.
 - `--pdf-dpi <48..300>` — downsample PDF images to this DPI (omit for none).
+- `--max-size <size>` — compress to fit a budget (`500kb`, `1.5mb`, `250000`).
+- `--adaptive` — for images, try multiple formats and keep the smallest.
 
 ```sh
 xpress optimise photo.png clip.mov doc.pdf
 xpress optimise -r --aggressive ~/Screenshots
 xpress optimise --kind pdf --pdf-dpi 144 *.pdf
+xpress optimise --max-size 500kb hero.jpg
+xpress optimise --adaptive screenshot.png
+```
+
+### Output templates
+
+When `--output` contains `%` tokens, it is treated as a filename template:
+`%f` (stem), `%e` (extension), `%P` (parent dir), `%y%m%d`/`%H%M%S` (date/time),
+`%i` (auto-increment), `%r` (random), `%%` (literal `%`).
+
+```sh
+xpress optimise -o '~/out/%f-%i.%e' *.png
+xpress convert --to webp -o '%f@web.webp' *.png
 ```
 
 ## downscale
@@ -75,12 +90,13 @@ xpress downscale -f 0.75 recording.mov
 xpress convert [OPTIONS] -t <FORMAT> <ITEMS>...
 ```
 
-- `-t, --to` — image (`webp|avif|heic|jxl|png|jpeg`) or audio (`aac|mp3|opus|wav|flac|aiff`).
+- `-t, --to` — image (`webp|avif|heic|jxl|png|jpeg`), audio (`aac|mp3|opus|wav|flac|aiff`), or `gif` (from video).
 - `--bitrate <kbps>` — explicit audio bitrate.
 
 ```sh
 xpress convert --to webp screenshot.png
 xpress convert --to mp3 --bitrate 192 recording.wav
+xpress convert --to gif screencast.mov
 ```
 
 ## crop

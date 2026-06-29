@@ -22,7 +22,9 @@ xpress pipeline run web *.png
 | `optimise` | — | all | Optimise in place using the current compression value. |
 | `downscale` | `factor:` (`0.5` or `50%`) | image, video | Scale keeping aspect ratio. |
 | `crop` | `width:`, `height:`, `longEdge:`, `ratio:` (`16:9`), `smart:` | image, video | Resize/crop to a size or aspect ratio. |
-| `convert` | `to:` (image or audio format) | image, audio | Changes the file type. |
+| `convert` | `to:` (image/audio format, or `gif` from video) | image, audio, video | Changes the file type. |
+| `adaptive` | — | image | Try multiple formats, keep the smallest. |
+| `targetSize` | `bytes:` (`500kb`, `1.5mb`) | all | Compress to fit a byte budget. |
 | `stripExif` | — | image | Remove metadata. |
 | `removeAudio` | — | video | Drop the audio track. |
 | `changeSpeed` | `factor:` | video | `2.0` = twice as fast. |
@@ -71,4 +73,10 @@ stripExif -> optimise
 
 # Re-encode podcasts smaller
 convert(to: mp3) -> lowerBitrate(kbps: 96)
+
+# Turn a screen recording into a shareable GIF
+convert(to: gif)
+
+# Get any image under 300 KB, smallest format wins
+adaptive -> targetSize(bytes: 300kb)
 ```

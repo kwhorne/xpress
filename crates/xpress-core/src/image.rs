@@ -1,6 +1,6 @@
 //! Image optimisation: JPEG (jpegoptim), PNG (pngquant), GIF (gifsicle).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
@@ -100,6 +100,102 @@ fn optimise_gif(src: &Path, out: &Path, cq: CompressionQuality) -> Result<(), Op
     args.push(src.display().to_string());
     tools::run_with_retries(Tool::Gifsicle, &args, 3)?;
     Ok(())
+}
+
+/// Adaptively optimise an image: try the in-format optimisation and a JPEG and a
+/// PNG candidate, then keep whichever is smallest. Mirrors the idea of routing
+/// detail-heavy images to JPEG and flat ones to PNG.
+pub fn optimise_adaptive(
+    path: &Path,
+    options: &OptimiseOptions,
+) -> Result<OptimisationResult, OptimiseError> {
+    if !path.is_file() {
+        return Err(OptimiseError::NotFound(path.to_path_buf()));
+    }
+    let old_size = file_size(path);
+    let tmp = TempDir::new()?;
+
+    // Candidate 1: optimise in the original format (unique temp name).
+    let src_ext = extension_lower(path).unwrap_or_else(|| "png".into());
+    let c_same = tmp.path().join(format!("c0_same.{src_ext}"));
+    let same_opts = OptimiseOptions {
+        output: Some(c_same.clone()),
+        backup: false,
+        allow_larger: true,
+        ..options.clone()
+    };
+    let mut candidates: Vec<(PathBuf, ImageFormat)> = Vec::new();
+    if optimise(path, &same_opts).is_ok() {
+        // Track by extension; format only matters for the eventual placement ext.
+        let f = ImageFormat::from_str(&src_ext).unwrap_or(ImageFormat::Png);
+        candidates.push((c_same, f));
+    }
+
+    // Candidate 2 + 3: JPEG and PNG conversions (unique temp names).
+    for (i, fmt) in [ImageFormat::Jpeg, ImageFormat::Png]
+        .into_iter()
+        .enumerate()
+    {
+        let c = tmp.path().join(format!("c{}.{}", i + 1, fmt.extension()));
+        let opts = OptimiseOptions {
+            output: Some(c.clone()),
+            backup: false,
+            allow_larger: true,
+            ..options.clone()
+        };
+        if convert(path, fmt, &opts).is_ok() {
+            candidates.push((c, fmt));
+        }
+    }
+
+    // Pick the smallest candidate.
+    let (best_path, best_fmt) = candidates
+        .into_iter()
+        .filter(|(p, _)| file_size(p) > 0)
+        .min_by_key(|(p, _)| file_size(p))
+        .ok_or_else(|| OptimiseError::Other("adaptive: no candidate produced".into()))?;
+    let new_size = file_size(&best_path);
+
+    // Honour the size guard against the original.
+    if !options.allow_larger && new_size >= old_size {
+        return Ok(OptimisationResult {
+            kind: MediaKind::Image,
+            source: path.to_path_buf(),
+            output: path.to_path_buf(),
+            backup: None,
+            old_size,
+            new_size: old_size,
+            aggressive: options.compression.image_is_aggressive(),
+        });
+    }
+
+    let same_ext = extension_lower(path).as_deref() == Some(best_fmt.extension());
+    let dest = options.output.clone().unwrap_or_else(|| {
+        if same_ext {
+            path.to_path_buf()
+        } else {
+            path.with_extension(best_fmt.extension())
+        }
+    });
+    let backup = if options.backup && options.output.is_none() && same_ext {
+        Some(backup_file(path)?)
+    } else {
+        None
+    };
+    std::fs::copy(&best_path, &dest)?;
+    if options.preserve_dates {
+        copy_dates(path, &dest);
+    }
+
+    Ok(OptimisationResult {
+        kind: MediaKind::Image,
+        source: path.to_path_buf(),
+        output: dest,
+        backup,
+        old_size,
+        new_size,
+        aggressive: options.compression.image_is_aggressive(),
+    })
 }
 
 /// Target formats for image conversion.
@@ -207,11 +303,16 @@ pub fn convert(
             )?;
         }
         ImageFormat::Png | ImageFormat::Jpeg => {
-            // Re-encode with ffmpeg, then run the format-specific optimiser.
-            tools::run(Tool::Ffmpeg, ["-y", "-i", &src, &out])?;
+            // Re-encode with ffmpeg into a distinct raw file, then optimise that
+            // into `temp_out` (never optimise a file in place onto itself).
+            let raw = tmp.path().join(format!(
+                "raw_{}",
+                temp_out.file_name().unwrap().to_string_lossy()
+            ));
+            tools::run(Tool::Ffmpeg, ["-y", "-i", &src, &raw.display().to_string()])?;
             match format {
-                ImageFormat::Png => optimise_png(&temp_out, &temp_out, cq)?,
-                ImageFormat::Jpeg => optimise_jpeg(&temp_out, &temp_out, cq)?,
+                ImageFormat::Png => optimise_png(&raw, &temp_out, cq)?,
+                ImageFormat::Jpeg => optimise_jpeg(&raw, &temp_out, cq)?,
                 _ => unreachable!(),
             }
         }

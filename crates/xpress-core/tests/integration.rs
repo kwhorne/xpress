@@ -172,6 +172,46 @@ fn pipeline_crop_then_convert() {
 }
 
 #[test]
+fn video_to_gif() {
+    common::install_stubs();
+    let dir = tmpdir("gif");
+    let f = dir.join("clip.mov");
+    common::write_dummy(&f, 8000);
+    let r = video::to_gif(&f, &opts(), 15, None).unwrap();
+    assert_eq!(r.output.extension().unwrap(), "gif");
+    assert!(r.output.exists());
+}
+
+#[test]
+fn target_size_budget() {
+    common::install_stubs();
+    let dir = tmpdir("budget");
+    let f = dir.join("big.png");
+    common::write_dummy(&f, 10_000);
+    let r = xpress_core::budget::optimise_to_budget(&f, 1_000, &opts()).unwrap();
+    assert!(r.new_size < r.old_size);
+}
+
+#[test]
+fn adaptive_picks_smallest() {
+    common::install_stubs();
+    let dir = tmpdir("adaptive");
+    let f = dir.join("pic.png");
+    common::write_png(&f);
+    let r = image::optimise_adaptive(&f, &opts()).unwrap();
+    assert!(r.new_size > 0);
+    assert!(r.output.exists());
+}
+
+#[test]
+fn template_expands_output() {
+    let mut c = 1;
+    let out =
+        xpress_core::template::expand("%f-small.%e", std::path::Path::new("/x/photo.png"), &mut c);
+    assert_eq!(out, std::path::PathBuf::from("photo-small.png"));
+}
+
+#[test]
 fn collect_files_filters_by_kind() {
     common::install_stubs();
     let dir = tmpdir("collect");

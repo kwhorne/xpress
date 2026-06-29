@@ -6,6 +6,22 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `convert --to gif` (and pipeline `convert(to: gif)`) to turn videos into GIFs
+  (gifski when available, otherwise ffmpeg).
+- `optimise --max-size <budget>` and a `targetSize(bytes:)` pipeline step to
+  compress to a byte budget.
+- `optimise --adaptive` and an `adaptive` pipeline step that try multiple image
+  formats and keep the smallest.
+- Output filename templates for `--output` (`%f`, `%e`, `%P`, date/time, `%i`,
+  `%r`, `%%`).
+- `--json` and `--quiet` output modes.
+- Integration test suite using stub tools.
+
+### Fixed
+- `convert` to PNG/JPEG no longer optimises a file in place onto itself.
+- Hardened path handling (no more `unwrap()` on `file_name`/`file_stem`).
+
 ## [0.1.0] - 2026-06-29
 
 ### Added

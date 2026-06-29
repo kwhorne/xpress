@@ -14,6 +14,7 @@ xpress-core = { path = "../xpress-core" }
 anyhow.workspace = true
 clap.workspace = true
 serde_json.workspace = true
+rayon.workspace = true
 notify = "7"
 ctrlc = "3"
 arboard = { version = "3", optional = true }

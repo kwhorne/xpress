@@ -32,6 +32,8 @@ pub enum Step {
     ChangeSpeed { factor: f64 },
     CapFps { fps: i32 },
     LowerBitrate { kbps: i32 },
+    TargetSize { bytes: u64 },
+    Adaptive,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -145,6 +147,15 @@ fn parse_step(s: &str) -> Result<Step, String> {
                 .map_err(|_| "bad kbps")?;
             Ok(Step::LowerBitrate { kbps })
         }
+        "targetSize" | "target_size" => {
+            let raw = get("bytes")
+                .or_else(|| get("kb"))
+                .ok_or("targetSize requires bytes: or kb:")?;
+            Ok(Step::TargetSize {
+                bytes: parse_size(&raw)?,
+            })
+        }
+        "adaptive" => Ok(Step::Adaptive),
         other => Err(format!("unknown step '{other}'")),
     }
 }
@@ -258,7 +269,9 @@ fn step_output_ext(step: &Step, current: &Path) -> String {
     let cur = extension_lower(current).unwrap_or_else(|| "bin".into());
     match step {
         Step::Convert { to } => {
-            if let Some(f) = ImageFormat::from_str(to) {
+            if to.eq_ignore_ascii_case("gif") {
+                "gif".to_string()
+            } else if let Some(f) = ImageFormat::from_str(to) {
                 f.extension().to_string()
             } else if let Some(a) = AudioFormat::from_target(to) {
                 a.file_extension().to_string()
@@ -303,7 +316,9 @@ fn apply_step(
             crop::crop_file(current, &args.to_spec(), &opts)?;
         }
         Step::Convert { to } => {
-            if let Some(f) = ImageFormat::from_str(to) {
+            if to.eq_ignore_ascii_case("gif") && classify(current) == Some(MediaKind::Video) {
+                video::to_gif(current, &opts, 15, None)?;
+            } else if let Some(f) = ImageFormat::from_str(to) {
                 image::convert(current, f, &opts)?;
             } else if let Some(a) = AudioFormat::from_target(to) {
                 audio::optimise(current, &opts, a, None)?;
@@ -329,6 +344,16 @@ fn apply_step(
         Step::LowerBitrate { kbps } => {
             let fmt = AudioFormat::SameAsInput;
             audio::optimise(current, &opts, fmt, Some(*kbps))?;
+        }
+        Step::TargetSize { bytes } => {
+            crate::budget::optimise_to_budget(current, *bytes, &opts)?;
+        }
+        Step::Adaptive => {
+            if classify(current) == Some(MediaKind::Image) {
+                image::optimise_adaptive(current, &opts)?;
+            } else {
+                crate::optimise_file(current, &opts, AudioFormat::SameAsInput, None)?;
+            }
         }
     }
     if !target.exists() {
@@ -377,7 +402,25 @@ fn step_to_string(step: &Step) -> String {
         Step::ChangeSpeed { factor } => format!("changeSpeed(factor: {factor})"),
         Step::CapFps { fps } => format!("capFps(fps: {fps})"),
         Step::LowerBitrate { kbps } => format!("lowerBitrate(kbps: {kbps})"),
+        Step::TargetSize { bytes } => format!("targetSize(bytes: {bytes})"),
+        Step::Adaptive => "adaptive".into(),
     }
+}
+
+/// Parse a size like `500000`, `500kb`, `1.5mb`.
+fn parse_size(v: &str) -> Result<u64, String> {
+    let s = v.trim().to_ascii_lowercase();
+    let (num, mult) = if let Some(n) = s.strip_suffix("mb") {
+        (n.trim(), 1_000_000.0)
+    } else if let Some(n) = s.strip_suffix("kb") {
+        (n.trim(), 1_000.0)
+    } else if let Some(n) = s.strip_suffix('b') {
+        (n.trim(), 1.0)
+    } else {
+        (s.as_str(), 1.0)
+    };
+    let value: f64 = num.parse().map_err(|_| format!("bad size '{v}'"))?;
+    Ok((value * mult) as u64)
 }
 
 #[cfg(test)]

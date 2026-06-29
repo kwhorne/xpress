@@ -63,6 +63,116 @@ pub fn change_speed(
     Ok(())
 }
 
+/// Convert a video to an animated GIF.
+///
+/// Uses `gifski` (best quality) when available, extracting frames with ffmpeg;
+/// otherwise falls back to a single ffmpeg pass. `fps` defaults to 15 and
+/// `max_width` optionally caps the width (keeping aspect).
+pub fn to_gif(
+    path: &Path,
+    options: &OptimiseOptions,
+    fps: u32,
+    max_width: Option<u32>,
+) -> Result<OptimisationResult, OptimiseError> {
+    if !path.is_file() {
+        return Err(OptimiseError::NotFound(path.to_path_buf()));
+    }
+    let old_size = file_size(path);
+    let fps = fps.max(1);
+    let quality = if options.compression.image_is_aggressive() {
+        60
+    } else {
+        90
+    };
+
+    let tmp = TempDir::new()?;
+    let out = tmp
+        .path()
+        .join(format!("{}.gif", crate::result::file_stem_lossy(path)));
+
+    if tools::is_available(Tool::Gifski) {
+        // Extract frames, then assemble with gifski.
+        let frames = tmp.path().join("frames");
+        std::fs::create_dir_all(&frames)?;
+        let mut vf = format!("fps={fps}");
+        if let Some(w) = max_width {
+            vf.push_str(&format!(",scale={w}:-1:flags=lanczos"));
+        }
+        tools::run(
+            Tool::Ffmpeg,
+            [
+                "-y",
+                "-i",
+                &path.display().to_string(),
+                "-vf",
+                &vf,
+                &frames.join("f%05d.png").display().to_string(),
+            ],
+        )?;
+        let mut args: Vec<String> = vec![
+            "-o".into(),
+            out.display().to_string(),
+            "--fps".into(),
+            fps.to_string(),
+            "--quality".into(),
+            quality.to_string(),
+        ];
+        if let Some(w) = max_width {
+            args.push("--width".into());
+            args.push(w.to_string());
+        }
+        // Collect frame paths.
+        let mut pngs: Vec<String> = std::fs::read_dir(&frames)?
+            .filter_map(|e| e.ok().map(|e| e.path().display().to_string()))
+            .collect();
+        pngs.sort();
+        if pngs.is_empty() {
+            return Err(OptimiseError::Other("no frames extracted for GIF".into()));
+        }
+        args.extend(pngs);
+        tools::run(Tool::Gifski, &args)?;
+    } else {
+        // Single ffmpeg pass.
+        let mut vf = format!("fps={fps}");
+        if let Some(w) = max_width {
+            vf.push_str(&format!(",scale={w}:-1:flags=lanczos"));
+        }
+        tools::run(
+            Tool::Ffmpeg,
+            [
+                "-y",
+                "-i",
+                &path.display().to_string(),
+                "-vf",
+                &vf,
+                "-hide_banner",
+                "-nostats",
+                &out.display().to_string(),
+            ],
+        )?;
+    }
+
+    let new_size = file_size(&out);
+    let dest = options
+        .output
+        .clone()
+        .unwrap_or_else(|| path.with_extension("gif"));
+    std::fs::copy(&out, &dest)?;
+    if options.preserve_dates {
+        copy_dates(path, &dest);
+    }
+
+    Ok(OptimisationResult {
+        kind: MediaKind::Image,
+        source: path.to_path_buf(),
+        output: dest,
+        backup: None,
+        old_size,
+        new_size,
+        aggressive: options.compression.image_is_aggressive(),
+    })
+}
+
 /// Cap the frame rate at `fps`. Writes to `dst`.
 pub fn cap_fps(
     src: &Path,

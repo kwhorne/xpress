@@ -10,17 +10,17 @@
 mod render;
 mod watch;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand};
 
 use xpress_core::audio::AudioFormat;
+use xpress_core::collect_files;
 use xpress_core::compression::{CompressionQuality, CompressionTier};
 use xpress_core::filetype::MediaKind;
 use xpress_core::result::OptimiseOptions;
 use xpress_core::tools::{self, Tool};
-use xpress_core::{collect_files, optimise_many};
 
 #[derive(Parser)]
 #[command(
@@ -134,6 +134,12 @@ struct OptimiseArgs {
     /// PDF render DPI for downsampling (48–300). Omit for no downsample.
     #[arg(long)]
     pdf_dpi: Option<i32>,
+    /// Compress to fit a budget, e.g. 500kb, 1.5mb, 250000.
+    #[arg(long, value_parser = parse_size)]
+    max_size: Option<u64>,
+    /// For images: try multiple formats and keep the smallest.
+    #[arg(long)]
+    adaptive: bool,
     /// Files, folders or globs to optimise.
     #[arg(required = true)]
     items: Vec<PathBuf>,
@@ -242,6 +248,60 @@ struct FilesArg {
     items: Vec<PathBuf>,
 }
 
+/// Parse a human size like `500kb`, `1.5mb`, `250000`.
+fn parse_size(v: &str) -> Result<u64, String> {
+    let s = v.trim().to_ascii_lowercase();
+    let (num, mult) = if let Some(n) = s.strip_suffix("mb") {
+        (n.trim(), 1_000_000.0)
+    } else if let Some(n) = s.strip_suffix("kb") {
+        (n.trim(), 1_000.0)
+    } else if let Some(n) = s.strip_suffix('b') {
+        (n.trim(), 1.0)
+    } else {
+        (s.as_str(), 1.0)
+    };
+    let value: f64 = num.parse().map_err(|_| format!("bad size '{v}'"))?;
+    Ok((value * mult) as u64)
+}
+
+/// Resolve the per-file output path from `--output`, supporting filename
+/// templates (containing `%`) and output directories. `counter` feeds `%i`.
+fn resolve_output(
+    output: &Option<PathBuf>,
+    source: &Path,
+    counter: &mut u64,
+    single: bool,
+) -> Option<PathBuf> {
+    let out = output.as_ref()?;
+    let s = out.to_string_lossy();
+    if xpress_core::template::is_template(&s) {
+        return Some(xpress_core::template::expand(&s, source, counter));
+    }
+    if out.is_dir() {
+        return Some(out.join(xpress_core::result::file_name_lossy(source)));
+    }
+    if single {
+        Some(out.clone())
+    } else {
+        // A concrete file path with multiple inputs makes no sense; fall back to in-place.
+        None
+    }
+}
+
+/// Build per-file options, resolving an output template/dir (sequential counter).
+fn per_file_options(
+    common: &CommonOpts,
+    source: &Path,
+    counter: &std::cell::Cell<u64>,
+    single: bool,
+) -> OptimiseOptions {
+    let mut o = common.to_options();
+    let mut c = counter.get();
+    o.output = resolve_output(&common.output, source, &mut c, single);
+    counter.set(c);
+    o
+}
+
 fn parse_kind(s: &str) -> Result<MediaKind, String> {
     match s.to_ascii_lowercase().as_str() {
         "image" | "images" => Ok(MediaKind::Image),
@@ -314,14 +374,45 @@ fn run_bundle() -> Result<()> {
 }
 
 fn run_optimise(args: OptimiseArgs) -> Result<()> {
+    use rayon::prelude::*;
+
     let kinds: Vec<MediaKind> = args.kind.into_iter().collect();
     let files = collect_files(&args.items, args.common.recursive, &kinds);
     if files.is_empty() {
         bail!("no optimisable files found");
     }
+    let mode = args.common.output_mode();
     let options = args.common.to_options();
-    let results = optimise_many(&files, &options, AudioFormat::SameAsInput, args.pdf_dpi);
-    render::summarise(&results, args.common.output_mode());
+    let single = files.len() == 1;
+
+    // Resolve per-file output paths up front (sequential, so `%i` numbers nicely).
+    let mut counter = 1u64;
+    let jobs: Vec<(PathBuf, OptimiseOptions)> = files
+        .iter()
+        .map(|f| {
+            let mut o = options.clone();
+            o.output = resolve_output(&args.common.output, f, &mut counter, single);
+            (f.clone(), o)
+        })
+        .collect();
+
+    let max_size = args.max_size;
+    let adaptive = args.adaptive;
+    let pdf_dpi = args.pdf_dpi;
+    let results: Vec<_> = jobs
+        .par_iter()
+        .map(|(f, o)| {
+            let r = if let Some(max) = max_size {
+                xpress_core::budget::optimise_to_budget(f, max, o)
+            } else if adaptive && xpress_core::filetype::classify(f) == Some(MediaKind::Image) {
+                xpress_core::image::optimise_adaptive(f, o)
+            } else {
+                xpress_core::optimise_file(f, o, AudioFormat::SameAsInput, pdf_dpi)
+            };
+            (f.clone(), r)
+        })
+        .collect();
+    render::summarise(&results, mode);
     Ok(())
 }
 
@@ -338,15 +429,12 @@ fn run_downscale(args: DownscaleArgs) -> Result<()> {
     if files.is_empty() {
         bail!("no images or videos found");
     }
-    let options = args.common.to_options();
     let single = files.len() == 1;
+    let counter = std::cell::Cell::new(1u64);
     let results: Vec<_> = files
         .iter()
         .map(|f| {
-            let mut opts = options.clone();
-            if !single {
-                opts.output = None; // per-file output only makes sense for a single input
-            }
+            let opts = per_file_options(&args.common, f, &counter, single);
             (
                 f.clone(),
                 xpress_core::scale::downscale_file(f, args.factor, &opts),
@@ -358,7 +446,24 @@ fn run_downscale(args: DownscaleArgs) -> Result<()> {
 }
 
 fn run_convert(args: ConvertArgs) -> Result<()> {
-    let options = args.common.to_options();
+    // Video -> GIF.
+    if args.to.eq_ignore_ascii_case("gif") {
+        let files = collect_files(&args.items, args.common.recursive, &[MediaKind::Video]);
+        if files.is_empty() {
+            bail!("no videos found to convert to GIF");
+        }
+        let single = files.len() == 1;
+        let counter = std::cell::Cell::new(1u64);
+        let results: Vec<_> = files
+            .iter()
+            .map(|f| {
+                let opts = per_file_options(&args.common, f, &counter, single);
+                (f.clone(), xpress_core::video::to_gif(f, &opts, 15, None))
+            })
+            .collect();
+        render::summarise(&results, args.common.output_mode());
+        return Ok(());
+    }
 
     // Dispatch on the target: image format vs audio format.
     if let Some(format) = xpress_core::image::ImageFormat::from_str(&args.to) {
@@ -367,13 +472,11 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             bail!("no images found");
         }
         let single = files.len() == 1;
+        let counter = std::cell::Cell::new(1u64);
         let results: Vec<_> = files
             .iter()
             .map(|f| {
-                let mut opts = options.clone();
-                if !single {
-                    opts.output = None;
-                }
+                let opts = per_file_options(&args.common, f, &counter, single);
                 (f.clone(), xpress_core::image::convert(f, format, &opts))
             })
             .collect();
@@ -386,12 +489,15 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         if files.is_empty() {
             bail!("no audio files found");
         }
+        let single = files.len() == 1;
+        let counter = std::cell::Cell::new(1u64);
         let results: Vec<_> = files
             .iter()
             .map(|f| {
+                let opts = per_file_options(&args.common, f, &counter, single);
                 (
                     f.clone(),
-                    xpress_core::audio::optimise(f, &options, format, args.bitrate),
+                    xpress_core::audio::optimise(f, &opts, format, args.bitrate),
                 )
             })
             .collect();
@@ -400,7 +506,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
     }
 
     bail!(
-        "unknown conversion target '{}': expected an image (webp, avif, heic, jxl, png, jpeg) or audio (aac, mp3, opus, wav, flac, aiff) format",
+        "unknown conversion target '{}': expected an image (webp, avif, heic, jxl, png, jpeg), audio (aac, mp3, opus, wav, flac, aiff) or video->gif format",
         args.to
     )
 }
@@ -418,15 +524,12 @@ fn run_crop(args: CropArgs) -> Result<()> {
     if files.is_empty() {
         bail!("no images or videos found");
     }
-    let options = args.common.to_options();
     let single = files.len() == 1;
+    let counter = std::cell::Cell::new(1u64);
     let results: Vec<_> = files
         .iter()
         .map(|f| {
-            let mut opts = options.clone();
-            if !single {
-                opts.output = None;
-            }
+            let opts = per_file_options(&args.common, f, &counter, single);
             (f.clone(), xpress_core::crop::crop_file(f, &spec, &opts))
         })
         .collect();
@@ -552,15 +655,12 @@ fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
     if files.is_empty() {
         bail!("no files found");
     }
-    let options = args.common.to_options();
     let single = files.len() == 1;
+    let counter = std::cell::Cell::new(1u64);
     let results: Vec<_> = files
         .iter()
         .map(|f| {
-            let mut opts = options.clone();
-            if !single {
-                opts.output = None;
-            }
+            let opts = per_file_options(&args.common, f, &counter, single);
             (f.clone(), xpress_core::pipeline::run(f, &steps, &opts))
         })
         .collect();

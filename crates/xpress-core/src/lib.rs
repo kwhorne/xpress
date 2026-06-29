@@ -5,6 +5,7 @@
 //! arguments expected by each tool.
 
 pub mod audio;
+pub mod budget;
 pub mod bundled;
 pub mod compression;
 pub mod crop;
@@ -15,6 +16,7 @@ pub mod pipeline;
 pub mod result;
 pub mod scale;
 pub mod store;
+pub mod template;
 pub mod tools;
 pub mod video;
 
