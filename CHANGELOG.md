@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-29
+
 ### Added
 - **Core engine** (`xpress-core`): a percentage-based compression model and tool
   runner that drives `ffmpeg`, `pngquant`, `jpegoptim`, `gifsicle`, `ghostscript`,
@@ -36,4 +38,5 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/commits/main
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/kwhorne/xpress/releases/tag/v0.1.0

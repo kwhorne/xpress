@@ -16,6 +16,18 @@ xpress is UI-agnostic: the core crate resolves external tools (`ffmpeg`,
 > it is inspired by Clop's functionality and ideas. See [NOTICE.md](NOTICE.md)
 > for details and for the licences of any bundled third-party binaries.
 
+## Documentation
+
+Full docs live in [`docs/`](docs/README.md):
+[installation](docs/installation.md) ·
+[CLI reference](docs/cli.md) ·
+[pipeline DSL](docs/pipelines.md) ·
+[daemon & automations](docs/daemon.md) ·
+[desktop GUI](docs/gui.md) ·
+[architecture](docs/architecture.md) ·
+[contributing](docs/contributing.md).
+See [CHANGELOG.md](CHANGELOG.md) for release history.
+
 ## Architecture
 
 ```
