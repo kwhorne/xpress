@@ -54,3 +54,36 @@ jobs:
         run: cargo build --workspace --all-targets
       - name: Test workspace
         run: cargo test --workspace
+
+  smoke:
+    name: real-tool smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install real optimisation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg pngquant jpegoptim gifsicle ghostscript
+      - name: Build CLI
+        run: cargo build --release -p xpress-cli
+      - name: Smoke-test against real binaries
+        run: |
+          set -euo pipefail
+          xp=target/release/xpress
+          $xp doctor
+          # Generate a real PNG and JPEG with ffmpeg, then optimise them.
+          ffmpeg -y -f lavfi -i testsrc=size=256x256:duration=1 -frames:v 1 shot.png
+          ffmpeg -y -f lavfi -i testsrc=size=256x256:duration=1 -frames:v 1 shot.jpg
+          before=$(stat -c%s shot.png)
+          $xp optimise --no-backup shot.png shot.jpg
+          after=$(stat -c%s shot.png)
+          echo "png: $before -> $after"
+          test "$after" -le "$before"
+          # Video encode + gif + pdf-ish paths through the real tools.
+          ffmpeg -y -f lavfi -i testsrc=size=320x240:duration=1 -pix_fmt yuv420p clip.mp4
+          $xp convert --to webm --no-backup clip.mp4
+          test -f clip.webm
+          $xp convert --to gif --no-backup clip.mp4
+          test -f clip.gif

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use xpress_core::audio::AudioFormat;
 use xpress_core::crop::CropSpec;
 use xpress_core::image::ImageFormat;
-use xpress_core::result::OptimiseOptions;
+use xpress_core::result::{OptimiseError, OptimiseOptions};
 use xpress_core::{audio, crop, image, pdf, pipeline, scale, video};
 
 fn tmpdir(name: &str) -> PathBuf {
@@ -307,6 +307,33 @@ fn backup_then_restore_roundtrip() {
     assert_eq!(orig_path, &f);
     std::fs::rename(backup, orig_path).unwrap();
     assert_eq!(std::fs::metadata(&f).unwrap().len(), original);
+}
+
+#[test]
+fn errors_on_missing_file() {
+    common::install_stubs();
+    let r = image::optimise(std::path::Path::new("/no/such/xpress-file.png"), &opts());
+    assert!(matches!(r, Err(OptimiseError::NotFound(_))));
+}
+
+#[test]
+fn errors_on_unsupported_type() {
+    common::install_stubs();
+    let dir = tmpdir("unsup");
+    let f = dir.join("notes.txt");
+    common::write_dummy(&f, 32);
+    let r = xpress_core::optimise_file(&f, &opts(), AudioFormat::SameAsInput, None);
+    assert!(matches!(r, Err(OptimiseError::Unsupported(_))));
+}
+
+#[test]
+fn crop_errors_on_unreadable_dimensions() {
+    common::install_stubs();
+    let dir = tmpdir("baddim");
+    let f = dir.join("x.png"); // not a real PNG -> imagesize can't read dims
+    common::write_dummy(&f, 20);
+    let r = crop::crop_file(&f, &CropSpec::parse("2x2").unwrap(), &opts());
+    assert!(r.is_err(), "crop should fail when dimensions can't be read");
 }
 
 #[test]
