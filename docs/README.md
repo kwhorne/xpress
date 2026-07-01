@@ -40,5 +40,9 @@ brew install ffmpeg pngquant jpegoptim gifsicle ghostscript vips gifski webp exi
 
 See [`../CHANGELOG.md`](../CHANGELOG.md) for the release history (current: 0.4.0).
 
+---
+
+Developed by **Knut W. Horne** · [kwhorne.com](https://kwhorne.com)
+
 > xpress is an independent MIT-licensed project, inspired by the functionality of
 > Clop. It contains no Clop source code — see [`../NOTICE.md`](../NOTICE.md).

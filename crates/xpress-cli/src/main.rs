@@ -23,11 +23,20 @@ use xpress_core::filetype::MediaKind;
 use xpress_core::result::OptimiseOptions;
 use xpress_core::tools::{self, Tool};
 
+const CREDITS: &str = "Developed by Knut W. Horne · https://kwhorne.com";
+const LONG_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    "\nDeveloped by Knut W. Horne · https://kwhorne.com"
+);
+
 #[derive(Parser)]
 #[command(
     name = "xpress",
     version,
-    about = "Image, video, PDF and audio optimiser"
+    long_version = LONG_VERSION,
+    about = "Image, video, PDF and audio optimiser",
+    after_help = CREDITS,
+    after_long_help = CREDITS
 )]
 struct Cli {
     #[command(subcommand)]
