@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Images are now optimised, resized, cropped and converted in **pure Rust**
+  (`imagequant` + `oxipng` + the `image` crate) — no external tools
+  (pngquant/jpegoptim/gifsicle/vips/cwebp) are required for images anymore.
+  Video (ffmpeg), audio (ffmpeg) and PDF (ghostscript) still use their tools.
+
 ## [0.4.1] - 2026-07-01
 
 ### Changed

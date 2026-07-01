@@ -21,22 +21,18 @@ cargo install --path crates/xpress-cli
 
 ## Providing the optimisation tools
 
-xpress does not re-implement codecs; it drives external binaries. Each command
-needs the tool(s) for the file types you use:
+**Images (PNG/JPEG/GIF/WebP/BMP/TIFF) are optimised, resized, cropped and
+converted entirely in pure Rust — no external tool required.** External binaries
+are only needed for video, audio, PDF, and a few conversion targets:
 
 | Tool          | Used for                         |
 |---------------|----------------------------------|
-| `ffmpeg`      | video, audio, image scaling fallback |
-| `pngquant`    | PNG                              |
-| `jpegoptim`   | JPEG                            |
-| `gifsicle`    | GIF                             |
+| `ffmpeg`      | video and audio                  |
 | `ghostscript` (`gs`) | PDF                       |
-| `vips` / `vipsthumbnail` | image resize / smart crop |
-| `gifski`      | video → GIF                     |
-| `cwebp`       | WebP conversion                 |
-| `heif-enc`    | HEIC / AVIF conversion          |
-| `cjxl`        | JPEG XL conversion              |
-| `exiftool`    | metadata copy / strip           |
+| `gifski`      | video → GIF (optional; ffmpeg fallback) |
+| `heif-enc`    | HEIC conversion (optional)       |
+| `cjxl`        | JPEG XL conversion (optional)    |
+| `exiftool`    | metadata (optional)              |
 
 ### Resolution order
 

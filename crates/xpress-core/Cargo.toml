@@ -20,10 +20,16 @@ tempfile.workspace = true
 imagesize = "0.13"
 lopdf = { version = "0.36", default-features = false }
 ureq = "2"
+# Pure-Rust image engine (no external binaries needed for images).
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "tiff", "webp"] }
+imagequant = "4"
+png = "0.17"
+oxipng = { version = "9", default-features = false, features = ["parallel", "zopfli"] }
 include_dir = { version = "0.7", optional = true }
 
 [dev-dependencies]
 lopdf = { version = "0.36", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

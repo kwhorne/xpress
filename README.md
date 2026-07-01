@@ -33,10 +33,11 @@ One tool, three ways to use it:
   them by name, and attach them to folders for hands-off automation.
 - **Non-destructive by default**: originals are backed up and can be restored.
 
-Under the hood xpress drives best-in-class command-line tools (`ffmpeg`,
-`pngquant`, `jpegoptim`, `gifsicle`, `ghostscript`, `vips`, `gifski`, `cwebp`,
-`heif-enc`, `cjxl`) through one consistent, percentage-based compression model,
-so the same quality setting behaves predictably across every format.
+Images (PNG/JPEG/GIF/WebP) are optimised, resized, cropped and converted
+**entirely in pure Rust** (`imagequant` + `oxipng` + the `image` crate) — no
+external tools to install. Video and audio use `ffmpeg`, and PDF uses
+`ghostscript`; everything is driven by one consistent, percentage-based
+compression model.
 
 xpress is free and open source under the [MIT License](LICENSE).
 

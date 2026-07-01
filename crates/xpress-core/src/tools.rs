@@ -132,7 +132,11 @@ fn bin_dirs() -> Vec<PathBuf> {
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(parent) = exe.parent() {
+            // A sibling `bin/` next to the executable.
             dirs.push(parent.join("bin"));
+            // Inside a macOS .app bundle the tools live in Contents/Resources/bin
+            // while the executable is in Contents/MacOS/.
+            dirs.push(parent.join("../Resources/bin"));
         }
     }
     if let Some(dir) = bundle_dir() {

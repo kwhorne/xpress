@@ -138,18 +138,13 @@ pub fn summarise(
 pub fn doctor() {
     let tools = [
         ("ffmpeg (video/audio)", Tool::Ffmpeg),
-        ("pngquant (png)", Tool::Pngquant),
-        ("jpegoptim (jpeg)", Tool::Jpegoptim),
-        ("gifsicle (gif)", Tool::Gifsicle),
         ("gs / ghostscript (pdf)", Tool::Ghostscript),
-        ("gifski (video->gif)", Tool::Gifski),
-        ("vips (resize)", Tool::Vips),
-        ("vipsthumbnail (resize)", Tool::Vipsthumbnail),
-        ("cwebp (webp)", Tool::Cwebp),
-        ("heif-enc (heic/avif)", Tool::HeifEnc),
-        ("cjxl (jxl)", Tool::Cjxl),
-        ("exiftool (metadata)", Tool::Exiftool),
+        ("gifski (video->gif, optional)", Tool::Gifski),
+        ("heif-enc (heic convert, optional)", Tool::HeifEnc),
+        ("cjxl (jxl convert, optional)", Tool::Cjxl),
+        ("exiftool (metadata, optional)", Tool::Exiftool),
     ];
+    println!("Images (PNG/JPEG/GIF/WebP) are optimised in pure Rust — no external tool needed.\n");
     println!("Tool availability:");
     for (label, tool) in tools {
         match tools::resolve(tool) {

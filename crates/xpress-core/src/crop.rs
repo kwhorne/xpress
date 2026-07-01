@@ -13,7 +13,7 @@ use crate::result::{
     backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
 };
 use crate::scale::image_dimensions;
-use crate::tools::{self, Tool};
+
 use crate::{image, video};
 
 /// What the user asked for. Exactly one of the size axes is typically meaningful.
@@ -96,13 +96,6 @@ impl CropSpec {
     }
 }
 
-fn even(n: u32) -> u32 {
-    if n.is_multiple_of(2) {
-        n
-    } else {
-        n.saturating_sub(1).max(2)
-    }
-}
 
 /// How the source maps to the target.
 enum Plan {
@@ -115,6 +108,14 @@ enum Plan {
 }
 
 /// Resolve the crop plan for an image whose dimensions are known.
+fn even(n: u32) -> u32 {
+    if n.is_multiple_of(2) {
+        n
+    } else {
+        n.saturating_sub(1).max(2)
+    }
+}
+
 fn plan_for_image(sw: u32, sh: u32, spec: &CropSpec) -> Plan {
     if let Some(n) = spec.long_edge {
         return if sw >= sh {
@@ -177,25 +178,7 @@ pub fn crop_rect(
 
             let tmp = TempDir::new()?;
             let cropped = tmp.path().join(crate::result::file_name_lossy(path));
-            let src = path.display().to_string();
-            let dst = cropped.display().to_string();
-            if tools::is_available(Tool::Vips) {
-                tools::run_with_retries(
-                    Tool::Vips,
-                    [
-                        "crop",
-                        &src,
-                        &dst,
-                        &px.to_string(),
-                        &py.to_string(),
-                        &pw.to_string(),
-                        &ph.to_string(),
-                    ],
-                    2,
-                )?;
-            } else {
-                ffmpeg_vf(&src, &dst, &format!("crop={pw}:{ph}:{px}:{py}"))?;
-            }
+            image::crop_image_px(path, &cropped, px, py, pw, ph, None)?;
             finalise_image(path, &cropped, old_size, options)
         }
         Some(MediaKind::Video) => {
@@ -238,84 +221,14 @@ fn crop_image(
 
     let tmp = TempDir::new()?;
     let cropped = tmp.path().join(crate::result::file_name_lossy(path));
-    let src = path.display().to_string();
-    let dst = cropped.display().to_string();
-
-    let use_vips = tools::is_available(Tool::Vipsthumbnail) || tools::is_available(Tool::Vips);
+    let _ = spec.smart; // smart (feature-aware) crop falls back to centre in the pure-Rust path
     match plan {
-        Plan::Resize(w, h) => {
-            if tools::is_available(Tool::Vipsthumbnail) {
-                tools::run_with_retries(
-                    Tool::Vipsthumbnail,
-                    ["-s", &format!("{w}x{h}"), "-o", &dst, &src],
-                    2,
-                )?;
-            } else if tools::is_available(Tool::Vips) {
-                let f = (w as f64 / sw as f64).min(h as f64 / sh as f64);
-                tools::run_with_retries(Tool::Vips, ["resize", &src, &dst, &format!("{f:.5}")], 2)?;
-            } else {
-                ffmpeg_vf(&src, &dst, &format!("scale={w}:{h}"))?;
-            }
-        }
-        Plan::Cover(w, h) => {
-            if tools::is_available(Tool::Vipsthumbnail) {
-                let crop = if spec.smart { "attention" } else { "centre" };
-                tools::run_with_retries(
-                    Tool::Vipsthumbnail,
-                    [
-                        "-s",
-                        &format!("{w}x{h}"),
-                        "--smartcrop",
-                        crop,
-                        "-o",
-                        &dst,
-                        &src,
-                    ],
-                    2,
-                )?;
-            } else {
-                ffmpeg_vf(
-                    &src,
-                    &dst,
-                    &format!("scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"),
-                )?;
-            }
-        }
+        Plan::Resize(w, h) => image::resize_to(path, &cropped, w, h)?,
+        Plan::Cover(w, h) => image::cover_crop(path, &cropped, w, h)?,
         Plan::CropOnly(w, h) => {
-            if tools::is_available(Tool::Vips) {
-                let x = (sw - w) / 2;
-                let y = (sh - h) / 2;
-                tools::run_with_retries(
-                    Tool::Vips,
-                    [
-                        "crop",
-                        &src,
-                        &dst,
-                        &x.to_string(),
-                        &y.to_string(),
-                        &w.to_string(),
-                        &h.to_string(),
-                    ],
-                    2,
-                )?;
-            } else if use_vips {
-                let crop = if spec.smart { "attention" } else { "centre" };
-                tools::run_with_retries(
-                    Tool::Vipsthumbnail,
-                    [
-                        "-s",
-                        &format!("{w}x{h}"),
-                        "--smartcrop",
-                        crop,
-                        "-o",
-                        &dst,
-                        &src,
-                    ],
-                    2,
-                )?;
-            } else {
-                ffmpeg_vf(&src, &dst, &format!("crop={w}:{h}:(iw-{w})/2:(ih-{h})/2"))?;
-            }
+            let x = (sw - w) / 2;
+            let y = (sh - h) / 2;
+            image::crop_image_px(path, &cropped, x, y, w, h, None)?;
         }
     }
 
@@ -347,11 +260,6 @@ fn crop_video(
     let mut r = video::optimise_with_filter(path, options, Some(&vf))?;
     r.old_size = old_size;
     Ok(r)
-}
-
-fn ffmpeg_vf(src: &str, dst: &str, vf: &str) -> Result<(), OptimiseError> {
-    tools::run(Tool::Ffmpeg, ["-y", "-i", src, "-vf", vf, dst])?;
-    Ok(())
 }
 
 fn finalise_image(

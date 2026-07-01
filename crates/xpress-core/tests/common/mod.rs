@@ -6,9 +6,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// A tiny but valid 4x4 PNG (so `imagesize` can read real dimensions).
-const PNG_4X4_BASE64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAYAAACp8Z5+AAAAEUlEQVR4nGNkYPhfz0BHwDhqGAMABzMCpQ4P0XwAAAAASUVORK5CYII=";
-
 fn stub(dir: &Path, name: &str, body: &str) {
     let path = dir.join(name);
     std::fs::write(&path, format!("#!/bin/bash\n{body}\n")).unwrap();
@@ -99,10 +96,20 @@ printf 'HEIF-STUB' > "$out""#);
     xpress_core::tools::set_bin_dir_override(dir.clone());
 }
 
-/// Decode the embedded 4x4 PNG to `path`.
+/// Write a real, compressible test image (a colourful gradient) to `path`,
+/// choosing the format from the extension (png/jpg/jpeg/gif).
+pub fn write_image(path: &Path) {
+    let (w, h) = (96u32, 96u32);
+    let mut img = image::RgbImage::new(w, h);
+    for (x, y, px) in img.enumerate_pixels_mut() {
+        *px = image::Rgb([(x * 2) as u8, (y * 2) as u8, (x + y) as u8]);
+    }
+    image::DynamicImage::ImageRgb8(img).save(path).unwrap();
+}
+
+/// Write a real PNG gradient (kept name for existing tests).
 pub fn write_png(path: &Path) {
-    let bytes = base64_decode(PNG_4X4_BASE64);
-    std::fs::write(path, bytes).unwrap();
+    write_image(path);
 }
 
 /// Write a dummy file of `size` bytes with the given extension content.
@@ -134,30 +141,3 @@ pub fn write_pdf(path: &Path) {
     doc.save(path).unwrap();
 }
 
-/// A minimal base64 decoder (avoids adding a dependency to the test harness).
-fn base64_decode(s: &str) -> Vec<u8> {
-    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut lookup = [255u8; 256];
-    for (i, &c) in TABLE.iter().enumerate() {
-        lookup[c as usize] = i as u8;
-    }
-    let mut out = Vec::new();
-    let mut buf = 0u32;
-    let mut bits = 0;
-    for &c in s.as_bytes() {
-        if c == b'=' {
-            break;
-        }
-        let v = lookup[c as usize];
-        if v == 255 {
-            continue;
-        }
-        buf = (buf << 6) | v as u32;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-        }
-    }
-    out
-}
