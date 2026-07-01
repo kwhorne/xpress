@@ -9,6 +9,8 @@ the fuss. Point it at a file, a folder, or your clipboard and it produces a
 leaner version that looks and sounds the same, so things upload faster, attach
 under size limits, and take up less space.
 
+![xpress — the desktop app](docs/screenshot.png)
+
 One tool, three ways to use it:
 
 - **Command line** (`xpress`) — optimise, downscale, crop, convert formats, and
