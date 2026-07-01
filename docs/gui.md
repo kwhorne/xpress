@@ -13,6 +13,9 @@ cargo run -p xpress-gui --release
   for images.
 - **Global hotkey** `⌘⇧O` (macOS) / `Ctrl⇧O` optimises the image currently on the
   clipboard, from anywhere.
+- **Self-updating**: when a newer release is published, an **Update & Restart**
+  button downloads it, replaces the installed `.app`, and relaunches — no trip to
+  the browser.
 - **Controls**: a compression slider (5–100), `aggressive`, `backup`,
   `strip metadata`, an inline **pipeline** field, and a **float on top** toggle.
 - **Open files…** picker, and **Optimise clipboard** / **Clear** buttons.

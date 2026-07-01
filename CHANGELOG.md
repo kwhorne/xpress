@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-07-01
+
+### Changed
+- The desktop app now **updates itself**: the “Update available” banner (and the
+  About dialog) show an **Update & Restart** button that downloads the new
+  release, replaces the installed `.app`, and relaunches automatically — no more
+  bouncing to the GitHub releases page. (macOS; falls back to a download link
+  when not running from an installed `.app`.)
+
 ## [0.4.3] - 2026-07-01
 
 ### Changed
@@ -144,7 +153,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/kwhorne/xpress/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/kwhorne/xpress/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/kwhorne/xpress/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/kwhorne/xpress/compare/v0.4.0...v0.4.1

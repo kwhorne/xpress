@@ -84,6 +84,8 @@ pub struct XpressApp {
     update_checking: Arc<AtomicBool>,
     last_update_check: Instant,
     update_dismissed: bool,
+    updating: Arc<AtomicBool>,
+    update_status: Arc<Mutex<Option<String>>>,
 }
 
 impl XpressApp {
@@ -132,7 +134,26 @@ impl XpressApp {
             update_checking,
             last_update_check: Instant::now(),
             update_dismissed: false,
+            updating: Arc::new(AtomicBool::new(false)),
+            update_status: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Download the latest release, replace this .app, and relaunch. macOS only.
+    fn start_self_update(&mut self, url: String) {
+        if self.updating.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        *self.update_status.lock().unwrap() = Some("Downloading update…".into());
+        let updating = self.updating.clone();
+        let status = self.update_status.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = perform_self_update(&url, &status) {
+                *status.lock().unwrap() = Some(format!("Update failed: {e}"));
+                updating.store(false, Ordering::SeqCst);
+            }
+            // On success the process re-launches and exits; nothing to do here.
+        });
     }
 
     fn options(&self) -> OptimiseOptions {
@@ -640,24 +661,42 @@ impl XpressApp {
             ui.add_space(18.0);
 
             let checking = self.update_checking.load(Ordering::Relaxed);
+            let updating = self.updating.load(Ordering::Relaxed);
             let info = self.update_info.lock().unwrap().clone();
-            if checking {
+            let mut start_update: Option<String> = None;
+            if updating {
+                let s = self.update_status.lock().unwrap().clone();
+                ui.horizontal(|ui| {
+                    ui.add(egui::Spinner::new().size(14.0));
+                    ui.label(s.unwrap_or_else(|| "Updating…".into()));
+                });
+            } else if checking {
                 ui.label(RichText::new("Checking for updates…").weak());
             } else if let Some(info) = &info {
                 if info.newer {
-                    ui.hyperlink_to(
+                    ui.label(
                         RichText::new(format!("Update available — v{}", info.latest)).color(ACCENT),
-                        &info.url,
                     );
+                    if can_self_update(info) {
+                        if ui.button("Update & Restart").clicked() {
+                            start_update = info.download_url.clone();
+                        }
+                    } else {
+                        ui.hyperlink_to("Download", &info.url);
+                    }
                 } else {
                     ui.label(RichText::new("You're on the latest version").weak());
                 }
             }
-            if ui
-                .add_enabled(!checking, egui::Button::new("Check for updates"))
-                .clicked()
+            if !updating
+                && ui
+                    .add_enabled(!checking, egui::Button::new("Check for updates"))
+                    .clicked()
             {
                 self.check_for_updates(&ctx);
+            }
+            if let Some(url) = start_update {
+                self.start_self_update(url);
             }
         });
     }
@@ -673,6 +712,11 @@ impl XpressApp {
         if !info.newer {
             return;
         }
+        let updating = self.updating.load(Ordering::Relaxed);
+        let status = self.update_status.lock().unwrap().clone();
+        let can_auto = can_self_update(&info);
+        let dl = info.download_url.clone();
+        let mut start_update: Option<String> = None;
         egui::TopBottomPanel::top("update_banner")
             .frame(
                 egui::Frame::default()
@@ -686,21 +730,40 @@ impl XpressApp {
                             .color(Color32::WHITE)
                             .strong(),
                     );
-                    ui.hyperlink_to(
-                        RichText::new("Download").color(Color32::WHITE).underline(),
-                        &info.url,
-                    );
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if updating {
+                        ui.add(egui::Spinner::new().size(14.0).color(Color32::WHITE));
+                        ui.label(
+                            RichText::new(status.unwrap_or_else(|| "Updating…".into()))
+                                .color(Color32::WHITE),
+                        );
+                    } else if can_auto {
                         if ui
-                            .button(RichText::new("✕").color(Color32::WHITE))
-                            .on_hover_text("Dismiss")
+                            .button(RichText::new("Update & Restart").strong())
                             .clicked()
+                        {
+                            start_update = dl.clone();
+                        }
+                    } else {
+                        ui.hyperlink_to(
+                            RichText::new("Download").color(Color32::WHITE).underline(),
+                            &info.url,
+                        );
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if !updating
+                            && ui
+                                .button(RichText::new("✕").color(Color32::WHITE))
+                                .on_hover_text("Dismiss")
+                                .clicked()
                         {
                             self.update_dismissed = true;
                         }
                     });
                 });
             });
+        if let Some(url) = start_update {
+            self.start_self_update(url);
+        }
     }
 
     // ---- Crop overlay ------------------------------------------------------
@@ -1029,6 +1092,78 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
     (a as f32 + (b as f32 - a as f32) * t)
         .round()
         .clamp(0.0, 255.0) as u8
+}
+
+/// The `.app` bundle this executable lives in, if any (…/xpress.app).
+fn app_bundle_path() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    exe.ancestors()
+        .find(|a| a.extension().map(|e| e == "app").unwrap_or(false))
+        .map(|p| p.to_path_buf())
+}
+
+/// True when we're running from an installed .app (so self-update makes sense).
+fn can_self_update(info: &xpress_core::update::UpdateInfo) -> bool {
+    cfg!(target_os = "macos") && info.download_url.is_some() && app_bundle_path().is_some()
+}
+
+/// Download the new .app zip, swap it into place, and relaunch. macOS only.
+fn perform_self_update(url: &str, status: &Arc<Mutex<Option<String>>>) -> Result<(), String> {
+    let old_app = app_bundle_path().ok_or("not running from an .app bundle")?;
+
+    let bytes = xpress_core::update::download(url)?;
+    *status.lock().unwrap() = Some("Installing update…".into());
+
+    let tmp = std::env::temp_dir().join(format!("xpress-update-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let zip = tmp.join("update.zip");
+    std::fs::write(&zip, &bytes).map_err(|e| e.to_string())?;
+
+    // Extract with ditto (preserves signatures/permissions).
+    let extract = tmp.join("extract");
+    std::fs::create_dir_all(&extract).map_err(|e| e.to_string())?;
+    let ok = std::process::Command::new("ditto")
+        .args(["-x", "-k"])
+        .arg(&zip)
+        .arg(&extract)
+        .status()
+        .map_err(|e| e.to_string())?
+        .success();
+    if !ok {
+        return Err("could not extract update archive".into());
+    }
+    let new_app = std::fs::read_dir(&extract)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .find(|p| p.extension().map(|e| e == "app").unwrap_or(false))
+        .ok_or("no .app found in update archive")?;
+
+    // A helper that waits for us to quit, swaps the bundle, and relaunches.
+    let script = tmp.join("apply.sh");
+    let script_body = format!(
+        "#!/bin/bash\nset -e\nOLD={old}\nNEW={new}\nPID={pid}\n\
+for i in $(seq 1 200); do kill -0 \"$PID\" 2>/dev/null || break; sleep 0.1; done\n\
+rm -rf \"$OLD\"\nditto \"$NEW\" \"$OLD\"\nopen \"$OLD\"\n",
+        old = shell_quote(&old_app),
+        new = shell_quote(&new_app),
+        pid = std::process::id(),
+    );
+    std::fs::write(&script, script_body).map_err(|e| e.to_string())?;
+
+    *status.lock().unwrap() = Some("Restarting…".into());
+    std::process::Command::new("/bin/bash")
+        .arg(&script)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+
+    // Give the helper a moment to start, then quit so it can replace us.
+    std::thread::sleep(Duration::from_millis(300));
+    std::process::exit(0);
+}
+
+fn shell_quote(p: &Path) -> String {
+    format!("'{}'", p.display().to_string().replace('\'', "'\\''"))
 }
 
 /// Run an update check on a background thread, storing the result (newer or not).

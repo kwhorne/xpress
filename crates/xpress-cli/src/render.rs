@@ -138,7 +138,10 @@ pub fn summarise(
 pub fn doctor() {
     let tools = [
         ("ffmpeg (video/audio)", Tool::Ffmpeg),
-        ("gs / ghostscript (pdf extract-pages, optional)", Tool::Ghostscript),
+        (
+            "gs / ghostscript (pdf extract-pages, optional)",
+            Tool::Ghostscript,
+        ),
         ("gifski (video->gif, optional)", Tool::Gifski),
         ("heif-enc (heic convert, optional)", Tool::HeifEnc),
         ("cjxl (jxl convert, optional)", Tool::Cjxl),
