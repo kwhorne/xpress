@@ -98,6 +98,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>NSHighResolutionCapable</key> <true/>
     <key>LSApplicationCategoryType</key> <string>public.app-category.utilities</string>
+    <!-- Menu-bar (agent) app: no Dock icon. -->
+    <key>LSUIElement</key>             <true/>
 PLIST
 
 # Reference an icon only if one was provided.

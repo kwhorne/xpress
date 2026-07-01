@@ -186,6 +186,7 @@ impl XpressApp {
     fn show_window(ctx: &egui::Context) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        activate_app();
     }
 
     /// Download the latest release, replace this .app, and relaunch. macOS only.
@@ -1172,6 +1173,21 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
         .round()
         .clamp(0.0, 255.0) as u8
 }
+
+/// Bring the app to the front. For a menu-bar (agent) app this is needed so the
+/// window actually appears in front when shown.
+#[cfg(target_os = "macos")]
+fn activate_app() {
+    use objc2_foundation::MainThreadMarker;
+    if let Some(mtm) = MainThreadMarker::new() {
+        let app = objc2_app_kit::NSApplication::sharedApplication(mtm);
+        #[allow(deprecated)]
+        app.activateIgnoringOtherApps(true);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn activate_app() {}
 
 /// Build a 32×32 RGBA menu-bar icon: the colourful "x" on a transparent field.
 fn tray_icon_image() -> Option<(Vec<u8>, u32, u32)> {

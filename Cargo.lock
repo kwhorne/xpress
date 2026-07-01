@@ -6180,7 +6180,7 @@ checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
 
 [[package]]
 name = "xpress-cli"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "arboard",
@@ -6201,7 +6201,7 @@ dependencies = [
 
 [[package]]
 name = "xpress-core"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "image",
@@ -6228,7 +6228,7 @@ dependencies = [
 
 [[package]]
 name = "xpress-gui"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "arboard",
@@ -6236,6 +6236,9 @@ dependencies = [
  "egui",
  "global-hotkey",
  "image",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "rfd",
  "tray-icon",
  "xpress-core",

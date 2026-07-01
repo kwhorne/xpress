@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-07-01
+
+### Changed
+- The macOS app is now a **pure menu-bar (agent) app** — no Dock icon
+  (`LSUIElement`). It lives in the menu bar and brings its window to the front
+  when opened.
+
 ## [0.4.5] - 2026-07-01
 
 ### Added
@@ -161,7 +168,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/kwhorne/xpress/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/kwhorne/xpress/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/kwhorne/xpress/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/kwhorne/xpress/compare/v0.4.2...v0.4.3
