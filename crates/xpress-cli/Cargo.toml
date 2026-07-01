@@ -21,6 +21,9 @@ serde_json.workspace = true
 rayon.workspace = true
 notify = "7"
 ctrlc = "3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 arboard = { version = "3", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

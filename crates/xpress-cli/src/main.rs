@@ -398,7 +398,21 @@ fn parse_kind(s: &str) -> Result<MediaKind, String> {
     }
 }
 
+/// Restore the default SIGPIPE handler so piping output to `head`/`less` and
+/// closing early exits quietly instead of panicking on a broken pipe.
+#[cfg(unix)]
+fn reset_sigpipe() {
+    // SAFETY: setting a signal disposition to the default is sound here.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn reset_sigpipe() {}
+
 fn main() {
+    reset_sigpipe();
     if let Err(e) = run() {
         eprintln!("{} {e:#}", render::ERROR_X);
         std::process::exit(1);
