@@ -35,6 +35,8 @@ Most commands accept these shared options:
 | `--no-backup` | Don't write a `.<name>.orig` backup |
 | `--allow-larger` | Keep the result even if it is larger than the input |
 | `-o, --output <PATH>` | Output file (single input) or directory (multiple inputs) |
+| `-j, --jobs <N>` | Max files processed in parallel (default: number of CPUs) |
+| `--timeout <SECS>` | Kill any single tool running longer than this (0 = no limit) |
 
 While a batch runs in a terminal, a live spinner shows `[done/total]` and elapsed
 time; it is suppressed under `--quiet`/`--json` or when output is piped.

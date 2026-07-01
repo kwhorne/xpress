@@ -102,6 +102,12 @@ struct CommonOpts {
     /// Only print errors and the final summary line.
     #[arg(short, long)]
     quiet: bool,
+    /// Max files processed in parallel (default: number of CPUs).
+    #[arg(short = 'j', long)]
+    jobs: Option<usize>,
+    /// Kill any single tool that runs longer than this many seconds (0 = no limit).
+    #[arg(long)]
+    timeout: Option<u64>,
 }
 
 impl CommonOpts {
@@ -112,6 +118,14 @@ impl CommonOpts {
             CompressionQuality::new(CompressionTier::Custom, f)
         } else {
             CompressionQuality::new(CompressionTier::Custom, cfg.compression)
+        }
+    }
+
+    /// Apply the process-wide timeout from `--timeout`.
+    fn apply_timeout(&self) {
+        if let Some(secs) = self.timeout {
+            let d = (secs > 0).then(|| std::time::Duration::from_secs(secs));
+            xpress_core::tools::set_timeout(d);
         }
     }
 
@@ -126,6 +140,7 @@ impl CommonOpts {
     }
 
     fn to_options(&self) -> OptimiseOptions {
+        self.apply_timeout();
         // Flags override config; config overrides built-in defaults.
         let cfg = xpress_core::config::Config::load();
         OptimiseOptions {
@@ -465,7 +480,7 @@ fn run_optimise(args: OptimiseArgs) -> Result<()> {
     let max_size = args.max_size;
     let adaptive = args.adaptive;
     let pdf_dpi = args.pdf_dpi;
-    let results = progress::run_jobs(jobs, mode, |f, o| {
+    let results = progress::run_jobs(jobs, mode, args.common.jobs, |f, o| {
         if let Some(max) = max_size {
             xpress_core::budget::optimise_to_budget(f, max, o)
         } else if adaptive && xpress_core::filetype::classify(f) == Some(MediaKind::Image) {
@@ -503,7 +518,7 @@ fn run_downscale(args: DownscaleArgs) -> Result<()> {
         })
         .collect();
     let factor = args.factor;
-    let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
+    let results = progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
         xpress_core::scale::downscale_file(f, factor, o)
     });
     render::summarise(&results, args.common.output_mode());
@@ -528,9 +543,10 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
                 )
             })
             .collect();
-        let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
-            xpress_core::video::to_gif(f, o, 15, None)
-        });
+        let results =
+            progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
+                xpress_core::video::to_gif(f, o, 15, None)
+            });
         render::summarise(&results, args.common.output_mode());
         return Ok(());
     }
@@ -551,9 +567,10 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
                 })
                 .collect();
             let hw = args.hw;
-            let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
-                xpress_core::video::convert_codec(f, codec, o, hw)
-            });
+            let results =
+                progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
+                    xpress_core::video::convert_codec(f, codec, o, hw)
+                });
             render::summarise(&results, args.common.output_mode());
             return Ok(());
         }
@@ -577,9 +594,10 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
                 )
             })
             .collect();
-        let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
-            xpress_core::image::convert(f, format, o)
-        });
+        let results =
+            progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
+                xpress_core::image::convert(f, format, o)
+            });
         render::summarise(&results, args.common.output_mode());
         return Ok(());
     }
@@ -601,9 +619,10 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             })
             .collect();
         let bitrate = args.bitrate;
-        let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
-            xpress_core::audio::optimise(f, o, format, bitrate)
-        });
+        let results =
+            progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
+                xpress_core::audio::optimise(f, o, format, bitrate)
+            });
         render::summarise(&results, args.common.output_mode());
         return Ok(());
     }
@@ -638,7 +657,7 @@ fn run_crop(args: CropArgs) -> Result<()> {
             )
         })
         .collect();
-    let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
+    let results = progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
         xpress_core::crop::crop_file(f, &spec, o)
     });
     render::summarise(&results, args.common.output_mode());
@@ -774,7 +793,7 @@ fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
             )
         })
         .collect();
-    let results = progress::run_jobs(jobs, args.common.output_mode(), |f, o| {
+    let results = progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
         xpress_core::pipeline::run(f, &steps, o)
     });
     render::summarise(&results, args.common.output_mode());

@@ -23,6 +23,7 @@ const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 pub fn run_jobs<F>(
     jobs: Vec<(PathBuf, OptimiseOptions)>,
     mode: OutputMode,
+    max_jobs: Option<usize>,
     f: F,
 ) -> Vec<(PathBuf, Result<OptimisationResult, OptimiseError>)>
 where
@@ -56,14 +57,24 @@ where
         None
     };
 
-    let results: Vec<_> = jobs
-        .par_iter()
-        .map(|(p, o)| {
-            let r = f(p, o);
-            done.fetch_add(1, Ordering::Relaxed);
-            (p.clone(), r)
-        })
-        .collect();
+    let run = || -> Vec<_> {
+        jobs.par_iter()
+            .map(|(p, o)| {
+                let r = f(p, o);
+                done.fetch_add(1, Ordering::Relaxed);
+                (p.clone(), r)
+            })
+            .collect()
+    };
+    // Cap parallelism with a scoped pool when requested; otherwise use the global pool.
+    let results: Vec<_> = match max_jobs.filter(|&n| n > 0) {
+        Some(n) => rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .build()
+            .map(|pool| pool.install(run))
+            .unwrap_or_else(|_| run()),
+        None => run(),
+    };
 
     if let Some(t) = ticker {
         stop.store(true, Ordering::Relaxed);

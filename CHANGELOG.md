@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `--timeout <secs>` kills any external tool that runs too long (prevents hangs).
+- `--jobs <n>` caps how many files are processed in parallel.
+
 ## [0.3.0] - 2026-06-29
 
 > Supersedes the briefly-tagged 0.2.1: these are new features, so they belong in

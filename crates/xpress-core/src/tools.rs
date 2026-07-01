@@ -6,9 +6,12 @@
 //!  3. the per-user bundle/cache dir (see [`bundle_dir`])
 //!  4. the system `PATH` (via `which`)
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
@@ -68,6 +71,25 @@ pub enum ToolError {
         #[source]
         source: std::io::Error,
     },
+    #[error("`{tool}` timed out after {secs}s and was killed")]
+    Timeout { tool: &'static str, secs: u64 },
+}
+
+/// Per-process timeout for external tools, in seconds (0 = no timeout).
+static TIMEOUT_SECS: AtomicU64 = AtomicU64::new(0);
+
+/// Set a wall-clock timeout applied to every external tool invocation. A tool
+/// exceeding it is killed and its call returns [`ToolError::Timeout`]. Pass
+/// `None` (or a zero duration) to disable.
+pub fn set_timeout(timeout: Option<Duration>) {
+    TIMEOUT_SECS.store(timeout.map(|d| d.as_secs()).unwrap_or(0), Ordering::Relaxed);
+}
+
+fn current_timeout() -> Option<Duration> {
+    match TIMEOUT_SECS.load(Ordering::Relaxed) {
+        0 => None,
+        s => Some(Duration::from_secs(s)),
+    }
 }
 
 /// The per-user directory where xpress keeps (or extracts) bundled binaries.
@@ -148,6 +170,7 @@ pub fn is_arm64() -> bool {
 }
 
 /// Run a tool to completion, capturing stdout/stderr. Errors on non-zero exit.
+/// Honours the timeout set via [`set_timeout`], killing the process if exceeded.
 pub fn run<I, S>(tool: Tool, args: I) -> Result<Output, ToolError>
 where
     I: IntoIterator<Item = S>,
@@ -155,20 +178,74 @@ where
 {
     let path = resolve(tool)?;
     let name = tool.binary_name();
-    let output = Command::new(&path)
+
+    let mut child = Command::new(&path)
         .args(args)
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|source| ToolError::Launch { tool: name, source })?;
 
-    if !output.status.success() {
+    // Drain stdout/stderr on threads so a full pipe buffer can't deadlock us.
+    let mut out_pipe = child.stdout.take();
+    let mut err_pipe = child.stderr.take();
+    let out_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = out_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let err_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(p) = err_pipe.as_mut() {
+            let _ = p.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let timeout = current_timeout();
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) => {
+                if let Some(t) = timeout {
+                    if start.elapsed() >= t {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        // Don't join the reader threads: a grandchild may still hold
+                        // the pipe open, which would block us. Detach them instead.
+                        drop(out_handle);
+                        drop(err_handle);
+                        return Err(ToolError::Timeout {
+                            tool: name,
+                            secs: t.as_secs(),
+                        });
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(source) => return Err(ToolError::Launch { tool: name, source }),
+        }
+    };
+
+    let stdout = out_handle.join().unwrap_or_default();
+    let stderr = err_handle.join().unwrap_or_default();
+
+    if !status.success() {
         return Err(ToolError::Failed {
             tool: name,
-            code: output.status.code().unwrap_or(-1),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            code: status.code().unwrap_or(-1),
+            stderr: String::from_utf8_lossy(&stderr).trim().to_string(),
         });
     }
-    Ok(output)
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 /// Run, retrying up to `tries` times before giving up.
@@ -181,6 +258,8 @@ where
     for _ in 0..tries.max(1) {
         match run(tool, args.clone()) {
             Ok(out) => return Ok(out),
+            // A timeout won't get better by retrying — fail fast.
+            Err(e @ ToolError::Timeout { .. }) => return Err(e),
             Err(e) => last_err = Some(e),
         }
     }
