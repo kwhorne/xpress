@@ -140,4 +140,3 @@ pub fn write_pdf(path: &Path) {
     doc.trailer.set("Root", catalog_id);
     doc.save(path).unwrap();
 }
-

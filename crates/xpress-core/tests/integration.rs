@@ -108,6 +108,75 @@ fn convert_png_to_webp() {
 }
 
 #[test]
+fn pdf_recompresses_embedded_jpeg() {
+    use lopdf::{dictionary, Document, Object, Stream};
+
+    let dir = tmpdir("pdfimg");
+    let f = dir.join("scan.pdf");
+
+    // A high-quality (q95) noisy JPEG so recompressing at the normal preset (~q85)
+    // clearly shrinks it.
+    let (w, h) = (256u32, 256u32);
+    let mut img = ::image::RgbImage::new(w, h);
+    let mut seed = 0x1234_5678u32;
+    for px in img.pixels_mut() {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        let r = (seed >> 16) as u8;
+        let g = (seed >> 8) as u8;
+        let b = seed as u8;
+        *px = ::image::Rgb([r, g, b]);
+    }
+    let mut jpeg = Vec::new();
+    ::image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 95)
+        .encode_image(&::image::DynamicImage::ImageRgb8(img))
+        .unwrap();
+
+    let mut doc = Document::with_version("1.5");
+    let img_stream = Stream::new(
+        dictionary! {
+            "Type" => "XObject",
+            "Subtype" => "Image",
+            "Width" => w as i64,
+            "Height" => h as i64,
+            "ColorSpace" => "DeviceRGB",
+            "BitsPerComponent" => 8,
+            "Filter" => "DCTDecode",
+        },
+        jpeg.clone(),
+    );
+    let img_id = doc.add_object(Object::Stream(img_stream));
+    let content_id = doc.add_object(Stream::new(
+        dictionary! {},
+        b"q 256 0 0 256 0 0 cm /Im0 Do Q".to_vec(),
+    ));
+    let pages_id = doc.new_object_id();
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 256.into(), 256.into()],
+        "Contents" => content_id,
+        "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => img_id } },
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages", "Kids" => vec![page_id.into()], "Count" => 1,
+        }),
+    );
+    let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog_id);
+    doc.save(&f).unwrap();
+
+    let before = std::fs::metadata(&f).unwrap().len();
+    let r = pdf::optimise(&f, &opts(), None).unwrap();
+    assert!(
+        r.improved(),
+        "expected the embedded JPEG to be recompressed smaller"
+    );
+    assert!(r.new_size < before);
+}
+
+#[test]
 fn pdf_crop_and_uncrop() {
     common::install_stubs();
     let dir = tmpdir("pdfcrop");
@@ -133,12 +202,14 @@ fn pdf_crop_and_uncrop() {
 
 #[test]
 fn pdf_optimise() {
-    common::install_stubs();
     let dir = tmpdir("pdf");
     let f = dir.join("doc.pdf");
-    common::write_dummy(&f, 4000);
-    let r = pdf::optimise(&f, &opts(), Some(144)).unwrap();
-    assert!(r.improved());
+    common::write_pdf(&f); // valid minimal PDF (no images to recompress)
+                           // Pure-Rust optimise runs lopdf compression; a minimal PDF may already be
+                           // optimal, so just require success and a valid output path.
+    let r = pdf::optimise(&f, &opts(), None).unwrap();
+    assert!(r.new_size > 0);
+    assert!(r.output.exists());
 }
 
 #[test]

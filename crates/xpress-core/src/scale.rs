@@ -20,7 +20,6 @@ pub fn image_dimensions(path: &Path) -> Option<(u32, u32)> {
         .map(|s| (s.width as u32, s.height as u32))
 }
 
-
 /// Downscale a single file by `factor` (0.0–1.0), then optimise it.
 ///
 /// `factor` of 1.0 is a no-op scale (pure optimise). The output goes to

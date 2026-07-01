@@ -21,14 +21,15 @@ cargo install --path crates/xpress-cli
 
 ## Providing the optimisation tools
 
-**Images (PNG/JPEG/GIF/WebP/BMP/TIFF) are optimised, resized, cropped and
-converted entirely in pure Rust — no external tool required.** External binaries
-are only needed for video, audio, PDF, and a few conversion targets:
+**Images and PDFs are optimised, resized, cropped and converted entirely in pure
+Rust — no external tool required.** The macOS app also **bundles `ffmpeg`** for
+video/audio, so a released `.app`/`.dmg` needs nothing installed. External
+binaries are only relevant when building from source or for a few extras:
 
 | Tool          | Used for                         |
 |---------------|----------------------------------|
-| `ffmpeg`      | video and audio                  |
-| `ghostscript` (`gs`) | PDF                       |
+| `ffmpeg`      | video and audio (bundled in the app) |
+| `ghostscript` (`gs`) | `extract-pages` only (optional) |
 | `gifski`      | video → GIF (optional; ffmpeg fallback) |
 | `heif-enc`    | HEIC conversion (optional)       |
 | `cjxl`        | JPEG XL conversion (optional)    |

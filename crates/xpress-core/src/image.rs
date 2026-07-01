@@ -22,11 +22,15 @@ fn other<E: std::fmt::Display>(e: E) -> OptimiseError {
 }
 
 /// Optimise an image in place (or to `options.output`).
-pub fn optimise(path: &Path, options: &OptimiseOptions) -> Result<OptimisationResult, OptimiseError> {
+pub fn optimise(
+    path: &Path,
+    options: &OptimiseOptions,
+) -> Result<OptimisationResult, OptimiseError> {
     if !path.is_file() {
         return Err(OptimiseError::NotFound(path.to_path_buf()));
     }
-    let ext = extension_lower(path).ok_or_else(|| OptimiseError::Unsupported(path.to_path_buf()))?;
+    let ext =
+        extension_lower(path).ok_or_else(|| OptimiseError::Unsupported(path.to_path_buf()))?;
     let old_size = file_size(path);
     let cq = options.compression;
 
@@ -73,9 +77,7 @@ fn optimise_png(src: &Path, out: &Path, cq: CompressionQuality) -> Result<(), Op
         let mut liq = imagequant::new();
         liq.set_speed(speed).map_err(other)?;
         liq.set_quality(qmin, qmax).map_err(other)?;
-        let mut qimg = liq
-            .new_image_borrowed(&pixels, w, h, 0.0)
-            .map_err(other)?;
+        let mut qimg = liq.new_image_borrowed(&pixels, w, h, 0.0).map_err(other)?;
         let mut res = liq.quantize(&mut qimg).map_err(other)?;
         res.set_dithering_level(1.0).map_err(other)?;
         let (palette, indices) = res.remapped(&mut qimg).map_err(other)?;
@@ -85,7 +87,12 @@ fn optimise_png(src: &Path, out: &Path, cq: CompressionQuality) -> Result<(), Op
             let mut enc = png::Encoder::new(&mut buf, w as u32, h as u32);
             enc.set_color(png::ColorType::Indexed);
             enc.set_depth(png::BitDepth::Eight);
-            enc.set_palette(palette.iter().flat_map(|c| [c.r, c.g, c.b]).collect::<Vec<u8>>());
+            enc.set_palette(
+                palette
+                    .iter()
+                    .flat_map(|c| [c.r, c.g, c.b])
+                    .collect::<Vec<u8>>(),
+            );
             enc.set_trns(palette.iter().map(|c| c.a).collect::<Vec<u8>>());
             let mut writer = enc.write_header().map_err(other)?;
             writer.write_image_data(&indices).map_err(other)?;
@@ -361,7 +368,13 @@ pub fn convert(
             let q = cq.conversion_quality().to_string();
             tools::run_with_retries(
                 Tool::HeifEnc,
-                ["-q", &q, "-o", &temp_out.display().to_string(), &path.display().to_string()],
+                [
+                    "-q",
+                    &q,
+                    "-o",
+                    &temp_out.display().to_string(),
+                    &path.display().to_string(),
+                ],
                 2,
             )?;
         }

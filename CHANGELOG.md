@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-01
+
+### Changed
+- PDF optimisation is now **pure Rust**: embedded JPEG images are recompressed
+  via the image engine and streams are losslessly re-compressed with `lopdf` —
+  no `ghostscript` needed. (`gs` is still used only by `extract-pages`.)
+  Images + video + audio + PDF now all work with no external tools to install
+  (video/audio via the bundled ffmpeg).
+
 ## [0.4.2] - 2026-07-01
 
 ### Changed
@@ -135,7 +144,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/kwhorne/xpress/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/kwhorne/xpress/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/kwhorne/xpress/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/kwhorne/xpress/compare/v0.3.0...v0.4.0

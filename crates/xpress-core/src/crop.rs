@@ -96,7 +96,6 @@ impl CropSpec {
     }
 }
 
-
 /// How the source maps to the target.
 enum Plan {
     /// Scale keeping aspect to exactly these dims (no crop).

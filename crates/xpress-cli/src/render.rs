@@ -138,13 +138,14 @@ pub fn summarise(
 pub fn doctor() {
     let tools = [
         ("ffmpeg (video/audio)", Tool::Ffmpeg),
-        ("gs / ghostscript (pdf)", Tool::Ghostscript),
+        ("gs / ghostscript (pdf extract-pages, optional)", Tool::Ghostscript),
         ("gifski (video->gif, optional)", Tool::Gifski),
         ("heif-enc (heic convert, optional)", Tool::HeifEnc),
         ("cjxl (jxl convert, optional)", Tool::Cjxl),
         ("exiftool (metadata, optional)", Tool::Exiftool),
     ];
-    println!("Images (PNG/JPEG/GIF/WebP) are optimised in pure Rust — no external tool needed.\n");
+    println!("Images and PDFs are optimised in pure Rust — no external tool needed.");
+    println!("(ffmpeg is bundled in the app for video/audio.)\n");
     println!("Tool availability:");
     for (label, tool) in tools {
         match tools::resolve(tool) {
