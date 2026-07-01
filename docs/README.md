@@ -26,8 +26,9 @@ optimisation engine.
 4. [Daemon & automations](daemon.md) — watching folders and the clipboard.
 5. [Desktop GUI](gui.md) — drag-and-drop, hotkeys, and building a `.app`.
 6. [Integrations](integrations.md) — Shortcuts, Folder Actions, Photos, uploads.
-7. [Architecture](architecture.md) — how the crates fit together.
-8. [Contributing](contributing.md) — dev workflow, tests, lints, releases.
+7. [Code signing](signing.md) — Developer ID signing + notarisation on macOS.
+8. [Architecture](architecture.md) — how the crates fit together.
+9. [Contributing](contributing.md) — dev workflow, tests, lints, releases.
 
 ## Quick start
 

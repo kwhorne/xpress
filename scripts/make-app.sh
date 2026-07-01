@@ -51,10 +51,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 cp "$GUI_BIN" "$APP/Contents/MacOS/xpress"
 chmod +x "$APP/Contents/MacOS/xpress"
-# Ship the CLI alongside for convenience.
-if [[ -x "$CLI_BIN" ]]; then
-  cp "$CLI_BIN" "$APP/Contents/MacOS/xpress-cli"
-fi
+# The CLI is shipped separately (tar.gz / Homebrew), not inside the GUI bundle:
+# a second executable in Contents/MacOS breaks code-signing/notarisation.
 
 if [[ "$WITH_TOOLS" == "1" ]]; then
   echo "==> Bundling optimisation tools into Resources/bin"
@@ -103,11 +101,35 @@ cat >> "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Ad-hoc sign so Gatekeeper lets it run locally.
-codesign --force --deep --sign - "$APP" 2>/dev/null || \
-  echo "    (codesign unavailable — bundle is unsigned)"
+# Sign with a Developer ID if available (from $XPRESS_SIGN_ID or the keychain),
+# otherwise fall back to an ad-hoc signature for local use.
+SIGN_ID="${XPRESS_SIGN_ID:-}"
+if [[ -z "$SIGN_ID" ]]; then
+  SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null \
+    | awk -F'"' '/Developer ID Application/{print $2; exit}')"
+fi
+
+if [[ -n "$SIGN_ID" ]]; then
+  echo "==> Signing with: $SIGN_ID"
+  # Sign nested Mach-O binaries first, then the bundle, with hardened runtime.
+  find "$APP/Contents/MacOS" "$APP/Contents/Resources/bin" -type f 2>/dev/null | while read -r f; do
+    codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$f" 2>/dev/null || true
+  done
+  codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"
+  codesign --verify --deep --strict --verbose=2 "$APP" && echo "    ✓ signature valid"
+else
+  codesign --force --deep --sign - "$APP" 2>/dev/null \
+    && echo "    (ad-hoc signed — for local use only)" \
+    || echo "    (codesign unavailable — bundle is unsigned)"
+fi
 
 echo "==> Done: $APP"
+
+# Notarise when credentials are provided (Apple ID + app-specific password, or
+# an App Store Connect API key). Set XPRESS_NOTARIZE=1 to enable.
+if [[ "${XPRESS_NOTARIZE:-0}" == "1" && -n "$SIGN_ID" ]]; then
+  "$ROOT/scripts/notarize.sh" "$APP"
+fi
 
 # ---------------------------------------------------------------------------
 # Distribution (Developer ID signing + notarisation), for reference:

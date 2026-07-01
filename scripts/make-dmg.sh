@@ -51,7 +51,20 @@ hdiutil create \
   -ov \
   "$OUT" >/dev/null
 
-# Ad-hoc sign the image so Gatekeeper accepts it locally.
-codesign --force --sign - "$OUT" 2>/dev/null || true
+# Sign the image with a Developer ID if available, else ad-hoc.
+SIGN_ID="${XPRESS_SIGN_ID:-}"
+if [[ -z "$SIGN_ID" ]]; then
+  SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null \
+    | awk -F'"' '/Developer ID Application/{print $2; exit}')"
+fi
+if [[ -n "$SIGN_ID" ]]; then
+  codesign --force --timestamp --sign "$SIGN_ID" "$OUT"
+else
+  codesign --force --sign - "$OUT" 2>/dev/null || true
+fi
 
 echo "==> Done: $OUT"
+
+if [[ "${XPRESS_NOTARIZE:-0}" == "1" && -n "$SIGN_ID" ]]; then
+  "$ROOT/scripts/notarize.sh" "$OUT"
+fi

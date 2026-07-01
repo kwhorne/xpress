@@ -59,13 +59,37 @@ jobs:
           tar -czf "$dist.tar.gz" "$dist"
           shasum -a 256 "$dist.tar.gz" > "$dist.tar.gz.sha256"
 
+      - name: Import signing certificate
+        if: runner.os == 'macOS' && secrets.MACOS_CERT_P12 != ''
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          kc="$RUNNER_TEMP/build.keychain"
+          pw="ci-$(openssl rand -hex 8)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$pw" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$pw" "$kc"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$pw" "$kc"
+          rm -f "$RUNNER_TEMP/cert.p12"
+
       - name: Build macOS .app bundle
         if: runner.os == 'macOS'
         shell: bash
+        env:
+          XPRESS_SIGN_ID: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          XPRESS_NOTARIZE: ${{ secrets.APPLE_APP_PASSWORD != '' && '1' || '0' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
         run: |
           set -euo pipefail
           bin_dir="target/${{ matrix.target }}/release"
-          scripts/make-app.sh --gui "$bin_dir/xpress-gui" --cli "$bin_dir/xpress" \
+          scripts/make-app.sh --gui "$bin_dir/xpress-gui" \
             --out dist-app --version "${GITHUB_REF_NAME#v}"
           app_zip="xpress-${GITHUB_REF_NAME}-${{ matrix.target }}-app.zip"
           ditto -c -k --keepParent dist-app/xpress.app "$app_zip"

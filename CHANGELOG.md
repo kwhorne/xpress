@@ -12,6 +12,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   macOS-style toggle switches, and a Tokyo Night colour palette.
 
 ### Added
+- macOS code signing + notarisation: `make-app.sh`/`make-dmg.sh` sign with a
+  Developer ID (hardened runtime) when available, a `notarize.sh` helper submits
+  and staples, and the release workflow signs + notarises when the signing
+  secrets are configured. See `docs/signing.md`.
 - Auto-update: `xpress update` checks GitHub Releases and replaces the binary in
   place (`--check` to only report). The desktop app checks on launch and then
   periodically (every 6h), shows an “Update available” banner when a newer
