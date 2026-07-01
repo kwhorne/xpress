@@ -213,7 +213,13 @@ Originals are backed up next to the file as `.<name>.orig` unless `--no-backup`.
 - Alpha-aware adaptive; GUI interactive crop tool + Reveal/Copy on result cards.
 - Integrations guide (Shortcuts, Folder Actions, Photos, uploads).
 
+**Phase 8 — hardening (0.4.0)** ✅
+- `--timeout` to kill hung tools and `--jobs` to cap parallelism.
+- Failure-path tests, an isolated timeout test, and a real-tool CI smoke job.
+- `completions`/`man` generation and `cargo audit` in CI.
+
 ### Possible next steps
+- `--verbose`/logging and determinate (percentage) progress.
 - macOS Developer ID signing + notarisation (needs an Apple certificate).
 - Native GUI drag-out into other apps (needs a non-egui drag source).
 - Native Photos/Shortcuts app target (Xcode App Intents/PhotoKit).
