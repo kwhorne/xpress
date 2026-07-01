@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-07-01
+
+### Added
+- Global hotkey **⌘⇧X** brings the xpress window to the front from anywhere
+  (handy for the menu-bar app). ⌘⇧O still optimises the clipboard. Both are
+  shown in the menu-bar menu.
+
 ## [0.4.6] - 2026-07-01
 
 ### Changed
@@ -168,7 +175,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.6...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.7...HEAD
+[0.4.7]: https://github.com/kwhorne/xpress/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/kwhorne/xpress/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/kwhorne/xpress/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/kwhorne/xpress/compare/v0.4.3...v0.4.4

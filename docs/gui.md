@@ -11,8 +11,8 @@ cargo run -p xpress-gui --release
 - **Drag and drop** images, videos, PDFs or audio onto the window to optimise them.
 - **Result cards** show before/after size, the saving (`-NN%`), and a thumbnail
   for images.
-- **Global hotkey** `⌘⇧O` (macOS) / `Ctrl⇧O` optimises the image currently on the
-  clipboard, from anywhere.
+- **Global hotkeys**: `⌘⇧O` optimises the clipboard image from anywhere, and
+  `⌘⇧X` brings the xpress window to the front (great with the menu-bar app).
 - **Self-updating**: when a newer release is published, an **Update & Restart**
   button downloads it, replaces the installed `.app`, and relaunches — no trip to
   the browser.

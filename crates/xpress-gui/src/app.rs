@@ -80,6 +80,7 @@ pub struct XpressApp {
 
     _hotkey_manager: Option<GlobalHotKeyManager>,
     clipboard_hotkey: Option<HotKey>,
+    show_hotkey: Option<HotKey>,
 
     crop: Option<CropState>,
 
@@ -113,8 +114,8 @@ impl XpressApp {
 
         // Menu-bar (status bar) icon for quick access.
         let menu = Menu::new();
-        let open_item = MenuItem::new("Open xpress", true, None);
-        let clip_item = MenuItem::new("Optimise clipboard", true, None);
+        let open_item = MenuItem::new("Open xpress\t⌘⇧X", true, None);
+        let clip_item = MenuItem::new("Optimise clipboard\t⌘⇧O", true, None);
         let update_item = MenuItem::new("Check for updates", true, None);
         let quit_item = MenuItem::new("Quit xpress", true, None);
         let _ = menu.append_items(&[
@@ -141,16 +142,17 @@ impl XpressApp {
                 .ok()
         });
 
-        // Register Cmd/Ctrl + Shift + O to optimise the clipboard image.
-        let (manager, hotkey) = match GlobalHotKeyManager::new() {
+        // Global hotkeys: ⌘⇧O optimises the clipboard, ⌘⇧X shows the window.
+        // (⌘X alone is the system “cut” shortcut, so we use ⌘⇧X.)
+        let (manager, clip_hk, show_hk) = match GlobalHotKeyManager::new() {
             Ok(m) => {
-                let hk = HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyO);
-                match m.register(hk) {
-                    Ok(()) => (Some(m), Some(hk)),
-                    Err(_) => (Some(m), None),
-                }
+                let clip = HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyO);
+                let show = HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyX);
+                let clip = m.register(clip).ok().map(|_| clip);
+                let show = m.register(show).ok().map(|_| show);
+                (Some(m), clip, show)
             }
-            Err(_) => (None, None),
+            Err(_) => (None, None, None),
         };
 
         Self {
@@ -167,7 +169,8 @@ impl XpressApp {
             tx,
             rx,
             _hotkey_manager: manager,
-            clipboard_hotkey: hotkey,
+            clipboard_hotkey: clip_hk,
+            show_hotkey: show_hk,
             crop: None,
             update_info,
             update_checking,
@@ -395,12 +398,16 @@ impl eframe::App for XpressApp {
             }
         }
 
-        // Global hotkey events.
-        if let Some(hk) = self.clipboard_hotkey {
-            while let Ok(ev) = GlobalHotKeyEvent::receiver().try_recv() {
-                if ev.id == hk.id() && ev.state == HotKeyState::Pressed {
-                    self.optimise_clipboard(ctx);
-                }
+        // Global hotkey events (poll once; dispatch by id).
+        while let Ok(ev) = GlobalHotKeyEvent::receiver().try_recv() {
+            if ev.state != HotKeyState::Pressed {
+                continue;
+            }
+            if self.clipboard_hotkey.map(|h| h.id()) == Some(ev.id) {
+                Self::show_window(ctx);
+                self.optimise_clipboard(ctx);
+            } else if self.show_hotkey.map(|h| h.id()) == Some(ev.id) {
+                Self::show_window(ctx);
             }
         }
 
@@ -577,7 +584,7 @@ impl XpressApp {
         ui.painter().text(
             rect.center() + egui::vec2(0.0, 14.0),
             Align2::CENTER_CENTER,
-            "images · video · PDF · audio      ⌘⇧O for clipboard",
+            "images · video · PDF · audio      ⌘⇧O clipboard  ·  ⌘⇧X show",
             FontId::proportional(12.0),
             ui.visuals().weak_text_color(),
         );
