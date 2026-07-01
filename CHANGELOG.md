@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Redesigned the desktop GUI: a left sidebar with sections and colourful icon
+  tiles, roomy tabbed views (Optimise / Preferences / About), rounded cards,
+  macOS-style toggle switches, and a Tokyo Night colour palette.
+
 ### Added
 - Auto-update: `xpress update` checks GitHub Releases and replaces the binary in
   place (`--check` to only report). The desktop app checks on launch and then
