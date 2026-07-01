@@ -13,8 +13,8 @@ use eframe::egui;
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([460.0, 600.0])
-            .with_min_inner_size([360.0, 360.0])
+            .with_inner_size([960.0, 660.0])
+            .with_min_inner_size([760.0, 500.0])
             .with_title("xpress"),
         ..Default::default()
     };

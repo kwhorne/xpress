@@ -363,15 +363,8 @@ impl XpressApp {
             .show(ctx, |ui| {
                 // Brand.
                 ui.horizontal(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), Sense::hover());
-                    ui.painter().rect_filled(rect, 8.0, ACCENT);
-                    ui.painter().text(
-                        rect.center(),
-                        Align2::CENTER_CENTER,
-                        "x",
-                        FontId::proportional(20.0),
-                        Color32::WHITE,
-                    );
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(32.0, 32.0), Sense::hover());
+                    draw_x_logo(ui.painter(), rect.center(), 32.0);
                     ui.add_space(2.0);
                     ui.vertical(|ui| {
                         ui.label(RichText::new("xpress").size(17.0).strong());
@@ -625,15 +618,8 @@ impl XpressApp {
         let ctx = ui.ctx().clone();
         ui.add_space(10.0);
         ui.vertical_centered(|ui| {
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(64.0, 64.0), Sense::hover());
-            ui.painter().rect_filled(rect, 16.0, ACCENT);
-            ui.painter().text(
-                rect.center(),
-                Align2::CENTER_CENTER,
-                "x",
-                FontId::proportional(40.0),
-                Color32::WHITE,
-            );
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(72.0, 72.0), Sense::hover());
+            draw_x_logo(ui.painter(), rect.center(), 72.0);
             ui.add_space(10.0);
             ui.heading("xpress");
             ui.label(
@@ -900,6 +886,23 @@ fn section_header(ui: &mut egui::Ui, text: &str) {
     ui.add_space(2.0);
     ui.label(RichText::new(text).size(10.5).color(TEXT_DIM).strong());
     ui.add_space(2.0);
+}
+
+/// Draw the colourful "x" logo (two crossing gradient-ish strokes) centred at
+/// `center`, sized to fit a `size`×`size` box, on a transparent background.
+fn draw_x_logo(painter: &egui::Painter, center: Pos2, size: f32) {
+    let h = size * 0.34;
+    let w = size * 0.2;
+    let blue = ACCENT;
+    let orange = Color32::from_rgb(0xff, 0x9e, 0x64);
+    painter.line_segment(
+        [center + egui::vec2(-h, -h), center + egui::vec2(h, h)],
+        egui::Stroke::new(w, blue),
+    );
+    painter.line_segment(
+        [center + egui::vec2(h, -h), center + egui::vec2(-h, h)],
+        egui::Stroke::new(w, orange),
+    );
 }
 
 /// A sidebar navigation row: colored icon tile + label, highlighted when active.
