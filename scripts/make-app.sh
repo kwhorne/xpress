@@ -111,10 +111,12 @@ fi
 
 if [[ -n "$SIGN_ID" ]]; then
   echo "==> Signing with: $SIGN_ID"
-  # Sign nested Mach-O binaries first, then the bundle, with hardened runtime.
-  find "$APP/Contents/MacOS" "$APP/Contents/Resources/bin" -type f 2>/dev/null | while read -r f; do
-    codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$f" 2>/dev/null || true
-  done
+  # Sign nested Mach-O binaries first (bundled tools), then the bundle.
+  if [[ -d "$APP/Contents/Resources/bin" ]]; then
+    while IFS= read -r f; do
+      codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$f" || true
+    done < <(find "$APP/Contents/Resources/bin" -type f)
+  fi
   codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"
   codesign --verify --deep --strict --verbose=2 "$APP" && echo "    ✓ signature valid"
 else
