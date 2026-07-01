@@ -193,61 +193,6 @@ Steps are joined with `->` and run left-to-right, each feeding the next:
 
 Originals are backed up next to the file as `.<name>.orig` unless `--no-backup`.
 
-## Status & roadmap
-
-**Phase 1 — core engine + CLI** ✅
-- Percentage-based compression model with unit tests on the preset anchors.
-- Image (jpeg/png/gif), video (H.264), PDF (ghostscript), audio optimise/convert.
-- Parallel batch optimisation, backups, size guard, metadata, timestamps.
-- Self-contained binary bundling (`embed-tools`, `fetch-tools.sh`, `xpress bundle`).
-
-**Phase 2 — scaling & conversion** ✅
-- `downscale --factor` for images (vips/ffmpeg) and videos (ffmpeg `scale=`).
-- Image format conversion (webp/avif/heic/jxl/png/jpeg) via cwebp/heif-enc/cjxl.
-- Audio conversion (aac/mp3/opus/wav/flac/aiff).
-
-**Phase 3 — crop & pipelines** ✅
-- `crop` to a size, aspect ratio or long edge (vips smart crop / ffmpeg).
-- Pipeline DSL (`crop(width: 1600) -> convert(to: webp)`) with sequential execution.
-- Saved pipelines library (`pipeline add/list/show/run/delete`).
-
-**Phase 4 — background daemon** ✅
-- `watch` folders (`notify`): new/changed files run their attached pipeline,
-  with debouncing, type filtering and loop prevention.
-- `pipeline attach`/`detach` to configure folder (and clipboard) automations.
-- Clipboard watcher (`--clipboard`, feature `clipboard`): copied images are
-  optimised and saved to `~/Pictures/xpress`.
-- Graceful Ctrl-C shutdown.
-
-**Phase 5 — desktop GUI** ✅
-- egui/eframe app with drag-and-drop, floating result cards and thumbnails.
-- Background (off-thread) optimisation; compression + pipeline controls.
-- Global hotkey (⌘⇧O) to optimise the clipboard image; always-on-top mode.
-
-**Phase 6 — robustness & polish (0.2.0)** ✅
-- Clipboard “paste small”: optimised PNG written back to the clipboard (macOS).
-- `convert --to gif`, `--max-size` budget, `--adaptive`, output filename templates.
-- `restore`/`clean-backups`, a user `config.json`, `--json`/`--quiet`, live progress.
-- Integration test suite (stub tools), hardened paths, MSRV 1.87, CI/release `.dmg`.
-
-**Phase 7 — formats & editing (0.3.0)** ✅
-- Video codec conversion (`mp4`/`hevc`/`av1`/`webm`) with a `--hw` toggle.
-- Non-destructive PDF `crop-pdf`/`uncrop-pdf` and `extract-pages`.
-- Pipeline steps: `normalize`, `watermark`, `copyToClipboard`, `runScript`.
-- Alpha-aware adaptive; GUI interactive crop tool + Reveal/Copy on result cards.
-- Integrations guide (Shortcuts, Folder Actions, Photos, uploads).
-
-**Phase 8 — hardening (0.4.0)** ✅
-- `--timeout` to kill hung tools and `--jobs` to cap parallelism.
-- Failure-path tests, an isolated timeout test, and a real-tool CI smoke job.
-- `completions`/`man` generation and `cargo audit` in CI.
-
-### Possible next steps
-- `--verbose`/logging and determinate (percentage) progress.
-- macOS Developer ID signing + notarisation (needs an Apple certificate).
-- Native GUI drag-out into other apps (needs a non-egui drag source).
-- Native Photos/Shortcuts app target (Xcode App Intents/PhotoKit).
-
 ## Development
 
 ```sh
