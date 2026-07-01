@@ -50,6 +50,7 @@ pub struct XpressApp {
     clipboard_hotkey: Option<HotKey>,
 
     crop: Option<CropState>,
+    show_about: bool,
 }
 
 impl XpressApp {
@@ -83,6 +84,7 @@ impl XpressApp {
             _hotkey_manager: manager,
             clipboard_hotkey: hotkey,
             crop: None,
+            show_about: false,
         }
     }
 
@@ -247,6 +249,8 @@ impl eframe::App for XpressApp {
             self.draw_results(ctx);
         }
 
+        self.draw_about(ctx);
+
         // Keep a steady repaint while work is in flight.
         if self.in_flight > 0 {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
@@ -328,9 +332,57 @@ impl XpressApp {
                 if !self.cards.is_empty() && ui.button("Clear").clicked() {
                     self.cards.clear();
                 }
+                if ui.button("About").clicked() {
+                    self.show_about = true;
+                }
             });
             ui.add_space(6.0);
         });
+    }
+
+    fn draw_about(&mut self, ctx: &egui::Context) {
+        if !self.show_about {
+            return;
+        }
+        let mut open = true;
+        egui::Window::new("About xpress")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(4.0);
+                    ui.heading(
+                        egui::RichText::new("xpress")
+                            .size(24.0)
+                            .color(egui::Color32::from_rgb(255, 122, 24)),
+                    );
+                    ui.label(
+                        egui::RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                            .weak()
+                            .monospace(),
+                    );
+                    ui.add_space(10.0);
+                    ui.label("Make your media smaller — images, video, PDF and audio.");
+                    ui.add_space(14.0);
+                    ui.hyperlink_to("Website · kwhorne.com", "https://kwhorne.com");
+                    ui.hyperlink_to(
+                        "GitHub · github.com/kwhorne/xpress",
+                        "https://github.com/kwhorne/xpress",
+                    );
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new("Developed by Knut W. Horne").strong());
+                    ui.add_space(12.0);
+                    if ui.button("Close").clicked() {
+                        self.show_about = false;
+                    }
+                    ui.add_space(4.0);
+                });
+            });
+        if !open {
+            self.show_about = false;
+        }
     }
 
     fn draw_crop(&mut self, ctx: &egui::Context) {
