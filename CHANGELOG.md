@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-07-01
+
+### Added
+- The desktop app now lives in the **macOS menu bar**: a status-bar icon with a
+  menu (Open, Optimise clipboard, Check for updates, Quit). Clicking it shows the
+  window. Closing the window hides it to the menu bar instead of quitting (use
+  the menu's “Quit” to exit), so xpress stays a click away.
+
 ## [0.4.4] - 2026-07-01
 
 ### Changed
@@ -153,7 +161,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/kwhorne/xpress/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/kwhorne/xpress/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/kwhorne/xpress/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/kwhorne/xpress/compare/v0.4.1...v0.4.2

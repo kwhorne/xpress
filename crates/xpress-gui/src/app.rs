@@ -16,6 +16,9 @@ use global_hotkey::{
 use xpress_core::compression::{CompressionQuality, CompressionTier};
 use xpress_core::result::OptimiseOptions;
 
+use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
+
 use crate::work::{self, Msg};
 
 // Palette matching elyra-conductor (Tokyo Night).
@@ -86,6 +89,12 @@ pub struct XpressApp {
     update_dismissed: bool,
     updating: Arc<AtomicBool>,
     update_status: Arc<Mutex<Option<String>>>,
+
+    _tray: Option<TrayIcon>,
+    tray_open_id: String,
+    tray_clip_id: String,
+    tray_update_id: String,
+    tray_quit_id: String,
 }
 
 impl XpressApp {
@@ -101,6 +110,36 @@ impl XpressApp {
             update_info.clone(),
             update_checking.clone(),
         );
+
+        // Menu-bar (status bar) icon for quick access.
+        let menu = Menu::new();
+        let open_item = MenuItem::new("Open xpress", true, None);
+        let clip_item = MenuItem::new("Optimise clipboard", true, None);
+        let update_item = MenuItem::new("Check for updates", true, None);
+        let quit_item = MenuItem::new("Quit xpress", true, None);
+        let _ = menu.append_items(&[
+            &open_item,
+            &PredefinedMenuItem::separator(),
+            &clip_item,
+            &update_item,
+            &PredefinedMenuItem::separator(),
+            &quit_item,
+        ]);
+        let (open_id, clip_id, update_id, quit_id) = (
+            open_item.id().0.clone(),
+            clip_item.id().0.clone(),
+            update_item.id().0.clone(),
+            quit_item.id().0.clone(),
+        );
+        let tray = tray_icon_image().and_then(|(rgba, w, h)| {
+            let icon = tray_icon::Icon::from_rgba(rgba, w, h).ok()?;
+            TrayIconBuilder::new()
+                .with_menu(Box::new(menu))
+                .with_icon(icon)
+                .with_tooltip("xpress")
+                .build()
+                .ok()
+        });
 
         // Register Cmd/Ctrl + Shift + O to optimise the clipboard image.
         let (manager, hotkey) = match GlobalHotKeyManager::new() {
@@ -136,7 +175,17 @@ impl XpressApp {
             update_dismissed: false,
             updating: Arc::new(AtomicBool::new(false)),
             update_status: Arc::new(Mutex::new(None)),
+            _tray: tray,
+            tray_open_id: open_id,
+            tray_clip_id: clip_id,
+            tray_update_id: update_id,
+            tray_quit_id: quit_id,
         }
+    }
+
+    fn show_window(ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 
     /// Download the latest release, replace this .app, and relaunch. macOS only.
@@ -316,6 +365,35 @@ impl XpressApp {
 
 impl eframe::App for XpressApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Closing the window hides it to the menu bar instead of quitting; use the
+        // tray's “Quit” to actually exit.
+        if ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+
+        // Menu-bar icon: menu selections and clicks.
+        while let Ok(ev) = MenuEvent::receiver().try_recv() {
+            let id = ev.id.0.as_str();
+            if id == self.tray_open_id {
+                Self::show_window(ctx);
+            } else if id == self.tray_clip_id {
+                Self::show_window(ctx);
+                self.optimise_clipboard(ctx);
+            } else if id == self.tray_update_id {
+                Self::show_window(ctx);
+                self.tab = Tab::About;
+                self.check_for_updates(ctx);
+            } else if id == self.tray_quit_id {
+                std::process::exit(0);
+            }
+        }
+        while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
+            if let TrayIconEvent::Click { .. } = ev {
+                Self::show_window(ctx);
+            }
+        }
+
         // Global hotkey events.
         if let Some(hk) = self.clipboard_hotkey {
             while let Ok(ev) = GlobalHotKeyEvent::receiver().try_recv() {
@@ -363,9 +441,10 @@ impl eframe::App for XpressApp {
                 });
         }
 
-        if self.in_flight > 0 {
-            ctx.request_repaint_after(Duration::from_millis(120));
-        }
+        // Poll steadily so menu-bar clicks and the global hotkey are handled even
+        // when the window is idle or in the background.
+        let interval = if self.in_flight > 0 { 120 } else { 250 };
+        ctx.request_repaint_after(Duration::from_millis(interval));
     }
 }
 
@@ -1092,6 +1171,40 @@ fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
     (a as f32 + (b as f32 - a as f32) * t)
         .round()
         .clamp(0.0, 255.0) as u8
+}
+
+/// Build a 32×32 RGBA menu-bar icon: the colourful "x" on a transparent field.
+fn tray_icon_image() -> Option<(Vec<u8>, u32, u32)> {
+    let size = 32usize;
+    let mut buf = vec![0u8; size * size * 4];
+    let blue = [0x7a, 0xa2, 0xf7u8];
+    let orange = [0xff, 0x9e, 0x64u8];
+    let thickness = 3.2f32;
+    let (lo, hi) = (6.0f32, (size as f32) - 6.0);
+    for y in 0..size {
+        for x in 0..size {
+            let (fx, fy) = (x as f32, y as f32);
+            // distance to the two diagonals within the [lo, hi] box
+            let in_box = fx >= lo - thickness && fx <= hi + thickness;
+            let d1 = ((fx - fy).abs()) / std::f32::consts::SQRT_2; // line y = x
+            let d2 = ((fx + fy) - (size as f32 - 1.0)).abs() / std::f32::consts::SQRT_2; // y = N-1-x
+            let on1 = in_box && fy >= lo - thickness && fy <= hi + thickness && d1 <= thickness;
+            let on2 = in_box && fy >= lo - thickness && fy <= hi + thickness && d2 <= thickness;
+            let idx = (y * size + x) * 4;
+            if on1 {
+                buf[idx] = blue[0];
+                buf[idx + 1] = blue[1];
+                buf[idx + 2] = blue[2];
+                buf[idx + 3] = 255;
+            } else if on2 {
+                buf[idx] = orange[0];
+                buf[idx + 1] = orange[1];
+                buf[idx + 2] = orange[2];
+                buf[idx + 3] = 255;
+            }
+        }
+    }
+    Some((buf, size as u32, size as u32))
 }
 
 /// The `.app` bundle this executable lives in, if any (…/xpress.app).

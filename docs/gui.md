@@ -16,6 +16,9 @@ cargo run -p xpress-gui --release
 - **Self-updating**: when a newer release is published, an **Update & Restart**
   button downloads it, replaces the installed `.app`, and relaunches — no trip to
   the browser.
+- **Menu-bar app**: a status-bar icon (Open / Optimise clipboard / Check for
+  updates / Quit) keeps xpress a click away. Closing the window hides it to the
+  menu bar; use the menu's **Quit** to exit.
 - **Controls**: a compression slider (5–100), `aggressive`, `backup`,
   `strip metadata`, an inline **pipeline** field, and a **float on top** toggle.
 - **Open files…** picker, and **Optimise clipboard** / **Clear** buttons.
