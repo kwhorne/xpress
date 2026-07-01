@@ -77,6 +77,20 @@ cargo build --release --features embed-tools
 xpress bundle                          # extracts embedded binaries on demand
 ```
 
+## Shell completions & man page
+
+The CLI can emit its own completions and a man page:
+
+```sh
+# Completions (bash, zsh, fish, powershell, elvish)
+xpress completions zsh  > ~/.zfunc/_xpress
+xpress completions bash > /usr/local/etc/bash_completion.d/xpress
+xpress completions fish > ~/.config/fish/completions/xpress.fish
+
+# Man page
+xpress man > /usr/local/share/man/man1/xpress.1
+```
+
 ## Licensing of bundled binaries
 
 The external tools keep their own upstream licences (several are GPL/AGPL). When

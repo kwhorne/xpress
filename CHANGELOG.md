@@ -9,6 +9,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - `--timeout <secs>` kills any external tool that runs too long (prevents hangs).
 - `--jobs <n>` caps how many files are processed in parallel.
+- `completions <shell>` and `man` commands to generate shell completions and a
+  man page.
+
+### Changed
+- CI now runs a real-tool smoke test (ffmpeg/pngquant/…) and `cargo audit`.
+
+### Fixed
+- `crop-pdf` had a conflicting `-r` short flag (`--ratio` vs `--recursive`);
+  `--ratio` is now long-only.
+
+### Added (tests)
+- Failure-path tests (missing file, unsupported type, unreadable dimensions) and
+  an isolated external-tool timeout test.
 
 ## [0.3.0] - 2026-06-29
 

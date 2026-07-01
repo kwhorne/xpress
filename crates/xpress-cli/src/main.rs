@@ -14,7 +14,7 @@ mod watch;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 
 use xpress_core::audio::AudioFormat;
 use xpress_core::collect_files;
@@ -68,6 +68,13 @@ enum Command {
     Bundle,
     /// Check which external tools are available.
     Doctor,
+    /// Print a shell completion script (bash, zsh, fish, powershell, elvish).
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
+    /// Print a man page (roff) to stdout.
+    Man,
 }
 
 #[derive(Args)]
@@ -284,7 +291,7 @@ struct FilesArg {
 #[derive(Args)]
 struct CropPdfArgs {
     /// Aspect ratio, e.g. `16:9` or `1.91:1`.
-    #[arg(short, long)]
+    #[arg(long)]
     ratio: String,
     /// Write next to the original with this suffix instead of in place.
     #[arg(long, default_value = "")]
@@ -432,6 +439,17 @@ fn run() -> Result<()> {
         Command::Bundle => run_bundle(),
         Command::Doctor => {
             render::doctor();
+            Ok(())
+        }
+        Command::Completions { shell } => {
+            let mut cmd = Cli::command();
+            let name = cmd.get_name().to_string();
+            clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
+            Ok(())
+        }
+        Command::Man => {
+            let man = clap_mangen::Man::new(Cli::command());
+            man.render(&mut std::io::stdout())?;
             Ok(())
         }
     }

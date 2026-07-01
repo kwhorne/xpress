@@ -20,6 +20,8 @@ xpress <COMMAND>
 | `clean-backups` | Delete `.orig` backups |
 | `bundle` | Extract embedded binaries to the bundle dir |
 | `doctor` | Report which external tools are available |
+| `completions` | Print a shell completion script |
+| `man` | Print a man page (roff) |
 
 ## Common options
 
