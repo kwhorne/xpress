@@ -14,7 +14,10 @@ optimisation engine.
 - Pipelines: chain steps (`crop(width: 1600) -> convert(to: webp)`), save them,
   and attach them to folders or the clipboard.
 - Background `watch` daemon for folders and the clipboard (“copy large, paste small”).
-- Desktop GUI with drag-and-drop, live results, and a global hotkey.
+- **Pure Rust** for images and PDFs (no external tools); the macOS app **bundles
+  ffmpeg** for video/audio, so it's fully self-contained.
+- **Menu-bar app** with global hotkeys (⌘⇧O clipboard, ⌘⇧X show), an interactive
+  crop tool, and **one-click self-update** (Update & Restart).
 - Output filename templates, `.orig` backups with `restore`, `--json`/`--quiet`,
   and live progress.
 

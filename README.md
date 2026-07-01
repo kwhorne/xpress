@@ -35,11 +35,11 @@ One tool, three ways to use it:
   them by name, and attach them to folders for hands-off automation.
 - **Non-destructive by default**: originals are backed up and can be restored.
 
-Images (PNG/JPEG/GIF/WebP) are optimised, resized, cropped and converted
-**entirely in pure Rust** (`imagequant` + `oxipng` + the `image` crate) — no
-external tools to install. Video and audio use `ffmpeg`, and PDF uses
-`ghostscript`; everything is driven by one consistent, percentage-based
-compression model.
+Images **and PDFs** are optimised, resized, cropped and converted **entirely in
+pure Rust** (`imagequant` + `oxipng` + `image` + `lopdf`) — no external tools to
+install. Video and audio use `ffmpeg`, which the macOS app **bundles**, so a
+released `.app`/`.dmg` needs nothing installed. Everything is driven by one
+consistent, percentage-based compression model.
 
 xpress is free and open source under the [MIT License](LICENSE).
 
@@ -61,16 +61,18 @@ See [CHANGELOG.md](CHANGELOG.md) for release history.
 xpress/
   crates/
     xpress-core/   # the optimisation engine (no UI)
-      compression  # CompressionQuality model — exact port of Shared.swift formulas
+      compression  # one 5–100 value mapped to each format's quality knob
+      image        # pure-Rust PNG/JPEG/GIF/WebP optimise, convert, resize, crop
+      video        # ffmpeg H.264 + codec conversion, video→GIF, speed/fps
+      audio        # ffmpeg encoders (aac/mp3/opus/wav/flac/aiff)
+      pdf          # pure-Rust optimise (lopdf + image), crop/uncrop
+      scale, crop  # resolution scaling and cropping
+      pipeline     # the step DSL + saved pipelines + folder automations
+      update       # GitHub release checks + self-update
       tools        # external-binary resolution + process execution
-      filetype     # media-kind classification (image/video/audio/pdf)
-      image        # jpeg (jpegoptim), png (pngquant), gif (gifsicle)
-      video        # ffmpeg H.264 path
-      pdf          # ghostscript
-      audio        # ffmpeg (aac/mp3/opus/wav/flac/aiff) + AudioFormat
-      result       # OptimisationResult, backup/dates/size helpers
-    xpress-cli/    # `xpress` binary — the command-line interface
-    xpress-gui/    # `xpress-gui` binary — desktop app (egui/eframe)
+      result       # OptimisationResult, backups, options
+    xpress-cli/    # `xpress` binary — CLI + watch daemon
+    xpress-gui/    # `xpress-gui` binary — menu-bar desktop app (egui/eframe)
 ```
 
 ## Desktop app
@@ -79,29 +81,31 @@ xpress/
 cargo run -p xpress-gui --release
 ```
 
-* **Drag and drop** images, videos, PDFs or audio onto the window to optimise them.
-* **Result cards** show the before/after size, the saving, and a thumbnail.
-* **⌘⇧O / Ctrl⇧O** (global hotkey) optimises the image currently on the clipboard.
-* A **compression** slider, *aggressive* / *backup* / *strip metadata* toggles, an
-  inline **pipeline** field, and a **float on top** option.
+* **Lives in the macOS menu bar** — a status-bar icon (Open / Optimise clipboard
+  / Check for updates / Quit). Closing the window hides it there; it keeps running.
+* **Global hotkeys**: **⌘⇧O** optimises the clipboard image, **⌘⇧X** brings the
+  window to the front — from anywhere.
+* **Drag and drop** images, videos, PDFs or audio to optimise them; result cards
+  show the saving, a thumbnail, and **Reveal** / **Copy** actions.
+* An interactive **Crop** tool, a **compression** slider, *aggressive* / *backup*
+  / *strip metadata* toggles, and an inline **pipeline** field.
+* **Self-updating**: when a new release lands, **Update & Restart** downloads it,
+  swaps the app, and relaunches — no trip to the browser.
 * Work runs off the UI thread, so the window stays responsive.
 
 ### Build a macOS `.app`
 
 ```sh
 cargo build --release -p xpress-gui -p xpress-cli
-scripts/make-app.sh                 # -> dist/xpress.app (ad-hoc signed)
-scripts/make-app.sh --tools         # also bundle ffmpeg/pngquant/... into the app
+scripts/fetch-static-tools.sh aarch64-apple-darwin bundle-tools   # portable ffmpeg
+scripts/make-app.sh --bin-dir bundle-tools    # -> dist/xpress.app (menu-bar app)
+scripts/make-dmg.sh                           # -> dist/xpress.dmg
 ```
 
-```sh
-scripts/make-dmg.sh                 # -> dist/xpress.dmg (drag-to-Applications)
-```
-
-The app is ad-hoc signed so it runs locally. Tagged releases publish a
-`xpress-*-app.zip` and a `xpress-*.dmg`. For public distribution, sign with a
-Developer ID and notarise (commands are documented at the bottom of
-`scripts/make-app.sh`).
+The app is a menu-bar (agent) app that bundles `ffmpeg`, and is signed with a
+Developer ID when one is available. Tagged releases publish a **signed and
+notarised** `xpress-*-app.zip` and `xpress-*.dmg`. See
+[docs/signing.md](docs/signing.md) for signing + notarisation (locally and in CI).
 
 The app icon lives at `assets/AppIcon.icns`. To regenerate it from the vector
 source after editing `assets/icon.svg`:
@@ -113,31 +117,24 @@ iconutil -c icns assets/xpress.iconset -o assets/AppIcon.icns
 
 ## Optimisation tools
 
-xpress shells out to external binaries. Resolution order:
-1. `$XPRESS_BIN_DIR/<tool>`
-2. a `bin/` directory next to the `xpress` executable
-3. the per-user bundle dir (`~/Library/Application Support/xpress/bin`, or the
-   XDG/LOCALAPPDATA equivalent)
-4. the system `PATH`
+**Images and PDFs need no external tools** — they're handled in pure Rust. Only
+**video and audio** require `ffmpeg`, which the macOS `.app` bundles (so a
+released build needs nothing installed). A few extras are optional: `ghostscript`
+(PDF `extract-pages`), `heif-enc`/`cjxl` (HEIC/JXL conversion), `gifski`
+(higher-quality video→GIF), `exiftool` (metadata).
 
-Three ways to provide them:
+When running the CLI or from source, xpress finds a tool in this order:
+`$XPRESS_BIN_DIR/<tool>` → a `bin/` dir next to the executable → the per-user
+bundle dir (`~/Library/Application Support/xpress/bin`) → the system `PATH`.
 
 ```sh
-# A) Install with a package manager and let PATH resolution find them
-brew install ffmpeg pngquant jpegoptim gifsicle ghostscript vips gifski webp exiftool
+xpress doctor    # show which tools are found
 
-# B) Bundle copies into the per-user dir (self-contained, no PATH dependency)
-scripts/fetch-tools.sh
-
-# C) Embed them inside the xpress executable (single self-contained file)
-scripts/fetch-tools.sh --vendor       # populates vendor/bin/<target> + current/
-cargo build --release --features embed-tools
-
-xpress doctor    # show what is available
-xpress bundle    # extract embedded binaries to the per-user dir
+# Get a portable ffmpeg without a package manager:
+scripts/fetch-static-tools.sh aarch64-apple-darwin "$HOME/Library/Application Support/xpress/bin"
 ```
 
-The bundled binaries keep their own upstream licences — see [NOTICE.md](NOTICE.md)
+Bundled binaries keep their own upstream licences — see [NOTICE.md](NOTICE.md)
 before redistributing xpress together with them.
 
 ## Usage
