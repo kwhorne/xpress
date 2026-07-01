@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- Auto-update: `xpress update` checks GitHub Releases and replaces the binary in
+  place (`--check` to only report). The desktop app shows an “Update available”
+  banner with a download link when a newer release is published.
+
 ## [0.4.0] - 2026-06-29
 
 ### Added

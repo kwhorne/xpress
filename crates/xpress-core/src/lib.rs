@@ -21,6 +21,7 @@ pub mod scale;
 pub mod store;
 pub mod template;
 pub mod tools;
+pub mod update;
 pub mod video;
 
 use std::path::{Path, PathBuf};

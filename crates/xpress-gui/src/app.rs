@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::{Arc, Mutex};
 
 use eframe::egui;
 use global_hotkey::{
@@ -51,11 +52,30 @@ pub struct XpressApp {
 
     crop: Option<CropState>,
     show_about: bool,
+
+    update_info: Arc<Mutex<Option<xpress_core::update::UpdateInfo>>>,
+    update_dismissed: bool,
 }
 
 impl XpressApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let (tx, rx) = channel();
+
+        // Check GitHub for a newer release in the background.
+        let update_info: Arc<Mutex<Option<xpress_core::update::UpdateInfo>>> =
+            Arc::new(Mutex::new(None));
+        {
+            let slot = update_info.clone();
+            let ctx = cc.egui_ctx.clone();
+            std::thread::spawn(move || {
+                if let Ok(info) = xpress_core::update::check(env!("CARGO_PKG_VERSION")) {
+                    if info.newer {
+                        *slot.lock().unwrap() = Some(info);
+                        ctx.request_repaint();
+                    }
+                }
+            });
+        }
 
         // Register Cmd/Ctrl + Shift + O to optimise the clipboard image.
         let (manager, hotkey) = match GlobalHotKeyManager::new() {
@@ -85,7 +105,47 @@ impl XpressApp {
             clipboard_hotkey: hotkey,
             crop: None,
             show_about: false,
+            update_info,
+            update_dismissed: false,
         }
+    }
+
+    fn draw_update_banner(&mut self, ctx: &egui::Context) {
+        if self.update_dismissed {
+            return;
+        }
+        let info = { self.update_info.lock().unwrap().clone() };
+        let Some(info) = info else { return };
+        egui::TopBottomPanel::top("update_banner")
+            .frame(
+                egui::Frame::default()
+                    .fill(egui::Color32::from_rgb(255, 122, 24))
+                    .inner_margin(egui::Margin::symmetric(10, 6)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("Update available — v{}", info.latest))
+                            .color(egui::Color32::WHITE)
+                            .strong(),
+                    );
+                    ui.hyperlink_to(
+                        egui::RichText::new("Download")
+                            .color(egui::Color32::WHITE)
+                            .underline(),
+                        &info.url,
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button(egui::RichText::new("✕").color(egui::Color32::WHITE))
+                            .on_hover_text("Dismiss")
+                            .clicked()
+                        {
+                            self.update_dismissed = true;
+                        }
+                    });
+                });
+            });
     }
 
     fn enter_crop(&mut self, path: PathBuf, ctx: &egui::Context) {
@@ -241,6 +301,8 @@ impl eframe::App for XpressApp {
         for path in dropped {
             self.submit(path, ctx);
         }
+
+        self.draw_update_banner(ctx);
 
         if self.crop.is_some() {
             self.draw_crop(ctx);

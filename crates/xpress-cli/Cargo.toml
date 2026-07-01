@@ -16,6 +16,7 @@ anyhow.workspace = true
 clap.workspace = true
 clap_complete = "4"
 clap_mangen = "0.2"
+self_update = { version = "0.42", default-features = false, features = ["rustls", "archive-tar", "compression-flate2"] }
 serde_json.workspace = true
 rayon.workspace = true
 notify = "7"

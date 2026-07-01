@@ -201,6 +201,16 @@ config overrides the built-in defaults. Recognised keys:
 }
 ```
 
+## update
+
+```sh
+xpress update --check   # report whether a newer release exists
+xpress update           # download the latest release and replace the binary
+```
+
+Checks GitHub Releases for `kwhorne/xpress`. The desktop app also shows an
+“Update available” banner when a newer version is published.
+
 ## doctor / bundle
 
 ```sh

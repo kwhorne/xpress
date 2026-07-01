@@ -84,6 +84,12 @@ enum Command {
     },
     /// Print a man page (roff) to stdout.
     Man,
+    /// Check for a newer release and update the binary in place.
+    Update {
+        /// Only check and report; don't download or replace anything.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 #[derive(Args)]
@@ -459,6 +465,56 @@ fn run() -> Result<()> {
         Command::Man => {
             let man = clap_mangen::Man::new(Cli::command());
             man.render(&mut std::io::stdout())?;
+            Ok(())
+        }
+        Command::Update { check } => run_update(check),
+    }
+}
+
+fn run_update(check_only: bool) -> Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
+    let info = xpress_core::update::check(current)
+        .map_err(|e| anyhow::anyhow!("could not check for updates: {e}"))?;
+
+    if !info.newer {
+        println!("{} xpress is up to date (v{current})", render::CHECK);
+        return Ok(());
+    }
+
+    println!(
+        "{} update available: v{} {} v{}",
+        render::CHECK,
+        info.current,
+        render::ARROW,
+        info.latest
+    );
+    println!("    {}", info.url);
+
+    if check_only {
+        println!("    run `xpress update` to install it");
+        return Ok(());
+    }
+
+    // Download the matching release asset and replace this binary in place.
+    let result = self_update::backends::github::Update::configure()
+        .repo_owner("kwhorne")
+        .repo_name("xpress")
+        .bin_name("xpress")
+        .current_version(current)
+        .bin_path_in_archive("xpress-v{{ version }}-{{ target }}/{{ bin }}")
+        .show_download_progress(true)
+        .no_confirm(false)
+        .build()
+        .and_then(|u| u.update());
+
+    match result {
+        Ok(status) => {
+            println!("{} updated to v{}", render::CHECK, status.version());
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("{} automatic update failed: {e}", render::WARN);
+            eprintln!("    download it manually from {}", info.url);
             Ok(())
         }
     }
