@@ -4,17 +4,41 @@
 [![Release](https://github.com/kwhorne/xpress/actions/workflows/release.yml/badge.svg)](https://github.com/kwhorne/xpress/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-An **image, video, PDF and audio optimiser** written in Rust. Copy large, paste
-small, send fast.
+**xpress** makes your media smaller — images, videos, PDFs and audio — without
+the fuss. Point it at a file, a folder, or your clipboard and it produces a
+leaner version that looks and sounds the same, so things upload faster, attach
+under size limits, and take up less space.
 
-xpress is UI-agnostic: the core crate resolves external tools (`ffmpeg`,
+One tool, three ways to use it:
+
+- **Command line** (`xpress`) — optimise, downscale, crop, convert formats, and
+  run multi-step pipelines on single files or whole folders.
+- **Background daemon** (`xpress watch`) — automatically optimise new files in
+  watched folders, or images you copy to the clipboard.
+- **Desktop app** (`xpress-gui`) — drag files in, see the savings, crop
+  interactively, and optimise the clipboard with a global hotkey.
+
+## What it does
+
+- **Optimise** images (JPEG/PNG/GIF), video (H.264), PDFs and audio with a single
+  compression dial (5 = best quality → 100 = smallest).
+- **Downscale** images and videos by a factor, or **crop** to a size, aspect
+  ratio or long edge.
+- **Convert** between formats: images (WebP/AVIF/HEIC/JXL/PNG/JPEG), audio
+  (AAC/MP3/Opus/WAV/FLAC/AIFF), and video (MP4/HEVC/AV1/WebM, or animated GIF).
+- **Compress to a budget** (`--max-size 500kb`) or let it **pick the smallest
+  format** automatically (`--adaptive`).
+- **PDF tools**: non-destructive crop/uncrop and rendering pages to images.
+- **Pipelines**: chain steps like `crop(width: 1600) -> convert(to: webp)`, save
+  them by name, and attach them to folders for hands-off automation.
+- **Non-destructive by default**: originals are backed up and can be restored.
+
+Under the hood xpress drives best-in-class command-line tools (`ffmpeg`,
 `pngquant`, `jpegoptim`, `gifsicle`, `ghostscript`, `vips`, `gifski`, `cwebp`,
-`heif-enc`) and drives them with a single, percentage-based compression model.
+`heif-enc`, `cjxl`) through one consistent, percentage-based compression model,
+so the same quality setting behaves predictably across every format.
 
-> xpress is an independent project under the [MIT License](LICENSE). It is
-> **not** a fork of and contains no source from [Clop](https://lowtechguys.com/clop);
-> it is inspired by Clop's functionality and ideas. See [NOTICE.md](NOTICE.md)
-> for details and for the licences of any bundled third-party binaries.
+xpress is free and open source under the [MIT License](LICENSE).
 
 ## Documentation
 
