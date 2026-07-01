@@ -1,8 +1,10 @@
 //! The egui application: controls, drop zone, result cards, and the global hotkey.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use global_hotkey::{
@@ -54,28 +56,26 @@ pub struct XpressApp {
     show_about: bool,
 
     update_info: Arc<Mutex<Option<xpress_core::update::UpdateInfo>>>,
+    update_checking: Arc<AtomicBool>,
+    last_update_check: Instant,
     update_dismissed: bool,
 }
+
+/// Re-check for updates at most this often while the app runs.
+const UPDATE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 impl XpressApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let (tx, rx) = channel();
 
-        // Check GitHub for a newer release in the background.
         let update_info: Arc<Mutex<Option<xpress_core::update::UpdateInfo>>> =
             Arc::new(Mutex::new(None));
-        {
-            let slot = update_info.clone();
-            let ctx = cc.egui_ctx.clone();
-            std::thread::spawn(move || {
-                if let Ok(info) = xpress_core::update::check(env!("CARGO_PKG_VERSION")) {
-                    if info.newer {
-                        *slot.lock().unwrap() = Some(info);
-                        ctx.request_repaint();
-                    }
-                }
-            });
-        }
+        let update_checking = Arc::new(AtomicBool::new(false));
+        spawn_update_check(
+            cc.egui_ctx.clone(),
+            update_info.clone(),
+            update_checking.clone(),
+        );
 
         // Register Cmd/Ctrl + Shift + O to optimise the clipboard image.
         let (manager, hotkey) = match GlobalHotKeyManager::new() {
@@ -106,8 +106,19 @@ impl XpressApp {
             crop: None,
             show_about: false,
             update_info,
+            update_checking,
+            last_update_check: Instant::now(),
             update_dismissed: false,
         }
+    }
+
+    fn check_for_updates(&mut self, ctx: &egui::Context) {
+        self.last_update_check = Instant::now();
+        spawn_update_check(
+            ctx.clone(),
+            self.update_info.clone(),
+            self.update_checking.clone(),
+        );
     }
 
     fn draw_update_banner(&mut self, ctx: &egui::Context) {
@@ -116,6 +127,9 @@ impl XpressApp {
         }
         let info = { self.update_info.lock().unwrap().clone() };
         let Some(info) = info else { return };
+        if !info.newer {
+            return;
+        }
         egui::TopBottomPanel::top("update_banner")
             .frame(
                 egui::Frame::default()
@@ -302,6 +316,13 @@ impl eframe::App for XpressApp {
             self.submit(path, ctx);
         }
 
+        // Periodic re-check.
+        if self.last_update_check.elapsed() >= UPDATE_INTERVAL
+            && !self.update_checking.load(Ordering::Relaxed)
+        {
+            self.check_for_updates(ctx);
+        }
+
         self.draw_update_banner(ctx);
 
         if self.crop.is_some() {
@@ -407,6 +428,7 @@ impl XpressApp {
             return;
         }
         let mut open = true;
+        let mut check_update = false;
         egui::Window::new("About xpress")
             .collapsible(false)
             .resizable(false)
@@ -436,6 +458,31 @@ impl XpressApp {
                     ui.add_space(6.0);
                     ui.label(egui::RichText::new("Developed by Knut W. Horne").strong());
                     ui.add_space(12.0);
+
+                    // Update status + manual check.
+                    let checking = self.update_checking.load(Ordering::Relaxed);
+                    let info = self.update_info.lock().unwrap().clone();
+                    if checking {
+                        ui.label(egui::RichText::new("Checking for updates…").weak());
+                    } else if let Some(info) = &info {
+                        if info.newer {
+                            ui.hyperlink_to(
+                                egui::RichText::new(format!("Update available — v{}", info.latest))
+                                    .color(egui::Color32::from_rgb(255, 122, 24)),
+                                &info.url,
+                            );
+                        } else {
+                            ui.label(egui::RichText::new("You're on the latest version").weak());
+                        }
+                    }
+                    if ui
+                        .add_enabled(!checking, egui::Button::new("Check for updates"))
+                        .clicked()
+                    {
+                        check_update = true;
+                    }
+
+                    ui.add_space(8.0);
                     if ui.button("Close").clicked() {
                         self.show_about = false;
                     }
@@ -444,6 +491,9 @@ impl XpressApp {
             });
         if !open {
             self.show_about = false;
+        }
+        if check_update {
+            self.check_for_updates(ctx);
         }
     }
 
@@ -686,6 +736,24 @@ fn clipboard_image_to_file() -> Result<PathBuf, String> {
     let path = dir.join(format!("clip-{ts}.png"));
     buf.save(&path).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+/// Run an update check on a background thread, storing the result (newer or not).
+fn spawn_update_check(
+    ctx: egui::Context,
+    slot: Arc<Mutex<Option<xpress_core::update::UpdateInfo>>>,
+    checking: Arc<AtomicBool>,
+) {
+    if checking.swap(true, Ordering::SeqCst) {
+        return; // a check is already in flight
+    }
+    std::thread::spawn(move || {
+        if let Ok(info) = xpress_core::update::check(env!("CARGO_PKG_VERSION")) {
+            *slot.lock().unwrap() = Some(info);
+        }
+        checking.store(false, Ordering::SeqCst);
+        ctx.request_repaint();
+    });
 }
 
 /// Reveal a file in the OS file manager (Finder/Explorer/file manager).
