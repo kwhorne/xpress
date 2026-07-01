@@ -21,6 +21,7 @@ CLI_BIN="$ROOT/target/release/xpress"
 OUT_DIR="$ROOT/dist"
 VERSION="0.1.0"
 WITH_TOOLS=0
+BIN_DIR=""
 BUNDLE_ID="com.kwhorne.xpress"
 
 while [[ $# -gt 0 ]]; do
@@ -30,6 +31,7 @@ while [[ $# -gt 0 ]]; do
     --out) OUT_DIR="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
     --tools) WITH_TOOLS=1; shift ;;
+    --bin-dir) BIN_DIR="$2"; shift 2 ;;
     -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 1 ;;
   esac
@@ -71,6 +73,14 @@ if [[ "$WITH_TOOLS" == "1" ]]; then
       echo "    ✓ $tool"
     fi
   done
+fi
+
+# Copy a prepared directory of tool binaries into Contents/Resources/bin.
+if [[ -n "$BIN_DIR" && -d "$BIN_DIR" ]]; then
+  echo "==> Bundling tools from $BIN_DIR"
+  mkdir -p "$APP/Contents/Resources/bin"
+  cp -f "$BIN_DIR"/* "$APP/Contents/Resources/bin/"
+  chmod +x "$APP/Contents/Resources/bin/"* 2>/dev/null || true
 fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST

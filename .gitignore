@@ -10,3 +10,4 @@ dist-app/
 assets/xpress.iconset/
 tools/icon-gen/target/
 tools/icon-gen/Cargo.lock
+bundle-tools/

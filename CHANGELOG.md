@@ -6,11 +6,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-01
+
 ### Changed
 - Images are now optimised, resized, cropped and converted in **pure Rust**
   (`imagequant` + `oxipng` + the `image` crate) — no external tools
   (pngquant/jpegoptim/gifsicle/vips/cwebp) are required for images anymore.
-  Video (ffmpeg), audio (ffmpeg) and PDF (ghostscript) still use their tools.
+
+### Added
+- The macOS `.app`/`.dmg` now **bundle a self-contained `ffmpeg`** (video +
+  audio), signed and notarised alongside the app. Combined with the pure-Rust
+  image engine, images + video + audio work out of the box with nothing to
+  install. (`scripts/fetch-static-tools.sh`, `make-app.sh --bin-dir`.)
+  PDF still uses an external `ghostscript` if present.
 
 ## [0.4.1] - 2026-07-01
 
@@ -127,7 +135,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/kwhorne/xpress/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/kwhorne/xpress/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/kwhorne/xpress/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/kwhorne/xpress/compare/v0.2.0...v0.3.0

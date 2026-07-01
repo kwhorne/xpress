@@ -92,7 +92,9 @@ jobs:
         run: |
           set -euo pipefail
           bin_dir="target/${{ matrix.target }}/release"
-          scripts/make-app.sh --gui "$bin_dir/xpress-gui" \
+          # Download self-contained tools (ffmpeg) to bundle inside the .app.
+          scripts/fetch-static-tools.sh "${{ matrix.target }}" bundle-tools
+          scripts/make-app.sh --gui "$bin_dir/xpress-gui" --bin-dir bundle-tools \
             --out dist-app --version "${GITHUB_REF_NAME#v}"
           app_zip="xpress-${GITHUB_REF_NAME}-${{ matrix.target }}-app.zip"
           ditto -c -k --keepParent dist-app/xpress.app "$app_zip"

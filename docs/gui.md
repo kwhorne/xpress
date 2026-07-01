@@ -33,9 +33,16 @@ scripts/make-app.sh --tools         # also bundle ffmpeg/pngquant/... inside
 scripts/make-dmg.sh                 # -> dist/xpress.dmg  (drag-to-Applications)
 ```
 
-The bundle is ad-hoc signed so it runs locally and includes the app icon from
-`assets/AppIcon.icns`. Tagged releases publish both `xpress-*-app.zip` and a
-`xpress-*.dmg` disk image (with an Applications shortcut for drag-installing).
+The bundle is signed (Developer ID when available) and includes the app icon from
+`assets/AppIcon.icns`. It also **bundles a self-contained `ffmpeg`** in
+`Contents/Resources/bin`, so video/audio work with nothing to install (images are
+pure Rust; PDF still uses an external `ghostscript`). Tagged releases publish a
+notarised `xpress-*-app.zip` and `xpress-*.dmg`.
+
+```sh
+scripts/fetch-static-tools.sh aarch64-apple-darwin bundle-tools
+scripts/make-app.sh --gui target/release/xpress-gui --bin-dir bundle-tools
+```
 
 ### Distribution (Developer ID + notarisation)
 
