@@ -200,3 +200,7 @@ cargo build
 cargo test
 cargo run -p xpress-cli -- doctor
 ```
+
+---
+
+Developed with love by [Knut W. Horne](https://kwhorne.com).
