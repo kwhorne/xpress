@@ -26,7 +26,8 @@ One tool, three ways to use it:
   compression dial (5 = best quality → 100 = smallest).
 - **Downscale** images and videos by a factor, or **crop** to a size, aspect
   ratio or long edge.
-- **Convert** between formats: images (WebP/AVIF/HEIC/JXL/PNG/JPEG), audio
+- **Convert** between formats: images (WebP/AVIF/**HEIC**/JXL/PNG/JPEG — iPhone
+  photos convert both ways on macOS), audio
   (AAC/MP3/Opus/WAV/FLAC/AIFF), and video (MP4/HEVC/AV1/WebM, or animated GIF).
 - **Compress to a budget** (`--max-size 500kb`) or let it **pick the smallest
   format** automatically (`--adaptive`).

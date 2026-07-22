@@ -6,6 +6,18 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.8] - 2026-07-01
+
+### Added
+- **iPhone photo (HEIC/HEIF) conversion** on macOS — both directions. Read an
+  Apple photo (`convert --to jpeg IMG.HEIC`) or write the iPhone format
+  (`convert --to heic photo.png`), and optimise `.heic` files in place. Uses the
+  built-in `sips`, so no extra tools are required.
+
+### Changed
+- `convert` now reports produced files clearly even when the new format is
+  larger than the source (instead of the misleading “already optimal”).
+
 ## [0.4.7] - 2026-07-01
 
 ### Added
@@ -175,7 +187,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.7...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.8...HEAD
+[0.4.8]: https://github.com/kwhorne/xpress/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/kwhorne/xpress/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/kwhorne/xpress/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/kwhorne/xpress/compare/v0.4.4...v0.4.5

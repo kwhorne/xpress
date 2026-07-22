@@ -2,8 +2,9 @@
 //!
 //! No external binaries are needed for raster images: PNG uses `imagequant`
 //! (lossy quantisation) + `oxipng` (lossless squeeze), JPEG/GIF/WebP/BMP/TIFF go
-//! through the `image` crate. HEIC/JXL conversion still shells out (no practical
-//! pure-Rust encoder), which is why those remain optional.
+//! through the `image` crate. HEIC/HEIF (the iPhone photo format) is handled on
+//! macOS by the built-in `sips` tool — no install — so Apple photos convert both
+//! ways out of the box. JXL still uses the optional `cjxl` tool.
 
 use std::path::{Path, PathBuf};
 
@@ -42,6 +43,16 @@ pub fn optimise(
         "jpg" | "jpeg" => optimise_jpeg(path, &temp_out, cq)?,
         "gif" => reencode(path, &temp_out)?,
         "webp" | "bmp" | "tiff" | "tif" => reencode(path, &temp_out)?,
+        "heic" | "heif" => {
+            #[cfg(target_os = "macos")]
+            {
+                heic_encode(path, &temp_out, cq)?;
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                return Err(OptimiseError::Unsupported(path.to_path_buf()));
+            }
+        }
         _ => return Err(OptimiseError::Unsupported(path.to_path_buf())),
     }
 
@@ -332,10 +343,76 @@ impl ImageFormat {
     }
 }
 
+/// Produce a path the pure-Rust pipeline (or `sips`) can read. HEIC/HEIF inputs
+/// are decoded to a temporary PNG first; everything else is returned unchanged.
+fn readable_source(path: &Path, tmp: &TempDir) -> Result<PathBuf, OptimiseError> {
+    let ext = extension_lower(path).unwrap_or_default();
+    if matches!(ext.as_str(), "heic" | "heif") {
+        #[cfg(target_os = "macos")]
+        {
+            let out = tmp.path().join("decoded_src.png");
+            heic_decode(path, &out)?;
+            return Ok(out);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = tmp;
+            return Err(OptimiseError::Unsupported(path.to_path_buf()));
+        }
+    }
+    Ok(path.to_path_buf())
+}
+
+/// Run macOS `sips` with the given arguments.
+#[cfg(target_os = "macos")]
+fn run_sips(args: &[String]) -> Result<(), OptimiseError> {
+    let output = std::process::Command::new("/usr/bin/sips")
+        .args(args)
+        .stdout(std::process::Stdio::null())
+        .output()
+        .map_err(|e| other(format!("could not run sips: {e}")))?;
+    if !output.status.success() {
+        return Err(other(format!(
+            "sips failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(())
+}
+
+/// Decode a HEIC/HEIF image to PNG using macOS `sips`.
+#[cfg(target_os = "macos")]
+fn heic_decode(src: &Path, out: &Path) -> Result<(), OptimiseError> {
+    run_sips(&[
+        "-s".into(),
+        "format".into(),
+        "png".into(),
+        src.display().to_string(),
+        "--out".into(),
+        out.display().to_string(),
+    ])
+}
+
+/// Encode an image (readable by `sips`) to HEIC using macOS `sips`.
+#[cfg(target_os = "macos")]
+fn heic_encode(src: &Path, out: &Path, cq: CompressionQuality) -> Result<(), OptimiseError> {
+    run_sips(&[
+        "-s".into(),
+        "format".into(),
+        "heic".into(),
+        "-s".into(),
+        "formatOptions".into(),
+        cq.conversion_quality().to_string(),
+        src.display().to_string(),
+        "--out".into(),
+        out.display().to_string(),
+    ])
+}
+
 /// Convert an image to another format.
 ///
-/// PNG/JPEG/WebP are handled natively in Rust; HEIC/JXL still require the
-/// external `heif-enc`/`cjxl` tools.
+/// PNG/JPEG/WebP/AVIF are handled natively in Rust. HEIC/HEIF (iPhone photos)
+/// use the macOS built-in `sips` — both as input and output. JXL uses `cjxl`.
 pub fn convert(
     path: &Path,
     format: ImageFormat,
@@ -352,31 +429,48 @@ pub fn convert(
         .path()
         .join(format!("{}.{}", file_stem_lossy(path), format.extension()));
 
+    // HEIC/HEIF inputs (iPhone photos) can't be read by the `image` crate, so
+    // decode them to a temporary PNG first; everything downstream reads that.
+    let work_src = readable_source(path, &tmp)?;
+
     match format {
-        ImageFormat::Png => optimise_png(path, &temp_out, cq)?,
-        ImageFormat::Jpeg => optimise_jpeg(path, &temp_out, cq)?,
+        ImageFormat::Png => optimise_png(&work_src, &temp_out, cq)?,
+        ImageFormat::Jpeg => optimise_jpeg(&work_src, &temp_out, cq)?,
         ImageFormat::Webp => {
             // image crate writes lossless WebP.
-            let img = image::open(path).map_err(other)?;
+            let img = image::open(&work_src).map_err(other)?;
             img.save(&temp_out).map_err(other)?;
         }
         ImageFormat::Avif => {
-            let img = image::open(path).map_err(other)?;
+            let img = image::open(&work_src).map_err(other)?;
             img.save(&temp_out).map_err(other)?; // image crate AVIF encoder
         }
         ImageFormat::Heic => {
-            let q = cq.conversion_quality().to_string();
-            tools::run_with_retries(
-                Tool::HeifEnc,
-                [
-                    "-q",
-                    &q,
-                    "-o",
-                    &temp_out.display().to_string(),
-                    &path.display().to_string(),
-                ],
-                2,
-            )?;
+            #[cfg(target_os = "macos")]
+            {
+                // Render to a PNG sips can always read, then encode to HEIC.
+                let png_in = tmp.path().join("heic_in.png");
+                image::open(&work_src)
+                    .map_err(other)?
+                    .save(&png_in)
+                    .map_err(other)?;
+                heic_encode(&png_in, &temp_out, cq)?;
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let q = cq.conversion_quality().to_string();
+                tools::run_with_retries(
+                    Tool::HeifEnc,
+                    [
+                        "-q",
+                        &q,
+                        "-o",
+                        &temp_out.display().to_string(),
+                        &work_src.display().to_string(),
+                    ],
+                    2,
+                )?;
+            }
         }
         ImageFormat::Jxl => {
             tools::run_with_retries(
@@ -386,7 +480,7 @@ pub fn convert(
                     &cq.jxl_quality().to_string(),
                     "-e",
                     &cq.jxl_effort().to_string(),
-                    &path.display().to_string(),
+                    &work_src.display().to_string(),
                     &temp_out.display().to_string(),
                 ],
                 2,

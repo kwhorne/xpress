@@ -106,11 +106,17 @@ xpress convert [OPTIONS] -t <FORMAT> <ITEMS>...
 - `--bitrate <kbps>` — explicit audio bitrate.
 - `--hw` — use a hardware (VideoToolbox) encoder for video on Apple Silicon.
 
+**iPhone photos (HEIC/HEIF)** convert both ways on macOS — the built-in `sips`
+is used automatically, so no extra tools are needed to read an Apple photo or to
+write one.
+
 ```sh
 xpress convert --to webp screenshot.png
+xpress convert --to jpeg IMG_0421.HEIC     # read an iPhone photo
+xpress convert --to heic screenshot.png    # write the iPhone format
 xpress convert --to mp3 --bitrate 192 recording.wav
 xpress convert --to gif screencast.mov
-xpress convert --to hevc --hw clip.mov
+xpress convert --to hevc --hw clip.mov     # iPhone video codec
 ```
 
 ## crop

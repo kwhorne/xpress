@@ -106,6 +106,16 @@ pub fn summarise(
                         r.saved_percent(),
                         if r.aggressive { "  [aggressive]" } else { "" },
                     );
+                } else if r.output != r.source {
+                    // A new file was produced (e.g. a format conversion) even
+                    // though it isn't smaller — report it as done, not "optimal".
+                    println!(
+                        "{CHECK} {} {ARROW} {}  ({} {ARROW} {})",
+                        path.display(),
+                        r.output.display(),
+                        human_size(r.old_size),
+                        human_size(r.new_size),
+                    );
                 } else {
                     println!(
                         "{WARN} {} already optimal ({})",
