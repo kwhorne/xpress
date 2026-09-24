@@ -127,7 +127,7 @@ xpress crop [OPTIONS] -s <SIZE> <ITEMS>...
 
 - `-s, --size` — `1200x630`, `1200x0`, `0x720`, aspect ratio `16:9`, or a single number.
 - `-l, --long-edge` — treat a single number as the longer edge (keeps aspect, no crop).
-- `--smart-crop` — centre on detected features (needs `vips`).
+- `--smart-crop` — for images, crop around the most salient region (detail, saturated colour, skin tones) instead of the centre. Pure Rust; videos are always cropped centred.
 
 ```sh
 xpress crop --size 1200x630 banner.png

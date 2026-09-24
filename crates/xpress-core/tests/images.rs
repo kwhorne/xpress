@@ -332,3 +332,90 @@ fn in_place_crop_and_downscale_back_up_the_real_original() {
         assert_ne!(std::fs::read(&f).unwrap(), original);
     }
 }
+
+/// A flat gray `w`x`h` canvas with a `pw`-wide patch painted by `f` at `px`.
+fn canvas_with_patch(
+    w: u32,
+    h: u32,
+    px: u32,
+    pw: u32,
+    f: impl Fn(u32, u32) -> image::Rgb<u8>,
+) -> DynamicImage {
+    DynamicImage::ImageRgb8(RgbImage::from_fn(w, h, |x, y| {
+        if (px..px + pw).contains(&x) && (20..h - 20).contains(&y) {
+            f(x, y)
+        } else {
+            image::Rgb([128, 128, 128])
+        }
+    }))
+}
+
+#[test]
+fn smart_crop_finds_detail_off_centre() {
+    // Busy checkerboard on the right of a flat 300x100 canvas.
+    let img = canvas_with_patch(300, 100, 220, 60, |x, y| {
+        if (x / 3 + y / 3) % 2 == 0 {
+            image::Rgb([20, 20, 20])
+        } else {
+            image::Rgb([235, 235, 235])
+        }
+    });
+    let (x, y) = ximage::attention_origin(&img, 100, 100);
+    assert_eq!(y, 0);
+    assert!(
+        (180..=200).contains(&x),
+        "window should cover the patch, got x={x}"
+    );
+}
+
+#[test]
+fn smart_crop_finds_skin_tones() {
+    // A smooth skin-coloured blob on the left, no edges inside it.
+    let img = canvas_with_patch(300, 100, 10, 70, |_, _| image::Rgb([220, 160, 125]));
+    let (x, _) = ximage::attention_origin(&img, 100, 100);
+    assert!(x <= 10, "window should cover the skin patch, got x={x}");
+}
+
+#[test]
+fn smart_crop_of_flat_image_stays_centred() {
+    let img = DynamicImage::ImageRgb8(RgbImage::from_pixel(300, 100, image::Rgb([90, 90, 90])));
+    assert_eq!(ximage::attention_origin(&img, 100, 100), (100, 0));
+}
+
+#[test]
+fn crop_file_smart_ratio_keeps_the_subject() {
+    let dir = tmpdir("smart-crop");
+    let f = dir.join("wide.png");
+    canvas_with_patch(300, 100, 220, 60, |x, y| {
+        if (x / 3 + y / 3) % 2 == 0 {
+            image::Rgb([20, 20, 20])
+        } else {
+            image::Rgb([235, 235, 235])
+        }
+    })
+    .save(&f)
+    .unwrap();
+
+    let spread = |p: &Path| {
+        let img = image::open(p).unwrap().to_luma8();
+        let (lo, hi) = img
+            .pixels()
+            .fold((255u8, 0u8), |(lo, hi), p| (lo.min(p.0[0]), hi.max(p.0[0])));
+        hi - lo
+    };
+    let spec = crop::CropSpec::parse("1:1").unwrap();
+    let centred = dir.join("centred.png");
+    let smart = dir.join("smart.png");
+    let o = |out: &Path| OptimiseOptions {
+        output: Some(out.to_path_buf()),
+        ..opts()
+    };
+    crop::crop_file(&f, &spec, &o(&centred)).unwrap();
+    crop::crop_file(&f, &spec.with_smart(true), &o(&smart)).unwrap();
+
+    assert!(spread(&centred) < 10, "the centre is flat");
+    assert!(
+        spread(&smart) > 150,
+        "smart crop contains the detailed subject"
+    );
+}

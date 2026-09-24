@@ -915,16 +915,149 @@ pub fn resize_to(src: &Path, out: &Path, w: u32, h: u32) -> Result<(), OptimiseE
     })
 }
 
-/// Scale to cover `w`x`h` then centre-crop to exactly `w`x`h`.
-pub fn cover_crop(src: &Path, out: &Path, w: u32, h: u32) -> Result<(), OptimiseError> {
+/// Scale to cover `w`x`h` then crop to exactly `w`x`h` — centred, or around
+/// the most salient region when `smart`.
+pub fn cover_crop(
+    src: &Path,
+    out: &Path,
+    w: u32,
+    h: u32,
+    smart: bool,
+) -> Result<(), OptimiseError> {
     transform(src, out, |img| {
         let (iw, ih) = (img.width().max(1), img.height().max(1));
         let scale = (w as f64 / iw as f64).max(h as f64 / ih as f64);
         let sw = ((iw as f64 * scale).ceil() as u32).max(w);
         let sh = ((ih as f64 * scale).ceil() as u32).max(h);
         let scaled = img.resize_exact(sw, sh, image::imageops::FilterType::Lanczos3);
-        scaled.crop_imm((sw - w) / 2, (sh - h) / 2, w, h)
+        let (x, y) = crop_origin(&scaled, w, h, smart);
+        scaled.crop_imm(x, y, w, h)
     })
+}
+
+/// Crop a `w`x`h` window out of the image without scaling — centred, or around
+/// the most salient region when `smart`.
+pub fn crop_window(
+    src: &Path,
+    out: &Path,
+    w: u32,
+    h: u32,
+    smart: bool,
+) -> Result<(), OptimiseError> {
+    transform(src, out, |img| {
+        let (w, h) = (w.min(img.width()), h.min(img.height()));
+        let (x, y) = crop_origin(&img, w, h, smart);
+        img.crop_imm(x, y, w, h)
+    })
+}
+
+fn crop_origin(img: &DynamicImage, w: u32, h: u32, smart: bool) -> (u32, u32) {
+    if smart {
+        attention_origin(img, w, h)
+    } else {
+        (
+            img.width().saturating_sub(w) / 2,
+            img.height().saturating_sub(h) / 2,
+        )
+    }
+}
+
+/// Top-left corner of the `w`x`h` window that captures the most "interesting"
+/// content — a pure-Rust take on smartcrop / libvips `attention`.
+///
+/// On a small copy of the image every pixel is scored for edges (detail),
+/// saturation (colourful subjects) and skin tones (people); the window with the
+/// highest total score wins, with a slight pull towards the centre to break
+/// ties on flat images.
+pub fn attention_origin(img: &DynamicImage, w: u32, h: u32) -> (u32, u32) {
+    let (iw, ih) = (img.width(), img.height());
+    if w >= iw && h >= ih {
+        return (0, 0);
+    }
+    const ANALYSIS_EDGE: f64 = 256.0;
+    let k = (ANALYSIS_EDGE / iw.max(ih) as f64).min(1.0);
+    let (aw, ah) = (
+        ((iw as f64 * k).round() as usize).max(1),
+        ((ih as f64 * k).round() as usize).max(1),
+    );
+    let small = img
+        .resize_exact(aw as u32, ah as u32, image::imageops::FilterType::Triangle)
+        .to_rgb8();
+
+    let px = |x: usize, y: usize| {
+        let p = small.get_pixel(x as u32, y as u32).0;
+        [
+            p[0] as f64 / 255.0,
+            p[1] as f64 / 255.0,
+            p[2] as f64 / 255.0,
+        ]
+    };
+    let luma = |c: [f64; 3]| 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    let mut score = vec![0f64; aw * ah];
+    for y in 0..ah {
+        for x in 0..aw {
+            let c = px(x, y);
+            let l = luma(c);
+            // Edges: difference to the 4-neighbourhood (Laplacian magnitude).
+            let mut lap = 4.0 * l;
+            lap -= luma(px(x.saturating_sub(1), y));
+            lap -= luma(px((x + 1).min(aw - 1), y));
+            lap -= luma(px(x, y.saturating_sub(1)));
+            lap -= luma(px(x, (y + 1).min(ah - 1)));
+            let edge = lap.abs();
+            // Saturation, ignoring near-black/near-white.
+            let (max, min) = (c[0].max(c[1]).max(c[2]), c[0].min(c[1]).min(c[2]));
+            let sat = if max > 0.0 { (max - min) / max } else { 0.0 };
+            let sat = if (0.05..=0.95).contains(&l) { sat } else { 0.0 };
+            // Skin: closeness of the normalised colour to a typical skin tone.
+            let mag = (c[0] * c[0] + c[1] * c[1] + c[2] * c[2]).sqrt().max(1e-6);
+            let skin_ref = [0.78, 0.57, 0.44];
+            let ref_mag = (0.78f64 * 0.78 + 0.57 * 0.57 + 0.44 * 0.44).sqrt();
+            let d = (0..3)
+                .map(|i| (c[i] / mag - skin_ref[i] / ref_mag).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            let skin = if (0.2..=0.95).contains(&l) {
+                (1.0 - d / 0.2).max(0.0)
+            } else {
+                0.0
+            };
+            score[y * aw + x] = 4.0 * edge + 0.4 * sat * sat + 1.2 * skin;
+        }
+    }
+
+    // Summed-area table for O(1) window sums.
+    let mut sat_table = vec![0f64; (aw + 1) * (ah + 1)];
+    for y in 0..ah {
+        let mut row = 0.0;
+        for x in 0..aw {
+            row += score[y * aw + x];
+            sat_table[(y + 1) * (aw + 1) + x + 1] = sat_table[y * (aw + 1) + x + 1] + row;
+        }
+    }
+    let window_sum = |x: usize, y: usize, cw: usize, ch: usize| {
+        let at = |x: usize, y: usize| sat_table[y * (aw + 1) + x];
+        at(x + cw, y + ch) - at(x, y + ch) - at(x + cw, y) + at(x, y)
+    };
+
+    let cw = ((w as f64 * k).round() as usize).clamp(1, aw);
+    let ch = ((h as f64 * k).round() as usize).clamp(1, ah);
+    let (cx, cy) = ((aw - cw) as f64 / 2.0, (ah - ch) as f64 / 2.0);
+    let total = window_sum(0, 0, aw, ah).max(1e-9);
+    let mut best = (f64::MIN, 0usize, 0usize);
+    for y in 0..=(ah - ch) {
+        for x in 0..=(aw - cw) {
+            let dist =
+                ((x as f64 - cx).powi(2) + (y as f64 - cy).powi(2)).sqrt() / (aw.max(ah) as f64);
+            let s = window_sum(x, y, cw, ch) / total - 0.02 * dist;
+            if s > best.0 {
+                best = (s, x, y);
+            }
+        }
+    }
+    let x = ((best.1 as f64 / k).round() as u32).min(iw.saturating_sub(w));
+    let y = ((best.2 as f64 / k).round() as u32).min(ih.saturating_sub(h));
+    (x, y)
 }
 
 /// Crop an image to a pixel rect then optionally resize, writing to `out`.

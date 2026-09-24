@@ -236,7 +236,8 @@ struct CropArgs {
     /// Treat a single-number size as the longer edge (keeps aspect, no crop).
     #[arg(short = 'l', long)]
     long_edge: bool,
-    /// Crop by centring on detected features (needs vips).
+    /// Images: crop around the most salient region (detail, colour, skin
+    /// tones) instead of the centre. Videos are always cropped centred.
     #[arg(long)]
     smart_crop: bool,
     #[arg(required = true)]

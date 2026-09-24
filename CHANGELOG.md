@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `--smart-crop` (and `smart: true` in pipelines) now works for images: a
+  pure-Rust saliency crop (edges, saturation, skin tones) picks the most
+  interesting region instead of the centre. It previously did nothing.
 - `--pdf-dpi` now works: embedded JPEG images are downsampled to at most that
   DPI at the size they are actually drawn (read from the page content streams,
   falling back to the page size).
