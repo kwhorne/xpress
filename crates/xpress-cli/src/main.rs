@@ -215,6 +215,11 @@ struct OptimiseArgs {
     /// or a score 1–100. Other media use the normal optimiser.
     #[arg(long, value_parser = xpress_core::quality::parse_target, conflicts_with_all = ["max_size", "adaptive"])]
     quality: Option<f64>,
+    /// Make files fit where they're going: discord (20 MB), github (10 MB
+    /// images/video, PNG/GIF/JPEG only) or email (~14 MB, no HEIC). Converts
+    /// formats the destination can't show and compresses to its size limit.
+    #[arg(long = "for", value_parser = xpress_core::share::Target::parse, conflicts_with_all = ["max_size", "adaptive", "quality"])]
+    share_for: Option<xpress_core::share::Target>,
     /// Files, folders or globs to optimise.
     #[arg(required = true)]
     items: Vec<PathBuf>,
@@ -774,10 +779,13 @@ fn run_optimise(args: OptimiseArgs) -> Result<()> {
     let max_size = args.max_size;
     let adaptive = args.adaptive;
     let quality = args.quality;
+    let share_for = args.share_for;
     let pdf_dpi = args.pdf_dpi;
     let results = progress::run_jobs(jobs, mode, args.common.jobs, |f, o| {
         let is_image = xpress_core::filetype::classify(f) == Some(MediaKind::Image);
-        if let (Some(target), true) = (quality, is_image) {
+        if let Some(target) = share_for {
+            xpress_core::share::prepare(f, target, o)
+        } else if let (Some(target), true) = (quality, is_image) {
             xpress_core::quality::optimise_to_quality(f, target, o)
         } else if let Some(max) = max_size {
             xpress_core::budget::optimise_to_budget(f, max, o)
@@ -788,9 +796,13 @@ fn run_optimise(args: OptimiseArgs) -> Result<()> {
         }
     });
     render::summarise(&results, mode);
-    if let (Some(max), false) = (max_size, mode == render::OutputMode::Json) {
+    let budget = |r: &xpress_core::result::OptimisationResult| {
+        max_size.or_else(|| share_for.map(|t| t.max_bytes(r.kind)))
+    };
+    if mode != render::OutputMode::Json {
         for (path, r) in &results {
             if let Ok(r) = r {
+                let Some(max) = budget(r) else { continue };
                 if r.new_size > max {
                     eprintln!(
                         "{} {} is still over the {} budget ({}) — the smallest it gets",

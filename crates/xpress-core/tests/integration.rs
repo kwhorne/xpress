@@ -549,6 +549,32 @@ fn video_strip_metadata_drops_all_global_metadata() {
 }
 
 #[test]
+fn share_for_github_targets_its_video_limit() {
+    common::install_stubs();
+    let dir = tmpdir("share-github-video");
+    let f = dir.join("demo.mov");
+    // Over the limit; the stub halves it (8 MB), so the first encode fits.
+    common::write_dummy(&f, 16_000_000); // stub banner: 10 s, 1080p30, AAC
+    let target = xpress_core::share::Target::Github;
+    let r = xpress_core::share::prepare(&f, target, &opts()).unwrap();
+    assert!(r.new_size <= 9_500_000);
+    // 9.5 MB / 10 s = 7600 kbit/s, -4% = 7296, minus 128 audio.
+    assert_eq!(second_pass_bitrates(&ffmpeg_log(&f)), vec![7168]);
+}
+
+#[test]
+fn share_for_github_converts_webp_to_jpeg_alongside() {
+    let dir = tmpdir("share-github-webp");
+    let f = dir.join("shot.webp");
+    common::write_image(&f);
+    let r = xpress_core::share::prepare(&f, xpress_core::share::Target::Github, &opts()).unwrap();
+    assert_eq!(r.output, dir.join("shot.jpg"));
+    assert!(r.output.exists());
+    assert!(f.exists(), "the original is kept");
+    assert_eq!(r.source, f);
+}
+
+#[test]
 fn downscale_image_by_factor() {
     common::install_stubs();
     let dir = tmpdir("scale");

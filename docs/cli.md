@@ -77,6 +77,15 @@ Auto-detects each file's type. Extra options:
   land at 85–97% of the budget. Images/PDFs step up the compression until they
   fit. A file that can't get under the budget is reported with a warning.
 - `--adaptive` — for images, try multiple formats and keep the smallest.
+- `--for discord|github|email` — make files fit where they're going: converts
+  formats the destination can't show (a new file next to the original) and
+  compresses to its size limit (video and audio by computed bitrate).
+
+  | Target | Limit used | Published limit (checked Sept 2026) | Formats |
+  |--------|-----------|--------------------------------------|---------|
+  | `discord` | 19 MB | 20 MB per file, free accounts | kept |
+  | `github` | 9.5 MB images/video, 24 MB other | 10 MB images, GIFs and video (free plans), 25 MB other | images → JPEG/PNG (GitHub shows only PNG/GIF/JPEG/SVG) |
+  | `email` | 14 MB | Gmail 25 MB, Outlook 20 MB per message — before base64's ~⅓ overhead | HEIC/AVIF/JXL → JPEG/PNG |
 - `--quality <target>` — for images, the smallest file that still *looks* this
   good instead of a fixed compression factor. Targets are SSIMULACRA2 scores:
   `visually-lossless` (90), `high` (80), `medium` (70), `low` (50) or a number

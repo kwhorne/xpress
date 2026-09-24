@@ -7,6 +7,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`--for discord|github|email`** share presets: converts formats the
+  destination can't show and compresses to its size limit (hard-coded from the
+  services' published limits as of September 2026 — Discord 20 MB, GitHub
+  10 MB images/video, email ~14 MB to survive base64 in Gmail and Outlook).
+  A 20 s 1080p clip came out at 18.8 / 9.1 / 13.5 MB.
 - **`--strip-location`** (and *Remove location* in the desktop app): removes
   only where a photo or video was taken — the EXIF GPS block is wiped (not just
   unlinked, so no coordinates linger in the bytes), XMP location fields are
