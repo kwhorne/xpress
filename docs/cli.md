@@ -248,6 +248,35 @@ xpress update           # download the latest release and replace the binary
 Checks GitHub Releases for `kwhorne/xpress`. The desktop app also shows an
 “Update available” banner when a newer version is published.
 
+## web
+
+```sh
+xpress web [OPTIONS] <IMAGES>...
+```
+
+Responsive images in one step: each image becomes several widths in modern
+formats plus a fallback, and a ready-to-paste `<picture>` element (printed and
+saved as `<name>.html`).
+
+- `--widths 640,1024,1600,2048` — widths to generate; never upscales.
+- `--formats avif,webp` — modern formats, in order of preference. The fallback
+  is JPEG, or PNG for images with transparency.
+- `--quality high` — how good JPEG/PNG/WebP variants must look (see
+  `optimise --quality`); AVIF uses the compression factor.
+- `--sizes "(max-width: 900px) 100vw, 900px"` — the `sizes` attribute.
+- `--alt "…"` — alt text. `-o <dir>` — output directory (default `<name>-web/`).
+
+```html
+<picture>
+  <source type="image/avif" srcset="hero-640.avif 640w, hero-1024.avif 1024w" sizes="100vw">
+  <source type="image/webp" srcset="hero-640.webp 640w, hero-1024.webp 1024w" sizes="100vw">
+  <img src="hero-1024.jpg" srcset="hero-640.jpg 640w, hero-1024.jpg 1024w" sizes="100vw"
+       width="1024" height="576" alt="" loading="lazy" decoding="async">
+</picture>
+```
+
+`width`/`height` are set so the page doesn't shift while images load.
+
 ## check
 
 ```sh

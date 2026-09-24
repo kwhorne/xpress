@@ -24,6 +24,7 @@ pub mod template;
 pub mod tools;
 pub mod update;
 pub mod video;
+pub mod web;
 
 use std::path::{Path, PathBuf};
 

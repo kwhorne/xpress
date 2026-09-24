@@ -7,6 +7,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`xpress web`** — responsive images from one source: several widths
+  (never upscaled) in AVIF and WebP plus a JPEG/PNG fallback at a perceptual
+  quality target, and a ready-to-paste `<picture>` element with `srcset`,
+  `sizes`, `width`/`height` and lazy loading.
 - **`xpress check`** — a read-only CI guard that exits 1 when media files are
   over `--max-size` or could shrink by `--min-savings` (default 10%). Images are
   judged against a perceptual target (visually lossless by default), so

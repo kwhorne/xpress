@@ -76,6 +76,9 @@ enum Command {
     Config,
     /// Extract bundled binaries into the per-user bundle dir.
     Bundle,
+    /// Make responsive web images: several widths in AVIF/WebP plus a
+    /// JPEG/PNG fallback, and a ready-to-paste <picture> element.
+    Web(WebArgs),
     /// CI guard: fail if media files are too big or still unoptimised.
     /// Read-only — files are never modified.
     Check(CheckArgs),
@@ -289,6 +292,32 @@ enum PipelineCmd {
         /// Folder path, or the literal "clipboard".
         source: String,
     },
+}
+
+#[derive(Args)]
+struct WebArgs {
+    /// Widths to generate, comma separated (capped at the source width).
+    #[arg(long, default_value = "640,1024,1600,2048", value_delimiter = ',')]
+    widths: Vec<u32>,
+    /// Modern formats to offer before the fallback, comma separated.
+    #[arg(long, default_value = "avif,webp", value_delimiter = ',')]
+    formats: Vec<String>,
+    /// How good the JPEG/PNG/WebP variants must look — visually-lossless,
+    /// high, medium, low or a SSIMULACRA2 score 1–100.
+    #[arg(long, value_parser = xpress_core::quality::parse_target, default_value = "high")]
+    quality: f64,
+    /// The `sizes` attribute: how wide the image is displayed.
+    #[arg(long, default_value = "100vw")]
+    sizes: String,
+    /// The `alt` text.
+    #[arg(long, default_value = "")]
+    alt: String,
+    /// Output directory (default: `<name>-web/` next to each image).
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Images to process.
+    #[arg(required = true)]
+    items: Vec<PathBuf>,
 }
 
 #[derive(Args)]
@@ -526,6 +555,7 @@ fn run() -> Result<()> {
             Ok(())
         }
         Command::Bundle => run_bundle(),
+        Command::Web(args) => run_web(args),
         Command::Check(args) => run_check(args),
         Command::Doctor => {
             render::doctor();
@@ -612,6 +642,69 @@ fn run_bundle() -> Result<()> {
             if n == 1 { "y" } else { "ies" },
             dir.display()
         );
+    }
+    Ok(())
+}
+
+fn run_web(args: WebArgs) -> Result<()> {
+    use xpress_core::image::ImageFormat;
+    let formats = args
+        .formats
+        .iter()
+        .map(|f| {
+            ImageFormat::from_str(f).ok_or_else(|| anyhow::anyhow!("unknown image format '{f}'"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let files = collect_files(&args.items, false, &[MediaKind::Image]);
+    if files.is_empty() {
+        bail!("no images found");
+    }
+    let base = OptimiseOptions {
+        use_cache: false,
+        ..Default::default()
+    };
+    for f in &files {
+        let stem = xpress_core::result::file_stem_lossy(f);
+        let out_dir = args.output.clone().unwrap_or_else(|| {
+            f.parent()
+                .unwrap_or(Path::new("."))
+                .join(format!("{stem}-web"))
+        });
+        let web = xpress_core::web::WebOptions {
+            widths: args.widths.clone(),
+            formats: formats.clone(),
+            quality: args.quality,
+            sizes: args.sizes.clone(),
+            alt: args.alt.clone(),
+            out_dir: out_dir.clone(),
+        };
+        let set = xpress_core::web::generate(f, &web, &base)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", f.display()))?;
+        println!(
+            "{} {} ({}) {} {}",
+            render::CHECK,
+            f.display(),
+            render::human_size(set.source_size),
+            render::ARROW,
+            out_dir.display()
+        );
+        for v in &set.variants {
+            println!(
+                "    {:<28} {:>5}×{:<5} {:>10}",
+                v.path.file_name().unwrap_or_default().to_string_lossy(),
+                v.width,
+                v.height,
+                render::human_size(v.size)
+            );
+        }
+        let html_path = out_dir.join(format!("{stem}.html"));
+        std::fs::write(&html_path, &set.html)?;
+        println!(
+            "
+{}",
+            set.html
+        );
+        println!("(saved to {})", html_path.display());
     }
     Ok(())
 }
