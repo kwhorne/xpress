@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-24
+
 ### Added
 - **`--for discord|github|email`** share presets: converts formats the
   destination can't show and compresses to its size limit (hard-coded from the
@@ -327,7 +329,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.9...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/kwhorne/xpress/compare/v0.4.9...v0.5.0
 [0.4.9]: https://github.com/kwhorne/xpress/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/kwhorne/xpress/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/kwhorne/xpress/compare/v0.4.6...v0.4.7

@@ -29,15 +29,25 @@ One tool, three ways to use it:
 - **Convert** between formats: images (WebP/AVIF/**HEIC**/JXL/PNG/JPEG — iPhone
   photos convert both ways on macOS), audio
   (AAC/MP3/Opus/WAV/FLAC/AIFF), and video (MP4/HEVC/AV1/WebM, or animated GIF).
-- **Compress to a budget** (`--max-size 500kb`) or let it **pick the smallest
-  format** automatically (`--adaptive`).
+- **Aim for how it looks, not a number**: `--quality high` finds the smallest
+  image that still meets a perceptual (SSIMULACRA2) target.
+- **Compress to a budget** (`--max-size 500kb` — video and audio hit it by
+  computed bitrate), **fit a destination** (`--for discord|github|email`), or
+  let it **pick the smallest format** automatically (`--adaptive`).
+- **Web-ready images**: `xpress web` makes AVIF/WebP/JPEG sets in several
+  widths plus a ready-to-paste `<picture>` element.
+- **Guard your repo**: `xpress check` (and a GitHub Action) fails CI when
+  media is too big or still unoptimised.
+- **Privacy**: `--strip-location` removes GPS / where it was taken and keeps
+  the rest of the metadata.
 - **PDF tools**: non-destructive crop/uncrop and rendering pages to images.
 - **Pipelines**: chain steps like `crop(width: 1600) -> convert(to: webp)`, save
   them by name, and attach them to folders for hands-off automation.
 - **Non-destructive by default**: originals are backed up and can be restored.
 
 Images **and PDFs** are optimised, resized, cropped and converted **entirely in
-pure Rust** (`quantette`/`exoquant` + `oxipng` + `image` + `lopdf`) — no external tools to
+pure Rust or bundled libraries** (mozjpeg, libwebp, ravif, `quantette`/`exoquant` +
+`oxipng`, `lopdf`) — no external tools to
 install. Video and audio use `ffmpeg`, which the macOS app **bundles**, so a
 released `.app`/`.dmg` needs nothing installed. Everything is driven by one
 consistent, percentage-based compression model.
