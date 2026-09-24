@@ -76,12 +76,14 @@ impl CompressionQuality {
         self.tier != CompressionTier::Adaptive && self.factor >= 50
     }
 
-    /// jpegoptim --max quality ceiling. factor 30 -> 85, ramping to 30 at max.
+    /// JPEG quality. factor 30 -> 85, ramping to 30 at max; the gentlest
+    /// factors reach 98 (mozjpeg's perceptual tuning needs the headroom to
+    /// stay near-transparent).
     pub fn jpeg_max_quality(&self) -> i32 {
         cq_clamp(
             (85.0 - (self.factor - 30) as f64 * (55.0 / 70.0)).round() as i32,
             25,
-            95,
+            98,
         )
     }
 

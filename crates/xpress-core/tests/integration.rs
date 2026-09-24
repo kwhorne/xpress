@@ -67,10 +67,20 @@ fn optimise_gif() {
 fn size_guard_keeps_original_when_not_smaller() {
     let dir = tmpdir("guard");
     let f = dir.join("photo.jpg");
-    common::write_image(&f); // image crate writes JPEG at ~q75
+    // A heavily compressed (q20) JPEG: re-encoding at the normal preset (~q85)
+    // can only grow it, so the size guard must keep the original.
+    // Noise, so the q20 artefacts are expensive to re-encode faithfully.
+    let mut seed = 0x9e37_79b9u32;
+    let img = ::image::RgbImage::from_fn(96, 96, |_, _| {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        ::image::Rgb([(seed >> 16) as u8, (seed >> 8) as u8, seed as u8])
+    });
+    let mut jpeg = Vec::new();
+    ::image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 20)
+        .encode_image(&img)
+        .unwrap();
+    std::fs::write(&f, jpeg).unwrap();
     let before = std::fs::metadata(&f).unwrap().len();
-    // Optimising at the normal preset re-encodes at a higher quality (~85), which
-    // grows this already-compressed JPEG, so the size guard keeps the original.
     let r = image::optimise(&f, &opts()).unwrap();
     assert!(!r.improved());
     assert_eq!(r.new_size, before);

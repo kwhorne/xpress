@@ -167,41 +167,84 @@ fn write_jpeg(
     quality: u8,
     meta: &Meta,
 ) -> Result<(), OptimiseError> {
-    let mut buf = Vec::new();
-    let mut enc =
-        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality.clamp(1, 100));
-    apply_meta(&mut enc, meta);
-    flatten_alpha(img).write_with_encoder(enc).map_err(other)?;
-    let buf = match &meta.xmp {
-        Some(xmp) => jpeg_with_xmp(buf, xmp),
-        None => buf,
-    };
-    std::fs::write(out, buf)?;
+    std::fs::write(out, encode_jpeg(img, quality, meta, true)?)?;
     Ok(())
 }
 
-/// Insert an XMP packet as an APP1 segment after the JPEG's other APPn
-/// headers (JFIF/EXIF/ICC). Packets too big for one segment are dropped
-/// (extended XMP is not supported).
-fn jpeg_with_xmp(jpeg: Vec<u8>, xmp: &[u8]) -> Vec<u8> {
-    const NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
-    let seg_len = 2 + NS.len() + xmp.len();
-    if seg_len > u16::MAX as usize || jpeg.len() < 4 || jpeg[..2] != [0xFF, 0xD8] {
-        return jpeg;
-    }
-    let mut pos = 2;
-    while pos + 4 <= jpeg.len() && jpeg[pos] == 0xFF && (0xE0..=0xE2).contains(&jpeg[pos + 1]) {
-        pos += 2 + u16::from_be_bytes([jpeg[pos + 2], jpeg[pos + 3]]) as usize;
-    }
-    let pos = pos.min(jpeg.len());
-    let mut out = Vec::with_capacity(jpeg.len() + seg_len + 2);
-    out.extend_from_slice(&jpeg[..pos]);
-    out.extend_from_slice(&[0xFF, 0xE1]);
-    out.extend_from_slice(&(seg_len as u16).to_be_bytes());
-    out.extend_from_slice(NS);
-    out.extend_from_slice(xmp);
-    out.extend_from_slice(&jpeg[pos..]);
-    out
+/// Encode a JPEG with mozjpeg (trellis quantisation, optimised Huffman
+/// tables; `progressive` scans for image files — baseline where a consumer may
+/// not support progressive, e.g. PDF). Keeps EXIF, ICC and XMP. Transparent
+/// images are flattened onto white; grayscale stays one component.
+pub(crate) fn encode_jpeg(
+    img: &DynamicImage,
+    quality: u8,
+    meta: &Meta,
+    progressive: bool,
+) -> Result<Vec<u8>, OptimiseError> {
+    let img = flatten_alpha(img);
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    let (color_space, pixels) = if img.color().channel_count() == 1 {
+        (
+            mozjpeg::ColorSpace::JCS_GRAYSCALE,
+            img.to_luma8().into_raw(),
+        )
+    } else {
+        (mozjpeg::ColorSpace::JCS_RGB, img.to_rgb8().into_raw())
+    };
+    // libjpeg reports errors by unwinding; keep them from escaping as panics.
+    let encoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || -> std::io::Result<Vec<u8>> {
+            let mut c = mozjpeg::Compress::new(color_space);
+            c.set_size(w, h);
+            c.set_quality(quality.clamp(1, 100) as f32);
+            // 4:2:0 chroma subsampling caps how faithful colour detail can be;
+            // at high quality settings keep full-resolution chroma (4:4:4).
+            // (4:2:2 in between was measured: bigger files at equal
+            // SSIMULACRA2, no help for saturated edges.)
+            if quality >= 90 && color_space == mozjpeg::ColorSpace::JCS_RGB {
+                c.set_chroma_sampling_pixel_sizes((1, 1), (1, 1));
+            }
+            if progressive {
+                c.set_progressive_mode();
+                c.set_optimize_scans(true);
+            }
+            c.set_optimize_coding(true);
+            let mut started = c.start_compress(Vec::new())?;
+            const MAX_SEGMENT: usize = 65533;
+            if let Some(exif) = &meta.exif {
+                let seg = [&b"Exif\0\0"[..], exif].concat();
+                if seg.len() <= MAX_SEGMENT {
+                    started.write_marker(mozjpeg::Marker::APP(1), &seg);
+                }
+            }
+            if let Some(icc) = &meta.icc {
+                // Not `write_icc_profile`: mozjpeg-rs numbers the chunks from 0,
+                // but the ICC spec (and strict decoders) require 1-based
+                // sequence numbers — the profile would be silently dropped.
+                const ICC_DATA_PER_SEGMENT: usize = MAX_SEGMENT - 14;
+                let chunks: Vec<&[u8]> = icc.chunks(ICC_DATA_PER_SEGMENT).collect();
+                if chunks.len() <= 255 {
+                    for (i, chunk) in chunks.iter().enumerate() {
+                        let mut seg = b"ICC_PROFILE\0".to_vec();
+                        seg.extend([i as u8 + 1, chunks.len() as u8]);
+                        seg.extend_from_slice(chunk);
+                        started.write_marker(mozjpeg::Marker::APP(2), &seg);
+                    }
+                }
+            }
+            if let Some(xmp) = &meta.xmp {
+                let seg = [&b"http://ns.adobe.com/xap/1.0/\0"[..], xmp].concat();
+                if seg.len() <= MAX_SEGMENT {
+                    started.write_marker(mozjpeg::Marker::APP(1), &seg);
+                }
+            }
+            started.write_scanlines(&pixels)?;
+            started.finish()
+        },
+    ))
+    .map_err(|_| other("jpeg encoding failed"))?
+    .map_err(other)?;
+    Ok(encoded)
 }
 
 /// Insert an XMP packet as an uncompressed `iTXt` chunk right after `IHDR`.

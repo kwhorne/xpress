@@ -18,6 +18,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Desktop app: sidebar items are now exposed to screen readers (VoiceOver).
 
 ### Changed
+- **JPEG encoding uses mozjpeg** (progressive, trellis quantisation, optimised
+  Huffman; baseline inside PDFs). At equal perceptual quality (SSIMULACRA2 85 /
+  75) photos and screenshots came out 35–61% smaller than with 0.4.9's encoder;
+  one synthetic image of saturated coloured edges gained only ~5% (and at 85 its
+  original is kept). High settings (quality ≥ 90) keep full-resolution chroma,
+  and the gentlest compression factors now reach JPEG quality 98.
 - The macOS release tarball's `xpress` and `xpress-gui` binaries (also what
   `xpress update` installs) are now Developer ID signed with the hardened
   runtime and notarised, like the `.app`/`.dmg`; they used to be ad-hoc signed.
