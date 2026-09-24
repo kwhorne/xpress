@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **`xpress update` on macOS** has not worked since the app zip joined the
+  release assets (0.4.4): the updater takes the first asset, alphabetically,
+  containing the target triple, which was the `-app.zip`, not the CLI tarball.
+  The app zip and DMG are now named `xpress-<tag>-macos-<target>…` so the
+  tarball comes first (which also fixes the update path for already-installed
+  CLIs), and the CLI asks for the `.tar.gz` explicitly.
+
 ## [0.5.0] - 2026-09-24
 
 ### Added

@@ -104,10 +104,15 @@ jobs:
           scripts/fetch-static-tools.sh "${{ matrix.target }}" bundle-tools
           scripts/make-app.sh --gui "$bin_dir/xpress-gui" --bin-dir bundle-tools \
             --out dist-app --version "${GITHUB_REF_NAME#v}"
-          app_zip="xpress-${GITHUB_REF_NAME}-${{ matrix.target }}-app.zip"
+          # Keep "-macos-" before the target: `xpress update` (self_update) takes
+          # the first asset, alphabetically, containing the target triple, and
+          # that must be the CLI tarball. "-macos-" sorts after "-aarch64…",
+          # while the name still contains the target and ends in -app.zip,
+          # which the desktop app's updater looks for.
+          app_zip="xpress-${GITHUB_REF_NAME}-macos-${{ matrix.target }}-app.zip"
           ditto -c -k --keepParent dist-app/xpress.app "$app_zip"
           shasum -a 256 "$app_zip" > "$app_zip.sha256"
-          dmg="xpress-${GITHUB_REF_NAME}-${{ matrix.target }}.dmg"
+          dmg="xpress-${GITHUB_REF_NAME}-macos-${{ matrix.target }}.dmg"
           scripts/make-dmg.sh --app dist-app/xpress.app --out "$dmg" --version "${GITHUB_REF_NAME#v}"
           shasum -a 256 "$dmg" > "$dmg.sha256"
 

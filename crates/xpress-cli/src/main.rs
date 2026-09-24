@@ -617,6 +617,9 @@ fn run_update(check_only: bool) -> Result<()> {
         .bin_name("xpress")
         .current_version(current)
         .bin_path_in_archive("xpress-v{{ version }}-{{ target }}/{{ bin }}")
+        // The release also has a -app.zip and a .dmg for the same target;
+        // without this the first match (alphabetically) could be one of them.
+        .asset_identifier(".tar.gz")
         .show_download_progress(true)
         .no_confirm(false)
         .build()
