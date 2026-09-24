@@ -75,6 +75,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   PNG in pure Rust (no ffmpeg needed).
 
 ### Changed
+- **`convert` keeps the source for video and audio**, like it already did for
+  images: the result is written alongside. Previously a video/audio conversion
+  deleted the original (irrecoverably with `--no-backup`). Optimising a `.mov`
+  to `.mp4` still replaces it. An audio conversion to a bigger format (e.g.
+  MP3 → FLAC) is no longer refused by the size guard.
+- Dependencies: `lopdf` 0.45 (fixes RUSTSEC-2026-0187, a stack overflow on
+  crafted PDFs), `self_update` 1.x without the S3 backend, `egui`/`eframe`
+  0.36, and a `cargo update` — `cargo audit` reports no vulnerabilities.
 - An explicit MP3 bitrate (`lowerBitrate(kbps: …)`, size budgets) now encodes
   CBR at that bitrate instead of the nearest VBR quality level, which could land
   far from it.

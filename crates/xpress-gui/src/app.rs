@@ -371,7 +371,9 @@ impl XpressApp {
 }
 
 impl eframe::App for XpressApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    /// Non-drawing work. eframe calls this even while the window is hidden, so
+    /// menu-bar clicks, hotkeys and finished jobs are handled from the tray too.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Closing the window hides it to the menu bar instead of quitting; use the
         // tray's “Quit” to actually exit.
         if ctx.input(|i| i.viewport().close_requested()) {
@@ -416,40 +418,10 @@ impl eframe::App for XpressApp {
 
         self.drain_results();
 
-        let dropped: Vec<PathBuf> = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .iter()
-                .filter_map(|f| f.path.clone())
-                .collect()
-        });
-        for path in dropped {
-            self.submit(path, ctx);
-        }
-
         if self.last_update_check.elapsed() >= UPDATE_INTERVAL
             && !self.update_checking.load(Ordering::Relaxed)
         {
             self.check_for_updates(ctx);
-        }
-
-        self.draw_update_banner(ctx);
-
-        if self.crop.is_some() {
-            self.draw_crop(ctx);
-        } else {
-            self.draw_sidebar(ctx);
-            egui::CentralPanel::default()
-                .frame(
-                    egui::Frame::central_panel(&ctx.style())
-                        .fill(BG)
-                        .inner_margin(egui::Margin::same(22)),
-                )
-                .show(ctx, |ui| match self.tab {
-                    Tab::Optimise => self.optimise_view(ui),
-                    Tab::Settings => self.settings_view(ui),
-                    Tab::About => self.about_view(ui),
-                });
         }
 
         // Poll steadily so menu-bar clicks and the global hotkey are handled even
@@ -457,21 +429,56 @@ impl eframe::App for XpressApp {
         let interval = if self.in_flight > 0 { 120 } else { 250 };
         ctx.request_repaint_after(Duration::from_millis(interval));
     }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .filter(|p| !p.as_os_str().is_empty())
+                .collect()
+        });
+        for path in dropped {
+            self.submit(path, &ctx);
+        }
+
+        self.draw_update_banner(ui);
+
+        if self.crop.is_some() {
+            self.draw_crop(ui);
+        } else {
+            self.draw_sidebar(ui);
+            egui::CentralPanel::default()
+                .frame(
+                    egui::Frame::central_panel(&ctx.global_style())
+                        .fill(BG)
+                        .inner_margin(egui::Margin::same(22)),
+                )
+                .show(ui, |ui| match self.tab {
+                    Tab::Optimise => self.optimise_view(ui),
+                    Tab::Settings => self.settings_view(ui),
+                    Tab::About => self.about_view(ui),
+                });
+        }
+    }
 }
 
 impl XpressApp {
     // ---- Sidebar -----------------------------------------------------------
 
-    fn draw_sidebar(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("sidebar")
-            .exact_width(212.0)
+    fn draw_sidebar(&mut self, root: &mut egui::Ui) {
+        let ctx = &root.ctx().clone();
+        egui::Panel::left("sidebar")
+            .exact_size(212.0)
             .resizable(false)
             .frame(
                 egui::Frame::default()
                     .fill(sidebar_fill(ctx))
                     .inner_margin(egui::Margin::symmetric(12, 16)),
             )
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 // Brand.
                 ui.horizontal(|ui| {
                     let (rect, _) = ui.allocate_exact_size(egui::vec2(32.0, 32.0), Sense::hover());
@@ -793,7 +800,7 @@ impl XpressApp {
 
     // ---- Update banner -----------------------------------------------------
 
-    fn draw_update_banner(&mut self, ctx: &egui::Context) {
+    fn draw_update_banner(&mut self, root: &mut egui::Ui) {
         if self.update_dismissed {
             return;
         }
@@ -807,13 +814,13 @@ impl XpressApp {
         let can_auto = can_self_update(&info);
         let dl = info.download_url.clone();
         let mut start_update: Option<String> = None;
-        egui::TopBottomPanel::top("update_banner")
+        egui::Panel::top("update_banner")
             .frame(
                 egui::Frame::default()
                     .fill(ACCENT)
                     .inner_margin(egui::Margin::symmetric(12, 7)),
             )
-            .show(ctx, |ui| {
+            .show(root, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         RichText::new(format!("Update available — v{}", info.latest))
@@ -858,10 +865,11 @@ impl XpressApp {
 
     // ---- Crop overlay ------------------------------------------------------
 
-    fn draw_crop(&mut self, ctx: &egui::Context) {
+    fn draw_crop(&mut self, root: &mut egui::Ui) {
+        let ctx = &root.ctx().clone();
         let mut apply = false;
         let mut cancel = false;
-        egui::TopBottomPanel::top("crop_top").show(ctx, |ui| {
+        egui::Panel::top("crop_top").show(root, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.heading("Crop");
@@ -893,7 +901,7 @@ impl XpressApp {
             ui.add_space(4.0);
         });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(root, |ui| {
             let Some(crop) = self.crop.as_mut() else {
                 return;
             };
@@ -974,7 +982,7 @@ impl XpressApp {
 
 fn install_style(ctx: &egui::Context) {
     use egui::{CornerRadius, Stroke};
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);
     style.spacing.button_padding = egui::vec2(12.0, 7.0);
     style.spacing.interact_size.y = 26.0;
@@ -1016,7 +1024,7 @@ fn install_style(ctx: &egui::Context) {
     v.widgets.noninteractive.bg_stroke = border;
 
     style.visuals = v;
-    ctx.set_style(style);
+    ctx.set_global_style(style);
 }
 
 fn sidebar_fill(_ctx: &egui::Context) -> Color32 {

@@ -246,9 +246,7 @@ fn placed_sizes(doc: &lopdf::Document) -> HashMap<ObjectId, (f64, f64)> {
     let mut sizes: HashMap<ObjectId, (f64, f64)> = HashMap::new();
     for page_id in doc.get_pages().into_values() {
         let names = xobject_names(doc, page_id);
-        let Ok(bytes) = doc.get_page_content(page_id) else {
-            continue;
-        };
+        let bytes = doc.get_page_content(page_id);
         let Ok(content) = lopdf::content::Content::decode(&bytes) else {
             continue;
         };
