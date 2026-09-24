@@ -248,6 +248,45 @@ xpress update           # download the latest release and replace the binary
 Checks GitHub Releases for `kwhorne/xpress`. The desktop app also shows an
 “Update available” banner when a newer version is published.
 
+## check
+
+```sh
+xpress check [OPTIONS] <ITEMS>...
+```
+
+A read-only guard for CI: exits with status 1 when a media file is over a size
+limit or still unoptimised. Files are never modified — each one is optimised to
+a temporary file just to measure what it could shrink to.
+
+- `--max-size <size>` — fail for any file larger than this (`500kb`, `2mb`).
+- `--min-savings <pct>` — fail for files optimising would shrink by at least
+  this much (default `10`).
+- `--quality <target>` — images: how good an optimised file must still look
+  (default `visually-lossless`). Re-encoding a lossy JPEG always "saves"
+  something by discarding more detail, so images are judged by how much smaller
+  they could be *without a visible change* — an already-optimised JPEG passes.
+- `--exclude <dir>` — skip directories with this name (repeatable).
+- `-r`, `--kind`, `--json`, `-q`, `-j` as for `optimise`.
+
+```sh
+xpress check -r --max-size 500kb --exclude node_modules public/
+```
+
+### GitHub Action
+
+```yaml
+- uses: actions/checkout@v4
+- uses: kwhorne/xpress@v0.5.0
+  with:
+    paths: public assets
+    max-size: 500kb        # optional
+    # min-savings: 10  quality: visually-lossless  exclude: node_modules .git
+```
+
+Runs on `ubuntu-latest` and `macos-latest` (it downloads the matching release
+binary). A pull request that adds a 4 MB hero image or an unoptimised
+screenshot then fails with the file, its size and what it could be.
+
 ## doctor / bundle
 
 ```sh

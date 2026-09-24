@@ -7,6 +7,7 @@
 //!   xpress strip-exif <items...>
 //!   xpress doctor
 
+mod check;
 mod progress;
 mod render;
 mod watch;
@@ -75,6 +76,9 @@ enum Command {
     Config,
     /// Extract bundled binaries into the per-user bundle dir.
     Bundle,
+    /// CI guard: fail if media files are too big or still unoptimised.
+    /// Read-only — files are never modified.
+    Check(CheckArgs),
     /// Check which external tools are available.
     Doctor,
     /// Print a shell completion script (bash, zsh, fish, powershell, elvish).
@@ -288,6 +292,46 @@ enum PipelineCmd {
 }
 
 #[derive(Args)]
+struct CheckArgs {
+    /// Recurse into folders.
+    #[arg(short, long)]
+    recursive: bool,
+    /// Restrict to a media kind: image | video | pdf | audio.
+    #[arg(long, value_parser = parse_kind)]
+    kind: Option<MediaKind>,
+    /// Fail for any file larger than this, e.g. 500kb, 2mb.
+    #[arg(long, value_parser = parse_size)]
+    max_size: Option<u64>,
+    /// Fail for files that optimising would shrink by at least this percentage.
+    #[arg(long, default_value_t = 10.0)]
+    min_savings: f64,
+    /// Images: how good "optimised" must still look, as a SSIMULACRA2 target —
+    /// visually-lossless (default), high, medium, low or a score 1–100. A file
+    /// is flagged when it could shrink by --min-savings and still meet it.
+    #[arg(long, value_parser = xpress_core::quality::parse_target, default_value = "visually-lossless")]
+    quality: f64,
+    /// Video/audio/PDF: compression to measure against, 5..100 (default: config).
+    #[arg(long)]
+    compression: Option<i32>,
+    /// Skip files under directories with these names (repeatable), e.g.
+    /// --exclude node_modules --exclude vendor.
+    #[arg(long)]
+    exclude: Vec<String>,
+    /// Output results as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Only print problems and the summary.
+    #[arg(short, long)]
+    quiet: bool,
+    /// Max files processed in parallel (default: number of CPUs).
+    #[arg(short = 'j', long)]
+    jobs: Option<usize>,
+    /// Files or folders to check.
+    #[arg(required = true)]
+    items: Vec<PathBuf>,
+}
+
+#[derive(Args)]
 struct WatchArgs {
     #[command(flatten)]
     common: CommonOpts,
@@ -482,6 +526,7 @@ fn run() -> Result<()> {
             Ok(())
         }
         Command::Bundle => run_bundle(),
+        Command::Check(args) => run_check(args),
         Command::Doctor => {
             render::doctor();
             Ok(())
@@ -567,6 +612,44 @@ fn run_bundle() -> Result<()> {
             if n == 1 { "y" } else { "ies" },
             dir.display()
         );
+    }
+    Ok(())
+}
+
+fn run_check(args: CheckArgs) -> Result<()> {
+    let kinds: Vec<MediaKind> = args.kind.into_iter().collect();
+    let files: Vec<PathBuf> = collect_files(&args.items, args.recursive, &kinds)
+        .into_iter()
+        .filter(|f| !check::excluded(f, &args.exclude))
+        .collect();
+    if files.is_empty() {
+        bail!("no media files found to check");
+    }
+    let cfg = xpress_core::config::Config::load();
+    let options = OptimiseOptions {
+        compression: CompressionQuality::new(
+            CompressionTier::Custom,
+            args.compression.unwrap_or(cfg.compression),
+        ),
+        strip_metadata: cfg.strip_metadata,
+        ..Default::default()
+    };
+    let mode = if args.json {
+        render::OutputMode::Json
+    } else if args.quiet {
+        render::OutputMode::Quiet
+    } else {
+        render::OutputMode::Normal
+    };
+    let jobs = files.iter().map(|f| (f.clone(), options.clone())).collect();
+    let quality = args.quality;
+    let results = progress::run_jobs(jobs, mode, args.jobs, |f, o| check::dry_run(f, o, quality));
+    let limits = check::Limits {
+        max_size: args.max_size,
+        min_savings: args.min_savings,
+    };
+    if check::report(&results, &limits, mode) > 0 {
+        std::process::exit(1);
     }
     Ok(())
 }

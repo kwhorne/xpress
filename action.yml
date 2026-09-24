@@ -1,0 +1,40 @@
+name: xpress check
+description: Fail the build when images, video, PDFs or audio are too big or still unoptimised.
+author: Knut W. Horne
+branding:
+  icon: minimize-2
+  color: blue
+inputs:
+  paths:
+    description: Files or folders to check, space separated.
+    default: "."
+  max-size:
+    description: Fail for any file larger than this, e.g. 500kb or 2mb.
+    required: false
+    default: ""
+  min-savings:
+    description: Fail for files that optimising would shrink by at least this percentage.
+    default: "10"
+  quality:
+    description: >-
+      How good an optimised image must still look (SSIMULACRA2):
+      visually-lossless, high, medium, low or a score 1-100.
+    default: visually-lossless
+  exclude:
+    description: Directory names to skip, space separated.
+    default: node_modules .git
+  version:
+    description: xpress release to use, e.g. v0.5.0, or "latest".
+    default: latest
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        XP_PATHS: ${{ inputs.paths }}
+        XP_MAX_SIZE: ${{ inputs.max-size }}
+        XP_MIN_SAVINGS: ${{ inputs.min-savings }}
+        XP_QUALITY: ${{ inputs.quality }}
+        XP_EXCLUDE: ${{ inputs.exclude }}
+        XP_VERSION: ${{ inputs.version }}
+      run: '"$GITHUB_ACTION_PATH/scripts/action-check.sh"'

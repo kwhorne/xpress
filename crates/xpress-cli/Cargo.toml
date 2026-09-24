@@ -18,6 +18,7 @@ clap_complete = "4"
 clap_mangen = "0.2"
 self_update = { version = "1", default-features = false, features = ["github", "ureq", "rustls", "archive-tar", "compression-tar-gz", "progress-bar"] }
 serde_json.workspace = true
+tempfile.workspace = true
 rayon.workspace = true
 notify = "7"
 ctrlc = "3"

@@ -7,12 +7,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`xpress check`** — a read-only CI guard that exits 1 when media files are
+  over `--max-size` or could shrink by `--min-savings` (default 10%). Images are
+  judged against a perceptual target (visually lossless by default), so
+  already-optimised JPEGs pass instead of being flagged forever. Plus a
+  **GitHub Action** (`uses: kwhorne/xpress@…`) that runs it in one step.
 - **Desktop app:** a *Quality target* in Preferences (visually lossless /
   high / medium / low — the smallest image that still looks that good, with the
   SSIMULACRA2 score on the result card) and a *Skip already-optimised files*
   toggle. The compression slider is disabled while a quality target is set.
 
 ### Fixed
+- Sizes are shown in decimal units (1 KB = 1000 bytes), matching how they are
+  parsed — `--max-size 300kb` used to be reported as "293.0 KB".
 - Desktop app: `⇧` in the hotkey hints and `→` on result cards rendered as
   boxes; the macOS Apple Symbols font is now a fallback.
 - Desktop app: sidebar items are now exposed to screen readers (VoiceOver).

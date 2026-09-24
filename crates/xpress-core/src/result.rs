@@ -109,6 +109,23 @@ pub fn file_stem_lossy(path: &Path) -> String {
         .unwrap_or_else(|| "file".to_string())
 }
 
+/// A human-readable size in decimal units (1 KB = 1000 bytes), matching how
+/// sizes are parsed (`--max-size 500kb`) and how Finder displays them.
+pub fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit = 0;
+    while size >= 1000.0 && unit < UNITS.len() - 1 {
+        size /= 1000.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{size:.1} {}", UNITS[unit])
+    }
+}
+
 pub fn file_size(path: &Path) -> u64 {
     fs::metadata(path).map(|m| m.len()).unwrap_or(0)
 }
