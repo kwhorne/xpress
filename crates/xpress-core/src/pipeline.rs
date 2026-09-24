@@ -305,11 +305,30 @@ pub fn run(
         options.compression.image_is_aggressive(),
         options,
         Placement {
-            size_guard: false,
+            // A pipeline that only tries to shrink the file (e.g. the watch
+            // daemon's default `optimise`) must not replace it with a bigger
+            // one; anything that changes content (crop, convert, watermark, …)
+            // was asked for and is kept.
+            size_guard: same_type && steps.iter().all(Step::only_shrinks),
             backup: same_type,
             replace_source: false,
         },
     )
+}
+
+impl Step {
+    /// Whether the step only aims to make the file smaller without changing
+    /// what it shows or plays.
+    fn only_shrinks(&self) -> bool {
+        matches!(
+            self,
+            Step::Optimise
+                | Step::Adaptive
+                | Step::StripExif
+                | Step::LowerBitrate { .. }
+                | Step::TargetSize { .. }
+        )
+    }
 }
 
 /// What extension the step's output will carry.

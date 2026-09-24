@@ -287,6 +287,31 @@ fn audio_aac_falls_back_without_audiotoolbox() {
 }
 
 #[test]
+fn pipeline_optimise_never_grows_the_file() {
+    common::install_stubs();
+    let dir = tmpdir("pipeline-guard");
+    let f = dir.join("clip-grow.mp4");
+    common::write_dummy(&f, 8000);
+    let steps = pipeline::parse("optimise").unwrap();
+    let r = pipeline::run(&f, &steps, &opts()).unwrap();
+    assert!(!r.improved());
+    assert_eq!(std::fs::metadata(&f).unwrap().len(), 8000, "original kept");
+    assert!(r.backup.is_none());
+}
+
+#[test]
+fn pipeline_with_content_change_is_kept_even_if_larger() {
+    common::install_stubs();
+    let dir = tmpdir("pipeline-keep");
+    let f = dir.join("clip-grow.mp4");
+    common::write_dummy(&f, 8000);
+    let steps = pipeline::parse("capFps(fps: 24)").unwrap();
+    let r = pipeline::run(&f, &steps, &opts()).unwrap();
+    assert!(r.new_size > 8000);
+    assert!(r.backup.is_some(), "original backed up before replacing");
+}
+
+#[test]
 fn downscale_image_by_factor() {
     common::install_stubs();
     let dir = tmpdir("scale");
