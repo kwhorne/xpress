@@ -68,7 +68,13 @@ Auto-detects each file's type. Extra options:
 
 - `--kind image|video|pdf|audio` — restrict to one media kind.
 - `--pdf-dpi <36..600>` — downsample embedded JPEG images to at most this DPI at the size they are drawn on the page (omit to keep their resolution). Only images whose colours can be re-encoded exactly (RGB/Gray/ICC) are touched; CMYK and other colour spaces are left as they are.
-- `--max-size <size>` — compress to fit a budget (`500kb`, `1.5mb`, `250000`).
+- `--max-size <size>` — compress to fit a budget (`500kb`, `1.5mb`, `250000`;
+  decimal units). Video and lossy audio compute the bitrate the budget allows
+  from the duration and encode straight to it — two-pass H.264 for video,
+  downscaled (keeping aspect, never below 240 lines) when the bits are too thin
+  for the frame size — then correct if the result lands off; results typically
+  land at 85–97% of the budget. Images/PDFs step up the compression until they
+  fit. A file that can't get under the budget is reported with a warning.
 - `--adaptive` — for images, try multiple formats and keep the smallest.
 - `--quality <target>` — for images, the smallest file that still *looks* this
   good instead of a fixed compression factor. Targets are SSIMULACRA2 scores:

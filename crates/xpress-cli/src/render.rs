@@ -10,7 +10,7 @@ pub const ERROR_X: &str = "\u{274C}"; // ❌
 pub const WARN: &str = "\u{26A0}\u{FE0F}"; // ⚠️
 pub const ARROW: &str = "\u{2192}"; // →
 
-fn human_size(bytes: u64) -> String {
+pub fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit = 0;

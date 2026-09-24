@@ -262,7 +262,19 @@ pub fn optimise(
         args.push(temp_out.display().to_string());
         tools::run(Tool::Ffmpeg, &args)
     };
-    if let Err(e) = encode(format.encoding_args(bitrate, aggressive, None)) {
+    // An explicit bitrate (a size budget, `lowerBitrate`) is honoured as a
+    // bitrate: MP3 switches from quality-based VBR to CBR, whose size is
+    // predictable. Otherwise VBR picks the bits the audio needs.
+    let codec_args = match (bitrate_override, format) {
+        (Some(kbps), AudioFormat::Mp3) => vec![
+            "-c:a".into(),
+            "libmp3lame".into(),
+            "-b:a".into(),
+            format!("{kbps}k"),
+        ],
+        _ => format.encoding_args(bitrate, aggressive, None),
+    };
+    if let Err(e) = encode(codec_args) {
         // `aac_at` (AudioToolbox) only exists in macOS ffmpeg builds that enable
         // it; everywhere else fall back to ffmpeg's native AAC encoder.
         if format != AudioFormat::Aac {

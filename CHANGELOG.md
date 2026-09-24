@@ -7,6 +7,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`--max-size` for video and audio now targets the size directly.** The
+  bitrate is computed from the budget and duration and encoded two-pass
+  (video), with the frame downscaled when the bits are too thin and up to three
+  corrections — instead of up to six CRF re-encodes that couldn't aim at a
+  size. Real 20 s 1080p clips landed at 87–93% of 10 MB / 4 MB / 1.5 MB budgets;
+  MP3/AAC at 87–97%. Files still over budget get a warning.
 - **Perceptual quality targets.** `optimise --quality high` (or
   `visually-lossless`, `medium`, `low`, or a score 1–100) and
   `convert --to webp|jpeg|png --quality …` find the smallest file that still
@@ -69,6 +75,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   PNG in pure Rust (no ffmpeg needed).
 
 ### Changed
+- An explicit MP3 bitrate (`lowerBitrate(kbps: …)`, size budgets) now encodes
+  CBR at that bitrate instead of the nearest VBR quality level, which could land
+  far from it.
 - WebP encodes use libwebp's sharp RGB→YUV conversion, keeping coloured edges
   crisp; compression factors below 30 now reach WebP/HEIC/AVIF quality 95
   (previously capped at 72). The normal preset is unchanged.

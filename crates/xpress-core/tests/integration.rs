@@ -372,6 +372,111 @@ fn hevc_conversion_keeps_hdr() {
     );
 }
 
+/// The `-b:v` of every second-pass encode in the stub's log, in order.
+fn second_pass_bitrates(log: &str) -> Vec<u32> {
+    log.lines()
+        .filter(|l| l.contains("-pass 2"))
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            it.find(|a| *a == "-b:v")?;
+            it.next()?.trim_end_matches('k').parse().ok()
+        })
+        .collect()
+}
+
+#[test]
+fn video_budget_encodes_two_pass_at_the_computed_bitrate() {
+    common::install_stubs();
+    let dir = tmpdir("video-budget");
+    let f = dir.join("clip.mov");
+    common::write_dummy(&f, 8_000_000); // stub banner: 10 s, 1080p30, AAC
+    let r = xpress_core::budget::optimise_to_budget(&f, 5_000_000, &opts()).unwrap();
+
+    assert_eq!(r.output, dir.join("clip.mp4"));
+    assert!(r.new_size <= 5_000_000);
+    let log = ffmpeg_log(&f);
+    assert!(log.contains("-pass 1") && log.contains("-pass 2"), "{log}");
+    // 5 MB / 10 s = 4000 kbit/s, -4% = 3840, minus 128 audio.
+    assert_eq!(second_pass_bitrates(&log), vec![3712]);
+    assert!(log.contains("-c:a aac -b:a 128k"));
+    assert!(!log.contains("scale="), "3.7 Mbit/s is plenty for 1080p30");
+}
+
+#[test]
+fn video_budget_downscales_when_bits_are_thin() {
+    common::install_stubs();
+    let dir = tmpdir("video-budget-thin");
+    let f = dir.join("clip.mp4");
+    common::write_dummy(&f, 8_000_000);
+    xpress_core::budget::optimise_to_budget(&f, 1_000_000, &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    let pass2 = log.lines().find(|l| l.contains("-pass 2")).unwrap();
+    assert!(pass2.contains("scale="), "{pass2}");
+}
+
+#[test]
+fn video_budget_corrects_an_overshoot() {
+    common::install_stubs();
+    let dir = tmpdir("video-budget-over");
+    let f = dir.join("clip.mp4");
+    // The stub always outputs half the input (4 MB) whatever the settings, so
+    // a 3.5 MB budget overshoots slightly every time: xpress keeps lowering
+    // the bitrate (a small overshoot doesn't call for a smaller frame).
+    common::write_dummy(&f, 8_000_000);
+    let r = xpress_core::budget::optimise_to_budget(&f, 3_500_000, &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    let rates = second_pass_bitrates(&log);
+    assert_eq!(rates.len(), 4, "three corrections: {rates:?}");
+    assert!(rates.windows(2).all(|w| w[1] < w[0]), "{rates:?}");
+    assert!(r.new_size > 3_500_000, "still reports the smallest it got");
+}
+
+#[test]
+fn video_budget_shrinks_the_frame_on_a_big_overshoot() {
+    common::install_stubs();
+    let dir = tmpdir("video-budget-way-over");
+    let f = dir.join("clip.mp4");
+    // Output 4 MB vs a 2.5 MB budget (1.6x): the rate can't be the fix.
+    common::write_dummy(&f, 8_000_000);
+    xpress_core::budget::optimise_to_budget(&f, 2_500_000, &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    let heights: Vec<u32> = log
+        .lines()
+        .filter(|l| l.contains("-pass 2"))
+        .filter_map(|l| {
+            let s = l.split("scale=").nth(1)?;
+            s.split([':', ',']).nth(1)?.parse().ok()
+        })
+        .collect();
+    assert!(heights.len() >= 2, "{log}");
+    assert!(heights.windows(2).all(|w| w[1] < w[0]), "{heights:?}");
+}
+
+#[test]
+fn audio_budget_targets_a_bitrate() {
+    common::install_stubs();
+    let dir = tmpdir("audio-budget");
+    let f = dir.join("song.mp3");
+    common::write_dummy(&f, 400_000); // stub banner: 10 s
+    xpress_core::budget::optimise_to_budget(&f, 250_000, &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    // 250 kB / 10 s = 200 kbit/s -3% = 194 -> LAME VBR quality for <=256k.
+    assert!(log.contains("libmp3lame"), "{log}");
+}
+
+#[test]
+fn budget_already_met_just_optimises() {
+    common::install_stubs();
+    let dir = tmpdir("budget-met");
+    let f = dir.join("clip.mp4");
+    common::write_dummy(&f, 8000);
+    xpress_core::budget::optimise_to_budget(&f, 1_000_000, &opts()).unwrap();
+    assert!(
+        !ffmpeg_log(&f).contains("-pass"),
+        "no bitrate targeting needed"
+    );
+}
+
 #[test]
 fn downscale_image_by_factor() {
     common::install_stubs();

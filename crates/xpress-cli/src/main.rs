@@ -607,6 +607,21 @@ fn run_optimise(args: OptimiseArgs) -> Result<()> {
         }
     });
     render::summarise(&results, mode);
+    if let (Some(max), false) = (max_size, mode == render::OutputMode::Json) {
+        for (path, r) in &results {
+            if let Ok(r) = r {
+                if r.new_size > max {
+                    eprintln!(
+                        "{} {} is still over the {} budget ({}) — the smallest it gets",
+                        render::WARN,
+                        path.display(),
+                        render::human_size(max),
+                        render::human_size(r.new_size)
+                    );
+                }
+            }
+        }
+    }
     Ok(())
 }
 

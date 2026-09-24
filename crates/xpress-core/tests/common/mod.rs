@@ -69,10 +69,12 @@ for ((i=0;i<${#args[@]};i++)); do [[ "${args[$i]}" == "-i" ]] && inp="${args[$((
 # Like ffmpeg: with no output file, print the stream info and fail. Inputs
 # named `*hdr*` report an HLG (HDR) video stream.
 if [[ "$out" == "$inp" ]]; then
+  echo "  Duration: 00:00:10.00, start: 0.000000, bitrate: 6400 kb/s" >&2
   case "$(basename "$inp")" in
-    *hdr*) echo "  Stream #0:0: Video: hevc (Main 10), yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67)" >&2 ;;
-    *) echo "  Stream #0:0: Video: h264 (High), yuv420p(tv, bt709)" >&2 ;;
+    *hdr*) echo "  Stream #0:0: Video: hevc (Main 10), yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67), 1920x1080, 30 fps" >&2 ;;
+    *) echo "  Stream #0:0: Video: h264 (High), yuv420p(tv, bt709), 1920x1080, 30 fps" >&2 ;;
   esac
+  echo "  Stream #0:1: Audio: aac (LC), 48000 Hz, stereo, fltp, 128 kb/s" >&2
   exit 1
 fi
 case "$(basename "$inp")" in
