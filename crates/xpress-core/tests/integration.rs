@@ -67,10 +67,20 @@ fn optimise_gif() {
 fn size_guard_keeps_original_when_not_smaller() {
     let dir = tmpdir("guard");
     let f = dir.join("photo.jpg");
-    common::write_image(&f); // image crate writes JPEG at ~q75
+    // A heavily compressed (q20) JPEG: re-encoding at the normal preset (~q85)
+    // can only grow it, so the size guard must keep the original.
+    // Noise, so the q20 artefacts are expensive to re-encode faithfully.
+    let mut seed = 0x9e37_79b9u32;
+    let img = ::image::RgbImage::from_fn(96, 96, |_, _| {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        ::image::Rgb([(seed >> 16) as u8, (seed >> 8) as u8, seed as u8])
+    });
+    let mut jpeg = Vec::new();
+    ::image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 20)
+        .encode_image(&img)
+        .unwrap();
+    std::fs::write(&f, jpeg).unwrap();
     let before = std::fs::metadata(&f).unwrap().len();
-    // Optimising at the normal preset re-encodes at a higher quality (~85), which
-    // grows this already-compressed JPEG, so the size guard keeps the original.
     let r = image::optimise(&f, &opts()).unwrap();
     assert!(!r.improved());
     assert_eq!(r.new_size, before);
@@ -504,6 +514,64 @@ fn budget_already_met_just_optimises() {
         !ffmpeg_log(&f).contains("-pass"),
         "no bitrate targeting needed"
     );
+}
+
+#[test]
+fn video_strip_location_blanks_location_metadata() {
+    common::install_stubs();
+    let dir = tmpdir("video-location");
+    let f = dir.join("walk.mov");
+    common::write_dummy(&f, 8000);
+    let o = OptimiseOptions {
+        strip_location: true,
+        ..opts()
+    };
+    video::optimise(&f, &o).unwrap();
+    let log = ffmpeg_log(&f);
+    let encode = log.lines().find(|l| l.contains("-vcodec")).unwrap();
+    assert!(encode.contains("-metadata location= "), "{encode}");
+    assert!(encode.contains("-metadata com.apple.quicktime.location.ISO6709="));
+    assert!(!encode.contains("-map_metadata"));
+}
+
+#[test]
+fn video_strip_metadata_drops_all_global_metadata() {
+    common::install_stubs();
+    let dir = tmpdir("video-strip-all");
+    let f = dir.join("walk.mov");
+    common::write_dummy(&f, 8000);
+    let o = OptimiseOptions {
+        strip_metadata: true,
+        ..opts()
+    };
+    video::optimise(&f, &o).unwrap();
+    assert!(ffmpeg_log(&f).contains("-map_metadata -1"));
+}
+
+#[test]
+fn share_for_github_targets_its_video_limit() {
+    common::install_stubs();
+    let dir = tmpdir("share-github-video");
+    let f = dir.join("demo.mov");
+    // Over the limit; the stub halves it (8 MB), so the first encode fits.
+    common::write_dummy(&f, 16_000_000); // stub banner: 10 s, 1080p30, AAC
+    let target = xpress_core::share::Target::Github;
+    let r = xpress_core::share::prepare(&f, target, &opts()).unwrap();
+    assert!(r.new_size <= 9_500_000);
+    // 9.5 MB / 10 s = 7600 kbit/s, -4% = 7296, minus 128 audio.
+    assert_eq!(second_pass_bitrates(&ffmpeg_log(&f)), vec![7168]);
+}
+
+#[test]
+fn share_for_github_converts_webp_to_jpeg_alongside() {
+    let dir = tmpdir("share-github-webp");
+    let f = dir.join("shot.webp");
+    common::write_image(&f);
+    let r = xpress_core::share::prepare(&f, xpress_core::share::Target::Github, &opts()).unwrap();
+    assert_eq!(r.output, dir.join("shot.jpg"));
+    assert!(r.output.exists());
+    assert!(f.exists(), "the original is kept");
+    assert_eq!(r.source, f);
 }
 
 #[test]

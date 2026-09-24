@@ -32,7 +32,8 @@ Most commands accept these shared options:
 | `-r, --recursive` | Recurse into folders |
 | `--compression <5..100>` | How hard to compress: 5 = best quality, 100 = smallest. Default 30 |
 | `-a, --aggressive` | Use the aggressive preset (factor 64) |
-| `--strip-metadata` | Strip non-essential metadata |
+| `--strip-metadata` | Strip non-essential metadata (EXIF/XMP; the colour profile stays) |
+| `--strip-location` | Remove only where it was taken — GPS in EXIF, location in XMP and video metadata — keeping camera, date, orientation and colour profile |
 | `--no-preserve-dates` | Don't preserve original timestamps |
 | `--no-backup` | Don't write a `.<name>.orig` backup |
 | `--allow-larger` | Keep the result even if it is larger than the input |
@@ -76,6 +77,15 @@ Auto-detects each file's type. Extra options:
   land at 85–97% of the budget. Images/PDFs step up the compression until they
   fit. A file that can't get under the budget is reported with a warning.
 - `--adaptive` — for images, try multiple formats and keep the smallest.
+- `--for discord|github|email` — make files fit where they're going: converts
+  formats the destination can't show (a new file next to the original) and
+  compresses to its size limit (video and audio by computed bitrate).
+
+  | Target | Limit used | Published limit (checked Sept 2026) | Formats |
+  |--------|-----------|--------------------------------------|---------|
+  | `discord` | 19 MB | 20 MB per file, free accounts | kept |
+  | `github` | 9.5 MB images/video, 24 MB other | 10 MB images, GIFs and video (free plans), 25 MB other | images → JPEG/PNG (GitHub shows only PNG/GIF/JPEG/SVG) |
+  | `email` | 14 MB | Gmail 25 MB, Outlook 20 MB per message — before base64's ~⅓ overhead | HEIC/AVIF/JXL → JPEG/PNG |
 - `--quality <target>` — for images, the smallest file that still *looks* this
   good instead of a fixed compression factor. Targets are SSIMULACRA2 scores:
   `visually-lossless` (90), `high` (80), `medium` (70), `low` (50) or a number
@@ -247,6 +257,74 @@ xpress update           # download the latest release and replace the binary
 
 Checks GitHub Releases for `kwhorne/xpress`. The desktop app also shows an
 “Update available” banner when a newer version is published.
+
+## web
+
+```sh
+xpress web [OPTIONS] <IMAGES>...
+```
+
+Responsive images in one step: each image becomes several widths in modern
+formats plus a fallback, and a ready-to-paste `<picture>` element (printed and
+saved as `<name>.html`).
+
+- `--widths 640,1024,1600,2048` — widths to generate; never upscales.
+- `--formats avif,webp` — modern formats, in order of preference. The fallback
+  is JPEG, or PNG for images with transparency.
+- `--quality high` — how good JPEG/PNG/WebP variants must look (see
+  `optimise --quality`); AVIF uses the compression factor.
+- `--sizes "(max-width: 900px) 100vw, 900px"` — the `sizes` attribute.
+- `--alt "…"` — alt text. `-o <dir>` — output directory (default `<name>-web/`).
+
+```html
+<picture>
+  <source type="image/avif" srcset="hero-640.avif 640w, hero-1024.avif 1024w" sizes="100vw">
+  <source type="image/webp" srcset="hero-640.webp 640w, hero-1024.webp 1024w" sizes="100vw">
+  <img src="hero-1024.jpg" srcset="hero-640.jpg 640w, hero-1024.jpg 1024w" sizes="100vw"
+       width="1024" height="576" alt="" loading="lazy" decoding="async">
+</picture>
+```
+
+`width`/`height` are set so the page doesn't shift while images load.
+
+## check
+
+```sh
+xpress check [OPTIONS] <ITEMS>...
+```
+
+A read-only guard for CI: exits with status 1 when a media file is over a size
+limit or still unoptimised. Files are never modified — each one is optimised to
+a temporary file just to measure what it could shrink to.
+
+- `--max-size <size>` — fail for any file larger than this (`500kb`, `2mb`).
+- `--min-savings <pct>` — fail for files optimising would shrink by at least
+  this much (default `10`).
+- `--quality <target>` — images: how good an optimised file must still look
+  (default `visually-lossless`). Re-encoding a lossy JPEG always "saves"
+  something by discarding more detail, so images are judged by how much smaller
+  they could be *without a visible change* — an already-optimised JPEG passes.
+- `--exclude <dir>` — skip directories with this name (repeatable).
+- `-r`, `--kind`, `--json`, `-q`, `-j` as for `optimise`.
+
+```sh
+xpress check -r --max-size 500kb --exclude node_modules public/
+```
+
+### GitHub Action
+
+```yaml
+- uses: actions/checkout@v4
+- uses: kwhorne/xpress@v0.5.0
+  with:
+    paths: public assets
+    max-size: 500kb        # optional
+    # min-savings: 10  quality: visually-lossless  exclude: node_modules .git
+```
+
+Runs on `ubuntu-latest` and `macos-latest` (it downloads the matching release
+binary). A pull request that adds a 4 MB hero image or an unoptimised
+screenshot then fails with the file, its size and what it could be.
 
 ## doctor / bundle
 

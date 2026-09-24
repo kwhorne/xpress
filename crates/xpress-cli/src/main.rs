@@ -7,6 +7,7 @@
 //!   xpress strip-exif <items...>
 //!   xpress doctor
 
+mod check;
 mod progress;
 mod render;
 mod watch;
@@ -75,6 +76,12 @@ enum Command {
     Config,
     /// Extract bundled binaries into the per-user bundle dir.
     Bundle,
+    /// Make responsive web images: several widths in AVIF/WebP plus a
+    /// JPEG/PNG fallback, and a ready-to-paste <picture> element.
+    Web(WebArgs),
+    /// CI guard: fail if media files are too big or still unoptimised.
+    /// Read-only — files are never modified.
+    Check(CheckArgs),
     /// Check which external tools are available.
     Doctor,
     /// Print a shell completion script (bash, zsh, fish, powershell, elvish).
@@ -106,6 +113,10 @@ struct CommonOpts {
     /// Strip non-essential metadata.
     #[arg(long)]
     strip_metadata: bool,
+    /// Remove only where it was taken (GPS / location), keeping camera, date,
+    /// orientation and colour profile. Handy before sharing.
+    #[arg(long)]
+    strip_location: bool,
     /// Do not preserve original timestamps.
     #[arg(long)]
     no_preserve_dates: bool,
@@ -173,6 +184,7 @@ impl CommonOpts {
             compression: self.compression_quality(&cfg),
             backup: !self.no_backup && cfg.backup,
             strip_metadata: self.strip_metadata || cfg.strip_metadata,
+            strip_location: self.strip_location,
             preserve_dates: !self.no_preserve_dates && cfg.preserve_dates,
             output: self.output.clone(),
             allow_larger: self.allow_larger,
@@ -203,6 +215,11 @@ struct OptimiseArgs {
     /// or a score 1–100. Other media use the normal optimiser.
     #[arg(long, value_parser = xpress_core::quality::parse_target, conflicts_with_all = ["max_size", "adaptive"])]
     quality: Option<f64>,
+    /// Make files fit where they're going: discord (20 MB), github (10 MB
+    /// images/video, PNG/GIF/JPEG only) or email (~14 MB, no HEIC). Converts
+    /// formats the destination can't show and compresses to its size limit.
+    #[arg(long = "for", value_parser = xpress_core::share::Target::parse, conflicts_with_all = ["max_size", "adaptive", "quality"])]
+    share_for: Option<xpress_core::share::Target>,
     /// Files, folders or globs to optimise.
     #[arg(required = true)]
     items: Vec<PathBuf>,
@@ -285,6 +302,72 @@ enum PipelineCmd {
         /// Folder path, or the literal "clipboard".
         source: String,
     },
+}
+
+#[derive(Args)]
+struct WebArgs {
+    /// Widths to generate, comma separated (capped at the source width).
+    #[arg(long, default_value = "640,1024,1600,2048", value_delimiter = ',')]
+    widths: Vec<u32>,
+    /// Modern formats to offer before the fallback, comma separated.
+    #[arg(long, default_value = "avif,webp", value_delimiter = ',')]
+    formats: Vec<String>,
+    /// How good the JPEG/PNG/WebP variants must look — visually-lossless,
+    /// high, medium, low or a SSIMULACRA2 score 1–100.
+    #[arg(long, value_parser = xpress_core::quality::parse_target, default_value = "high")]
+    quality: f64,
+    /// The `sizes` attribute: how wide the image is displayed.
+    #[arg(long, default_value = "100vw")]
+    sizes: String,
+    /// The `alt` text.
+    #[arg(long, default_value = "")]
+    alt: String,
+    /// Output directory (default: `<name>-web/` next to each image).
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Images to process.
+    #[arg(required = true)]
+    items: Vec<PathBuf>,
+}
+
+#[derive(Args)]
+struct CheckArgs {
+    /// Recurse into folders.
+    #[arg(short, long)]
+    recursive: bool,
+    /// Restrict to a media kind: image | video | pdf | audio.
+    #[arg(long, value_parser = parse_kind)]
+    kind: Option<MediaKind>,
+    /// Fail for any file larger than this, e.g. 500kb, 2mb.
+    #[arg(long, value_parser = parse_size)]
+    max_size: Option<u64>,
+    /// Fail for files that optimising would shrink by at least this percentage.
+    #[arg(long, default_value_t = 10.0)]
+    min_savings: f64,
+    /// Images: how good "optimised" must still look, as a SSIMULACRA2 target —
+    /// visually-lossless (default), high, medium, low or a score 1–100. A file
+    /// is flagged when it could shrink by --min-savings and still meet it.
+    #[arg(long, value_parser = xpress_core::quality::parse_target, default_value = "visually-lossless")]
+    quality: f64,
+    /// Video/audio/PDF: compression to measure against, 5..100 (default: config).
+    #[arg(long)]
+    compression: Option<i32>,
+    /// Skip files under directories with these names (repeatable), e.g.
+    /// --exclude node_modules --exclude vendor.
+    #[arg(long)]
+    exclude: Vec<String>,
+    /// Output results as JSON.
+    #[arg(long)]
+    json: bool,
+    /// Only print problems and the summary.
+    #[arg(short, long)]
+    quiet: bool,
+    /// Max files processed in parallel (default: number of CPUs).
+    #[arg(short = 'j', long)]
+    jobs: Option<usize>,
+    /// Files or folders to check.
+    #[arg(required = true)]
+    items: Vec<PathBuf>,
 }
 
 #[derive(Args)]
@@ -482,6 +565,8 @@ fn run() -> Result<()> {
             Ok(())
         }
         Command::Bundle => run_bundle(),
+        Command::Web(args) => run_web(args),
+        Command::Check(args) => run_check(args),
         Command::Doctor => {
             render::doctor();
             Ok(())
@@ -571,6 +656,107 @@ fn run_bundle() -> Result<()> {
     Ok(())
 }
 
+fn run_web(args: WebArgs) -> Result<()> {
+    use xpress_core::image::ImageFormat;
+    let formats = args
+        .formats
+        .iter()
+        .map(|f| {
+            ImageFormat::from_str(f).ok_or_else(|| anyhow::anyhow!("unknown image format '{f}'"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let files = collect_files(&args.items, false, &[MediaKind::Image]);
+    if files.is_empty() {
+        bail!("no images found");
+    }
+    let base = OptimiseOptions {
+        use_cache: false,
+        ..Default::default()
+    };
+    for f in &files {
+        let stem = xpress_core::result::file_stem_lossy(f);
+        let out_dir = args.output.clone().unwrap_or_else(|| {
+            f.parent()
+                .unwrap_or(Path::new("."))
+                .join(format!("{stem}-web"))
+        });
+        let web = xpress_core::web::WebOptions {
+            widths: args.widths.clone(),
+            formats: formats.clone(),
+            quality: args.quality,
+            sizes: args.sizes.clone(),
+            alt: args.alt.clone(),
+            out_dir: out_dir.clone(),
+        };
+        let set = xpress_core::web::generate(f, &web, &base)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", f.display()))?;
+        println!(
+            "{} {} ({}) {} {}",
+            render::CHECK,
+            f.display(),
+            render::human_size(set.source_size),
+            render::ARROW,
+            out_dir.display()
+        );
+        for v in &set.variants {
+            println!(
+                "    {:<28} {:>5}×{:<5} {:>10}",
+                v.path.file_name().unwrap_or_default().to_string_lossy(),
+                v.width,
+                v.height,
+                render::human_size(v.size)
+            );
+        }
+        let html_path = out_dir.join(format!("{stem}.html"));
+        std::fs::write(&html_path, &set.html)?;
+        println!(
+            "
+{}",
+            set.html
+        );
+        println!("(saved to {})", html_path.display());
+    }
+    Ok(())
+}
+
+fn run_check(args: CheckArgs) -> Result<()> {
+    let kinds: Vec<MediaKind> = args.kind.into_iter().collect();
+    let files: Vec<PathBuf> = collect_files(&args.items, args.recursive, &kinds)
+        .into_iter()
+        .filter(|f| !check::excluded(f, &args.exclude))
+        .collect();
+    if files.is_empty() {
+        bail!("no media files found to check");
+    }
+    let cfg = xpress_core::config::Config::load();
+    let options = OptimiseOptions {
+        compression: CompressionQuality::new(
+            CompressionTier::Custom,
+            args.compression.unwrap_or(cfg.compression),
+        ),
+        strip_metadata: cfg.strip_metadata,
+        ..Default::default()
+    };
+    let mode = if args.json {
+        render::OutputMode::Json
+    } else if args.quiet {
+        render::OutputMode::Quiet
+    } else {
+        render::OutputMode::Normal
+    };
+    let jobs = files.iter().map(|f| (f.clone(), options.clone())).collect();
+    let quality = args.quality;
+    let results = progress::run_jobs(jobs, mode, args.jobs, |f, o| check::dry_run(f, o, quality));
+    let limits = check::Limits {
+        max_size: args.max_size,
+        min_savings: args.min_savings,
+    };
+    if check::report(&results, &limits, mode) > 0 {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 fn run_optimise(args: OptimiseArgs) -> Result<()> {
     let kinds: Vec<MediaKind> = args.kind.into_iter().collect();
     let files = collect_files(&args.items, args.common.recursive, &kinds);
@@ -593,10 +779,13 @@ fn run_optimise(args: OptimiseArgs) -> Result<()> {
     let max_size = args.max_size;
     let adaptive = args.adaptive;
     let quality = args.quality;
+    let share_for = args.share_for;
     let pdf_dpi = args.pdf_dpi;
     let results = progress::run_jobs(jobs, mode, args.common.jobs, |f, o| {
         let is_image = xpress_core::filetype::classify(f) == Some(MediaKind::Image);
-        if let (Some(target), true) = (quality, is_image) {
+        if let Some(target) = share_for {
+            xpress_core::share::prepare(f, target, o)
+        } else if let (Some(target), true) = (quality, is_image) {
             xpress_core::quality::optimise_to_quality(f, target, o)
         } else if let Some(max) = max_size {
             xpress_core::budget::optimise_to_budget(f, max, o)
@@ -607,9 +796,13 @@ fn run_optimise(args: OptimiseArgs) -> Result<()> {
         }
     });
     render::summarise(&results, mode);
-    if let (Some(max), false) = (max_size, mode == render::OutputMode::Json) {
+    let budget = |r: &xpress_core::result::OptimisationResult| {
+        max_size.or_else(|| share_for.map(|t| t.max_bytes(r.kind)))
+    };
+    if mode != render::OutputMode::Json {
         for (path, r) in &results {
             if let Ok(r) = r {
+                let Some(max) = budget(r) else { continue };
                 if r.new_size > max {
                     eprintln!(
                         "{} {} is still over the {} budget ({}) — the smallest it gets",

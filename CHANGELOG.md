@@ -6,6 +6,50 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`--for discord|github|email`** share presets: converts formats the
+  destination can't show and compresses to its size limit (hard-coded from the
+  services' published limits as of September 2026 — Discord 20 MB, GitHub
+  10 MB images/video, email ~14 MB to survive base64 in Gmail and Outlook).
+  A 20 s 1080p clip came out at 18.8 / 9.1 / 13.5 MB.
+- **`--strip-location`** (and *Remove location* in the desktop app): removes
+  only where a photo or video was taken — the EXIF GPS block is wiped (not just
+  unlinked, so no coordinates linger in the bytes), XMP location fields are
+  dropped, and video `location` metadata is blanked — while camera, date,
+  orientation and colour profile stay. `--strip-metadata` now also removes
+  video metadata (it did nothing for video before).
+- **`xpress web`** — responsive images from one source: several widths
+  (never upscaled) in AVIF and WebP plus a JPEG/PNG fallback at a perceptual
+  quality target, and a ready-to-paste `<picture>` element with `srcset`,
+  `sizes`, `width`/`height` and lazy loading.
+- **`xpress check`** — a read-only CI guard that exits 1 when media files are
+  over `--max-size` or could shrink by `--min-savings` (default 10%). Images are
+  judged against a perceptual target (visually lossless by default), so
+  already-optimised JPEGs pass instead of being flagged forever. Plus a
+  **GitHub Action** (`uses: kwhorne/xpress@…`) that runs it in one step.
+- **Desktop app:** a *Quality target* in Preferences (visually lossless /
+  high / medium / low — the smallest image that still looks that good, with the
+  SSIMULACRA2 score on the result card) and a *Skip already-optimised files*
+  toggle. The compression slider is disabled while a quality target is set.
+
+### Fixed
+- Sizes are shown in decimal units (1 KB = 1000 bytes), matching how they are
+  parsed — `--max-size 300kb` used to be reported as "293.0 KB".
+- Desktop app: `⇧` in the hotkey hints and `→` on result cards rendered as
+  boxes; the macOS Apple Symbols font is now a fallback.
+- Desktop app: sidebar items are now exposed to screen readers (VoiceOver).
+
+### Changed
+- **JPEG encoding uses mozjpeg** (progressive, trellis quantisation, optimised
+  Huffman; baseline inside PDFs). At equal perceptual quality (SSIMULACRA2 85 /
+  75) photos and screenshots came out 35–61% smaller than with 0.4.9's encoder;
+  one synthetic image of saturated coloured edges gained only ~5% (and at 85 its
+  original is kept). High settings (quality ≥ 90) keep full-resolution chroma,
+  and the gentlest compression factors now reach JPEG quality 98.
+- The macOS release tarball's `xpress` and `xpress-gui` binaries (also what
+  `xpress update` installs) are now Developer ID signed with the hardened
+  runtime and notarised, like the `.app`/`.dmg`; they used to be ad-hoc signed.
+
 ## [0.4.9] - 2026-09-24
 
 ### Added

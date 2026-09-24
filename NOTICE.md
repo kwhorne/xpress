@@ -26,12 +26,16 @@ so the binaries themselves can be distributed under MIT:
 | exoquant             | PNG palette (with alpha)   | MIT                |
 | oxipng               | lossless PNG squeeze       | MIT                |
 | image / zune-jpeg    | decode/encode, JPEG        | MIT OR Apache-2.0  |
+| mozjpeg (mozjpeg-sys)| JPEG encoding              | IJG AND BSD-3-Clause AND Zlib |
 | libwebp (libwebp-sys)| lossy WebP                 | BSD-3-Clause       |
 | ravif / rav1e        | AVIF                       | BSD-3 / BSD-2      |
 | lopdf                | PDF                        | MIT                |
 | qcms                 | ICC -> sRGB (AVIF)         | MIT                |
 | ssimulacra2          | `--quality` metric         | BSD-2-Clause       |
 | xattr                | "already optimised" marks  | MIT OR Apache-2.0  |
+
+JPEG encoding: this software is based in part on the work of the Independent
+JPEG Group (via mozjpeg / libjpeg-turbo).
 
 (Earlier releases linked `libimagequant`, which is GPL-3.0; it has been
 replaced.) The full dependency licence list is available via

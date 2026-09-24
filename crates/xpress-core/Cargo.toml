@@ -22,6 +22,9 @@ lopdf = { version = "0.45", default-features = false }
 ureq = "2"
 # Pure-Rust image engine (no external binaries needed for images).
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "tiff", "webp", "avif"] }
+# mozjpeg (IJG licence): progressive, trellis-quantised JPEG, markedly smaller
+# than the image crate's baseline encoder. No nasm needed (SIMD on arm64 only).
+mozjpeg = { version = "0.10", default-features = false, features = ["parallel"] }
 # Lossy WebP (libwebp, BSD-3-Clause); the image crate only writes lossless WebP.
 webp = { version = "0.3", default-features = false }
 quantette = { version = "0.6", default-features = false, features = ["kmeans", "threads", "image"] }
@@ -58,3 +61,6 @@ xattr = "1"
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = "1"
+
+[target.'cfg(target_arch = "aarch64")'.dependencies]
+mozjpeg = { version = "0.10", default-features = false, features = ["parallel", "with_simd"] }

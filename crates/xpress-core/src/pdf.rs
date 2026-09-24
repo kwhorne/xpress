@@ -394,14 +394,11 @@ pub fn optimise(
             Some((w, h)) => img.resize_exact(w, h, image::imageops::FilterType::Lanczos3),
             None => img,
         };
-        let mut buf = Vec::new();
-        // `write_with_encoder` keeps the colour type (a gray image stays a
-        // 1-component JPEG); `encode_image` would always write RGB.
-        let encoded = img
-            .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
-                &mut buf, quality,
-            ))
-            .is_ok();
+        // Baseline (not progressive) for the widest PDF-reader support; gray
+        // images stay 1-component.
+        let buf = crate::image::encode_jpeg(&img, quality, &Default::default(), false)
+            .unwrap_or_default();
+        let encoded = !buf.is_empty();
         // A downsampled image is always used; a same-size one only if smaller.
         if !encoded || buf.is_empty() || (resize.is_none() && buf.len() >= stream.content.len()) {
             continue;

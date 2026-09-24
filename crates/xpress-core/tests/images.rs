@@ -586,3 +586,65 @@ fn convert_to_avif_with_foreign_profile_works() {
     let r = ximage::convert(&f, ImageFormat::Avif, &opts()).unwrap();
     assert_eq!(&std::fs::read(&r.output).unwrap()[4..12], b"ftypavif");
 }
+
+/// EXIF with Make = "Test", orientation 1 and a GPS IFD holding a latitude.
+fn exif_with_gps() -> Vec<u8> {
+    let mut v = b"II*\0".to_vec();
+    v.extend(8u32.to_le_bytes());
+    v.extend(3u16.to_le_bytes());
+    for (tag, ty, count, value) in [
+        (0x010Fu16, 2u16, 5u32, 50u32), // Make -> "Test\0" at 50
+        (0x0112, 3, 1, 1),              // Orientation = 1
+        (0x8825, 4, 1, 56),             // GPS IFD at 56
+    ] {
+        v.extend(tag.to_le_bytes());
+        v.extend(ty.to_le_bytes());
+        v.extend(count.to_le_bytes());
+        v.extend(value.to_le_bytes());
+    }
+    v.extend(0u32.to_le_bytes());
+    v.extend(b"Test\0\0");
+    v.extend(1u16.to_le_bytes());
+    v.extend(2u16.to_le_bytes()); // GPSLatitude
+    v.extend(5u16.to_le_bytes()); // RATIONAL
+    v.extend(3u32.to_le_bytes());
+    v.extend(74u32.to_le_bytes());
+    v.extend(0u32.to_le_bytes());
+    for n in [59u32, 1, 54, 1, 3012, 100] {
+        v.extend(n.to_le_bytes());
+    }
+    v
+}
+
+#[test]
+fn strip_location_removes_gps_but_keeps_camera_and_icc() {
+    let dir = tmpdir("strip-location");
+    let f = dir.join("trip.jpg");
+    let file = std::fs::File::create(&f).unwrap();
+    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 98);
+    enc.set_icc_profile(FAKE_ICC.to_vec()).unwrap();
+    enc.set_exif_metadata(exif_with_gps()).unwrap();
+    photo(64, 32).write_with_encoder(enc).unwrap();
+
+    let o = OptimiseOptions {
+        strip_location: true,
+        allow_larger: true,
+        ..opts()
+    };
+    let r = ximage::optimise(&f, &o).unwrap();
+
+    let (_, _, icc, exif) = inspect(&r.output);
+    let exif = exif.expect("EXIF kept");
+    assert!(contains(&exif, b"Test"), "camera make kept");
+    assert!(
+        !contains(&exif, &0x8825u16.to_le_bytes()),
+        "GPS pointer gone"
+    );
+    assert!(!contains(&exif, &3012u32.to_le_bytes()), "coordinates gone");
+    assert_eq!(icc.as_deref(), Some(FAKE_ICC));
+    // The whole file, not just the parsed block, is free of the latitude.
+    assert!(!contains(
+        &std::fs::read(&r.output).unwrap(),
+        &3012u32.to_le_bytes()
+    ));
+}

@@ -16,14 +16,17 @@ pub mod filetype;
 pub mod image;
 pub mod pdf;
 pub mod pipeline;
+pub mod privacy;
 pub mod quality;
 pub mod result;
 pub mod scale;
+pub mod share;
 pub mod store;
 pub mod template;
 pub mod tools;
 pub mod update;
 pub mod video;
+pub mod web;
 
 use std::path::{Path, PathBuf};
 

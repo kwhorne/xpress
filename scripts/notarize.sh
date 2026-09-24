@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 #
-# Notarise and staple a macOS .app (or .dmg) with Apple's notary service.
+# Notarise and staple a macOS .app (or .dmg) with Apple's notary service. A
+# .zip of standalone executables is submitted as is; those can't be stapled,
+# so Gatekeeper looks the ticket up online instead.
 #
 # Usage:
-#   scripts/notarize.sh <path-to-.app-or-.dmg>
+#   scripts/notarize.sh <path-to-.app-.dmg-or-.zip>
 #
 # Credentials (choose one), provided via environment:
 #
@@ -21,7 +23,7 @@
 
 set -euo pipefail
 
-target="${1:?usage: notarize.sh <path-to-.app-or-.dmg>}"
+target="${1:?usage: notarize.sh <path-to-.app-.dmg-or-.zip>}"
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "notarize.sh only runs on macOS" >&2
   exit 1
@@ -53,6 +55,11 @@ fi
 
 echo "==> Submitting $submit to the notary service…"
 xcrun notarytool submit "$submit" "${cred[@]}" --wait
+
+if [[ "$target" == *.zip ]]; then
+  echo "==> Notarised ✓ (a zip can't be stapled; Gatekeeper checks online)"
+  exit 0
+fi
 
 echo "==> Stapling ticket to $target"
 xcrun stapler staple "$target"
