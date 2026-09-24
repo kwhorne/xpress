@@ -70,6 +70,8 @@ pub struct OptimiseOptions {
     pub backup: bool,
     /// Strip non-essential metadata.
     pub strip_metadata: bool,
+    /// Remove only where a photo/video was taken (GPS), keeping the rest.
+    pub strip_location: bool,
     /// Preserve original creation/modification timestamps on the output.
     pub preserve_dates: bool,
     /// Optional explicit output path. When `None`, the file is optimised in place.
@@ -87,6 +89,7 @@ impl Default for OptimiseOptions {
             compression: crate::compression::CompressionQuality::normal(),
             backup: true,
             strip_metadata: false,
+            strip_location: false,
             preserve_dates: true,
             output: None,
             allow_larger: false,

@@ -32,7 +32,8 @@ Most commands accept these shared options:
 | `-r, --recursive` | Recurse into folders |
 | `--compression <5..100>` | How hard to compress: 5 = best quality, 100 = smallest. Default 30 |
 | `-a, --aggressive` | Use the aggressive preset (factor 64) |
-| `--strip-metadata` | Strip non-essential metadata |
+| `--strip-metadata` | Strip non-essential metadata (EXIF/XMP; the colour profile stays) |
+| `--strip-location` | Remove only where it was taken — GPS in EXIF, location in XMP and video metadata — keeping camera, date, orientation and colour profile |
 | `--no-preserve-dates` | Don't preserve original timestamps |
 | `--no-backup` | Don't write a `.<name>.orig` backup |
 | `--allow-larger` | Keep the result even if it is larger than the input |

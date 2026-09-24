@@ -113,6 +113,10 @@ struct CommonOpts {
     /// Strip non-essential metadata.
     #[arg(long)]
     strip_metadata: bool,
+    /// Remove only where it was taken (GPS / location), keeping camera, date,
+    /// orientation and colour profile. Handy before sharing.
+    #[arg(long)]
+    strip_location: bool,
     /// Do not preserve original timestamps.
     #[arg(long)]
     no_preserve_dates: bool,
@@ -180,6 +184,7 @@ impl CommonOpts {
             compression: self.compression_quality(&cfg),
             backup: !self.no_backup && cfg.backup,
             strip_metadata: self.strip_metadata || cfg.strip_metadata,
+            strip_location: self.strip_location,
             preserve_dates: !self.no_preserve_dates && cfg.preserve_dates,
             output: self.output.clone(),
             allow_larger: self.allow_larger,

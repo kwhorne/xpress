@@ -7,6 +7,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`--strip-location`** (and *Remove location* in the desktop app): removes
+  only where a photo or video was taken — the EXIF GPS block is wiped (not just
+  unlinked, so no coordinates linger in the bytes), XMP location fields are
+  dropped, and video `location` metadata is blanked — while camera, date,
+  orientation and colour profile stay. `--strip-metadata` now also removes
+  video metadata (it did nothing for video before).
 - **`xpress web`** — responsive images from one source: several widths
   (never upscaled) in AVIF and WebP plus a JPEG/PNG fallback at a perceptual
   quality target, and a ready-to-paste `<picture>` element with `srcset`,

@@ -28,6 +28,8 @@ const ATTR: &str = if cfg!(target_os = "linux") {
 struct Mark {
     factor: i32,
     strip: bool,
+    /// Location removed (implied by `strip`).
+    location: bool,
     /// PDF downsampling DPI (0 = none).
     dpi: i32,
     len: u64,
@@ -37,8 +39,8 @@ struct Mark {
 impl Mark {
     fn encode(&self) -> String {
         format!(
-            "v1 f={} s={} d={} len={} crc={:08x}",
-            self.factor, self.strip as u8, self.dpi, self.len, self.crc
+            "v1 f={} s={} d={} len={} crc={:08x} l={}",
+            self.factor, self.strip as u8, self.dpi, self.len, self.crc, self.location as u8
         )
     }
 
@@ -48,22 +50,31 @@ impl Mark {
             return None;
         }
         let mut field = |key: &str| it.next()?.strip_prefix(key).map(str::to_owned);
+        let factor = field("f=")?.parse().ok()?;
+        let strip = field("s=")? == "1";
+        let dpi = field("d=")?.parse().ok()?;
+        let len = field("len=")?.parse().ok()?;
+        let crc = u32::from_str_radix(&field("crc=")?, 16).ok()?;
+        // Added later: older markers have no `l=` field.
+        let location = field("l=").is_some_and(|v| v == "1");
         Some(Mark {
-            factor: field("f=")?.parse().ok()?,
-            strip: field("s=")? == "1",
-            dpi: field("d=")?.parse().ok()?,
-            len: field("len=")?.parse().ok()?,
-            crc: u32::from_str_radix(&field("crc=")?, 16).ok()?,
+            factor,
+            strip,
+            location,
+            dpi,
+            len,
+            crc,
         })
     }
 
     /// Whether a file optimised with this mark needs nothing more for a request.
-    fn covers(&self, factor: i32, strip: bool, dpi: Option<i32>) -> bool {
+    fn covers(&self, factor: i32, strip: bool, location: bool, dpi: Option<i32>) -> bool {
         let dpi_ok = match dpi {
             None => true,
             Some(want) => self.dpi != 0 && self.dpi <= want,
         };
-        self.factor >= factor && (self.strip || !strip) && dpi_ok
+        let location_ok = self.strip || self.location || !location;
+        self.factor >= factor && (self.strip || !strip) && location_ok && dpi_ok
     }
 }
 
@@ -101,7 +112,12 @@ pub fn is_optimised(path: &Path, options: &OptimiseOptions, pdf_dpi: Option<i32>
     let Some(mark) = read_mark(path) else {
         return false;
     };
-    if !mark.covers(options.compression.factor, options.strip_metadata, pdf_dpi) {
+    if !mark.covers(
+        options.compression.factor,
+        options.strip_metadata,
+        options.strip_location,
+        pdf_dpi,
+    ) {
         return false;
     }
     // Cheap size check first; only hash when it could still match.
@@ -118,6 +134,7 @@ pub fn mark(path: &Path, options: &OptimiseOptions, pdf_dpi: Option<i32>) {
         let m = Mark {
             factor: options.compression.factor,
             strip: options.strip_metadata,
+            location: options.strip_location,
             dpi: pdf_dpi.unwrap_or(0),
             len,
             crc,
@@ -137,6 +154,7 @@ mod tests {
         let m = Mark {
             factor: 64,
             strip: true,
+            location: false,
             dpi: 150,
             len: 12345,
             crc: 0xdead_beef,
@@ -150,17 +168,42 @@ mod tests {
         let m = Mark {
             factor: 50,
             strip: false,
+            location: false,
             dpi: 0,
             len: 1,
             crc: 1,
         };
-        assert!(m.covers(30, false, None), "already compressed harder");
-        assert!(m.covers(50, false, None));
-        assert!(!m.covers(64, false, None), "asked for more compression");
-        assert!(!m.covers(30, true, None), "asked to strip metadata");
-        assert!(!m.covers(30, false, Some(150)), "asked to downsample");
+        assert!(
+            m.covers(30, false, false, None),
+            "already compressed harder"
+        );
+        assert!(m.covers(50, false, false, None));
+        assert!(
+            !m.covers(64, false, false, None),
+            "asked for more compression"
+        );
+        assert!(!m.covers(30, true, false, None), "asked to strip metadata");
+        assert!(!m.covers(30, false, true, None), "asked to remove location");
+        let loc = Mark {
+            location: true,
+            ..m
+        };
+        assert!(loc.covers(30, false, true, None));
+        assert!(
+            !loc.covers(30, true, false, None),
+            "location only isn't everything"
+        );
+        assert_eq!(
+            Mark::decode("v1 f=30 s=0 d=0 len=1 crc=00000001").map(|m| m.location),
+            Some(false),
+            "older markers without l= still parse"
+        );
+        assert!(
+            !m.covers(30, false, false, Some(150)),
+            "asked to downsample"
+        );
         let d = Mark { dpi: 144, ..m };
-        assert!(d.covers(30, false, Some(150)));
-        assert!(!d.covers(30, false, Some(96)));
+        assert!(d.covers(30, false, false, Some(150)));
+        assert!(!d.covers(30, false, false, Some(96)));
     }
 }

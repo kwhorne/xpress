@@ -310,11 +310,11 @@ fn encode_png(img: &DynamicImage, meta: &Meta) -> Result<Vec<u8>, OptimiseError>
     })
 }
 
-/// Write `src` as lossless WebP (with its metadata, minus EXIF/XMP if `strip`).
+/// Write `src` as lossless WebP (with its metadata, per the `strip` policy).
 pub(crate) fn write_lossless_webp(
     src: &Path,
     out: &Path,
-    strip: bool,
+    strip: Strip,
 ) -> Result<(), OptimiseError> {
     let (img, meta) = load(src)?;
     save_with_meta(&img, out, &meta_for(meta, strip))
@@ -491,16 +491,45 @@ pub fn convert_to_srgb(img: &DynamicImage, icc: &[u8]) -> Option<DynamicImage> {
     }
 }
 
-/// Drop EXIF and XMP when the user asked to strip metadata (ICC stays).
-fn meta_for(meta: Meta, strip: bool) -> Meta {
-    if strip {
-        Meta {
+/// Which metadata to drop when re-encoding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Strip {
+    Keep,
+    /// Only where it was taken (GPS / XMP location).
+    Location,
+    /// EXIF and XMP (the colour profile always stays).
+    All,
+}
+
+impl Strip {
+    pub fn from_options(options: &OptimiseOptions) -> Strip {
+        if options.strip_metadata {
+            Strip::All
+        } else if options.strip_location {
+            Strip::Location
+        } else {
+            Strip::Keep
+        }
+    }
+}
+
+/// Apply the strip policy (ICC always stays: it's colour-critical).
+fn meta_for(meta: Meta, strip: Strip) -> Meta {
+    match strip {
+        Strip::Keep => meta,
+        Strip::All => Meta {
             icc: meta.icc,
             exif: None,
             xmp: None,
-        }
-    } else {
-        meta
+        },
+        Strip::Location => Meta {
+            icc: meta.icc,
+            exif: meta.exif.map(|mut e| {
+                crate::privacy::strip_gps(&mut e);
+                e
+            }),
+            xmp: meta.xmp.map(|x| crate::privacy::strip_xmp_location(&x)),
+        },
     }
 }
 
@@ -520,7 +549,7 @@ pub fn optimise(
     let tmp = TempDir::new()?;
     let temp_out = tmp.path().join(file_name_lossy(path));
 
-    let strip = options.strip_metadata;
+    let strip = Strip::from_options(options);
     match ext.as_str() {
         _ if is_animated(path) => optimise_animated(path, &ext, &temp_out, cq)?,
         "png" => optimise_png(path, &temp_out, cq, strip)?,
@@ -558,7 +587,7 @@ fn optimise_png(
     src: &Path,
     out: &Path,
     cq: CompressionQuality,
-    strip: bool,
+    strip: Strip,
 ) -> Result<(), OptimiseError> {
     let (img, meta) = load(src)?;
     let meta = meta_for(meta, strip);
@@ -683,7 +712,7 @@ fn optimise_jpeg(
     src: &Path,
     out: &Path,
     cq: CompressionQuality,
-    strip: bool,
+    strip: Strip,
 ) -> Result<(), OptimiseError> {
     let (img, meta) = load(src)?;
     let q = cq.jpeg_max_quality().clamp(1, 100) as u8;
@@ -691,7 +720,7 @@ fn optimise_jpeg(
 }
 
 /// Decode and re-encode a still image in the same format (GIF/BMP/TIFF).
-fn reencode(src: &Path, out: &Path, strip: bool) -> Result<(), OptimiseError> {
+fn reencode(src: &Path, out: &Path, strip: Strip) -> Result<(), OptimiseError> {
     let (img, meta) = load(src)?;
     save_with_meta(&img, out, &meta_for(meta, strip))
 }
@@ -1005,7 +1034,7 @@ pub fn convert(
     // decode them to a temporary PNG first; everything downstream reads that.
     let work_src = readable_source(path, &tmp)?;
 
-    let strip = options.strip_metadata;
+    let strip = Strip::from_options(options);
     match format {
         ImageFormat::Png => optimise_png(&work_src, &temp_out, cq, strip)?,
         ImageFormat::Jpeg => optimise_jpeg(&work_src, &temp_out, cq, strip)?,

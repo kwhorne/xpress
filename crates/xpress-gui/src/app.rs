@@ -77,6 +77,7 @@ pub struct XpressApp {
     aggressive: bool,
     backup: bool,
     strip_metadata: bool,
+    strip_location: bool,
     /// Index into [`QUALITY_TARGETS`].
     quality_target: usize,
     skip_optimised: bool,
@@ -145,6 +146,7 @@ impl XpressApp {
             aggressive: false,
             backup: true,
             strip_metadata: false,
+            strip_location: false,
             quality_target: 0,
             skip_optimised: true,
             always_on_top: false,
@@ -205,6 +207,7 @@ impl XpressApp {
             compression,
             backup: self.backup,
             strip_metadata: self.strip_metadata,
+            strip_location: self.strip_location,
             preserve_dates: true,
             output: None,
             allow_larger: false,
@@ -700,6 +703,17 @@ impl XpressApp {
                 "Remove EXIF (camera, location, date)",
                 |ui| {
                     toggle(ui, &mut self.strip_metadata);
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Remove location",
+                "Drop GPS / where it was taken, keep the rest",
+                |ui| {
+                    ui.add_enabled_ui(!self.strip_metadata, |ui| {
+                        toggle(ui, &mut self.strip_location);
+                    });
                 },
             );
         });
@@ -1533,6 +1547,7 @@ mod tests {
         assert_eq!(h.state().tab, Tab::Settings);
         assert!(h.query_by_label("Quality target").is_some());
         assert!(h.query_by_label("Skip already-optimised files").is_some());
+        assert!(h.query_by_label("Remove location").is_some());
 
         h.get_by_label("About").click();
         h.run();

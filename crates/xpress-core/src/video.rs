@@ -19,6 +19,27 @@ use crate::tools::{self, Tool};
 pub const HDR_TO_SDR: &str = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,\
      tonemap=tonemap=mobius:param=0.5:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
 
+/// ffmpeg output args for the metadata policy: `--strip-metadata` drops all
+/// global metadata; `--strip-location` blanks only where it was recorded
+/// (QuickTime/MP4 `location` and Apple's ISO 6709 key).
+pub fn metadata_args(options: &OptimiseOptions) -> Vec<String> {
+    let s = |v: &str| v.to_string();
+    if options.strip_metadata {
+        vec![s("-map_metadata"), s("-1")]
+    } else if options.strip_location {
+        [
+            "location",
+            "location-eng",
+            "com.apple.quicktime.location.ISO6709",
+        ]
+        .iter()
+        .flat_map(|k| [s("-metadata"), format!("{k}=")])
+        .collect()
+    } else {
+        Vec::new()
+    }
+}
+
 /// Whether ffmpeg's stream banner (its `-i` output) shows an HDR video stream,
 /// i.e. a PQ (`smpte2084`) or HLG (`arib-std-b67`) transfer.
 pub fn describes_hdr(ffmpeg_stderr: &str) -> bool {
@@ -157,6 +178,7 @@ pub fn encode_to_bitrate(
     out: &Path,
     plan: &BitratePlan,
     hdr: bool,
+    options: &OptimiseOptions,
 ) -> Result<(), OptimiseError> {
     let tmp = TempDir::new()?;
     let log = tmp.path().join("x264");
@@ -206,6 +228,7 @@ pub fn encode_to_bitrate(
             Some(a) => pass2.extend([s("-c:a"), s("aac"), s("-b:a"), format!("{a}k")]),
             None => pass2.push(s("-an")),
         }
+        pass2.extend(metadata_args(options));
         pass2.extend([s("-movflags"), s("+faststart")]);
         pass2.push(out.display().to_string());
 
@@ -422,6 +445,7 @@ pub fn convert_codec(
         if !webm {
             args.extend(["-movflags", "+faststart"].map(String::from));
         }
+        args.extend(metadata_args(options));
         args.extend(["-hide_banner", "-nostats"].map(String::from));
         args.push(temp_out.display().to_string());
         args
@@ -609,6 +633,7 @@ pub fn optimise_with_filter(
         if !reencode_audio {
             args.extend(["-c:a", "copy", "-map", "0:v", "-map", "0:a?"].map(String::from));
         }
+        args.extend(metadata_args(options));
         args.extend(["-movflags", "+faststart", "-hide_banner", "-nostats"].map(String::from));
         args.push(temp_out.display().to_string());
         args

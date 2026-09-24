@@ -36,7 +36,7 @@ pub fn optimise_to_budget(
 
     let tmp = tempfile::TempDir::new()?;
     let by_rate = match kind {
-        MediaKind::Video => video_to_budget(path, max_bytes, tmp.path())?,
+        MediaKind::Video => video_to_budget(path, max_bytes, base, tmp.path())?,
         MediaKind::Audio => audio_to_budget(path, max_bytes, base, tmp.path())?,
         _ => None,
     };
@@ -75,6 +75,7 @@ pub fn optimise_to_budget(
 fn video_to_budget(
     path: &Path,
     max_bytes: u64,
+    base: &OptimiseOptions,
     tmp: &Path,
 ) -> Result<Option<PathBuf>, OptimiseError> {
     let Some(info) = crate::video::probe(path) else {
@@ -89,7 +90,7 @@ fn video_to_budget(
     let mut last_over_kbps: Option<u32> = None;
     for attempt in 0..4 {
         let out = tmp.join(format!("rate{attempt}.mp4"));
-        crate::video::encode_to_bitrate(path, &out, &plan, info.hdr)?;
+        crate::video::encode_to_bitrate(path, &out, &plan, info.hdr, base)?;
         let size = file_size(&out);
         if smallest.as_ref().is_none_or(|(_, b)| size < *b) {
             smallest = Some((out.clone(), size));

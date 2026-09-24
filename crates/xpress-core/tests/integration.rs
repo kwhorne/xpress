@@ -517,6 +517,38 @@ fn budget_already_met_just_optimises() {
 }
 
 #[test]
+fn video_strip_location_blanks_location_metadata() {
+    common::install_stubs();
+    let dir = tmpdir("video-location");
+    let f = dir.join("walk.mov");
+    common::write_dummy(&f, 8000);
+    let o = OptimiseOptions {
+        strip_location: true,
+        ..opts()
+    };
+    video::optimise(&f, &o).unwrap();
+    let log = ffmpeg_log(&f);
+    let encode = log.lines().find(|l| l.contains("-vcodec")).unwrap();
+    assert!(encode.contains("-metadata location= "), "{encode}");
+    assert!(encode.contains("-metadata com.apple.quicktime.location.ISO6709="));
+    assert!(!encode.contains("-map_metadata"));
+}
+
+#[test]
+fn video_strip_metadata_drops_all_global_metadata() {
+    common::install_stubs();
+    let dir = tmpdir("video-strip-all");
+    let f = dir.join("walk.mov");
+    common::write_dummy(&f, 8000);
+    let o = OptimiseOptions {
+        strip_metadata: true,
+        ..opts()
+    };
+    video::optimise(&f, &o).unwrap();
+    assert!(ffmpeg_log(&f).contains("-map_metadata -1"));
+}
+
+#[test]
 fn downscale_image_by_factor() {
     common::install_stubs();
     let dir = tmpdir("scale");

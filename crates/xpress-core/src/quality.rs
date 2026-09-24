@@ -216,7 +216,7 @@ pub fn convert_to_quality(
         // survive at high targets; lossless WebP always meets the target.
         None if format == ImageFormat::Webp => {
             let out = tmp.path().join("lossless.webp");
-            ximage::write_lossless_webp(path, &out, base.strip_metadata)?;
+            ximage::write_lossless_webp(path, &out, ximage::Strip::from_options(base))?;
             if file_size(&out) > old_size {
                 return Err(OptimiseError::Other(format!(
                     "webp only reaches quality {target} losslessly, which is larger than the \
