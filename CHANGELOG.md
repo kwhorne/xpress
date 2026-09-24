@@ -7,6 +7,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Already-optimised files are skipped.** `optimise` marks each result with an
+  extended attribute (settings + CRC32 of the content); re-running over a
+  folder skips unchanged files that were optimised at least as hard — instantly
+  and without piling up generation loss. `--force` re-processes; `--json`
+  reports `"cached"`.
 - `--smart-crop` (and `smart: true` in pipelines) now works for images: a
   pure-Rust saliency crop (edges, saturation, skin tones) picks the most
   interesting region instead of the centre. It previously did nothing.

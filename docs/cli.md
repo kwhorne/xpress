@@ -39,14 +39,24 @@ Most commands accept these shared options:
 | `-o, --output <PATH>` | Output file (single input) or directory (multiple inputs) |
 | `-j, --jobs <N>` | Max files processed in parallel (default: number of CPUs) |
 | `--timeout <SECS>` | Kill any single tool running longer than this (0 = no limit) |
+| `--force` | Re-process files already marked as optimised (see below) |
 
 While a batch runs in a terminal, a live spinner shows `[done/total]` and elapsed
 time; it is suppressed under `--quiet`/`--json` or when output is piped.
 
 Originals are backed up next to the file as `.<name>.orig` unless `--no-backup`.
 Compression is a single percentage that each encoder maps to its native quality
-knob (jpegoptim `--max`, pngquant `--quality`, gifsicle `-O/--lossy`, libx264
-CRF/preset, audio bitrate).
+knob (JPEG quality, PNG palette size and quality floor, libx264 CRF/preset,
+audio bitrate).
+
+**Already-optimised files are skipped.** After `optimise`, each file gets an
+extended attribute (`com.xpress.optimised`, or `user.xpress.optimised` on Linux)
+recording the settings and a CRC32 of its content. Re-running over the same
+folder skips files whose content is unchanged and that were optimised at least
+as hard — instantly, and without re-encoding (which would only add generation
+loss). Editing a file, asking for more compression, `--strip-metadata` or a
+lower `--pdf-dpi` makes it run again; `--force` always does. On filesystems
+without extended attributes nothing is cached.
 
 ## optimise
 

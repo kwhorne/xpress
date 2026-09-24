@@ -130,6 +130,10 @@ struct CommonOpts {
     /// Kill any single tool that runs longer than this many seconds (0 = no limit).
     #[arg(long)]
     timeout: Option<u64>,
+    /// Re-process files even if they are marked as already optimised with
+    /// these settings.
+    #[arg(long)]
+    force: bool,
 }
 
 impl CommonOpts {
@@ -172,6 +176,7 @@ impl CommonOpts {
             preserve_dates: !self.no_preserve_dates && cfg.preserve_dates,
             output: self.output.clone(),
             allow_larger: self.allow_larger,
+            use_cache: !self.force,
         }
     }
 }

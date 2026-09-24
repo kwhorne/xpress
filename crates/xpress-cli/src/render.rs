@@ -59,6 +59,7 @@ fn summarise_json(results: &[(PathBuf, Result<OptimisationResult, OptimiseError>
                 "saved_percent": (r.saved_percent() * 100.0).round() / 100.0,
                 "aggressive": r.aggressive,
                 "improved": r.improved(),
+                "cached": r.cached,
             }),
             Err(e) => serde_json::json!({
                 "source": path.display().to_string(),
@@ -87,15 +88,25 @@ pub fn summarise(
     let mut total_new = 0u64;
     let mut ok = 0usize;
     let mut failed = 0usize;
+    let mut skipped = 0usize;
 
     for (path, res) in results {
         match res {
             Ok(r) => {
                 total_old += r.old_size;
                 total_new += r.new_size;
-                ok += 1;
+                if r.cached {
+                    skipped += 1;
+                } else {
+                    ok += 1;
+                }
                 if quiet {
                     // no per-file lines in quiet mode
+                } else if r.cached {
+                    println!(
+                        "{WARN} {} already optimised with these settings — skipped (--force to redo)",
+                        path.display(),
+                    );
                 } else if r.improved() {
                     println!(
                         "{CHECK} {} {ARROW} {}  ({} {ARROW} {}, -{:.0}%){}",
@@ -137,8 +148,13 @@ pub fn summarise(
     } else {
         0.0
     };
+    let skipped = if skipped > 0 {
+        format!(", {skipped} already optimised")
+    } else {
+        String::new()
+    };
     println!(
-        "\n{ok} optimised, {failed} failed — saved {} ({:.0}%)",
+        "\n{ok} optimised{skipped}, {failed} failed — saved {} ({:.0}%)",
         human_size(saved),
         pct
     );

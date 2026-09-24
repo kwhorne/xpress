@@ -35,6 +35,9 @@ pub struct OptimisationResult {
     pub new_size: u64,
     /// Whether the aggressive compression preset was used.
     pub aggressive: bool,
+    /// Skipped because the file was already optimised with these settings
+    /// (see [`crate::cache`]).
+    pub cached: bool,
 }
 
 impl OptimisationResult {
@@ -70,6 +73,9 @@ pub struct OptimiseOptions {
     pub output: Option<PathBuf>,
     /// Allow the result to be written even if it is larger than the original.
     pub allow_larger: bool,
+    /// Skip files already optimised with these settings, and mark new results
+    /// (see [`crate::cache`]). Turn off to force a re-run.
+    pub use_cache: bool,
 }
 
 impl Default for OptimiseOptions {
@@ -81,6 +87,7 @@ impl Default for OptimiseOptions {
             preserve_dates: true,
             output: None,
             allow_larger: false,
+            use_cache: true,
         }
     }
 }
@@ -245,6 +252,7 @@ pub fn unchanged(
         old_size,
         new_size: old_size,
         aggressive,
+        cached: false,
     }
 }
 
@@ -292,6 +300,7 @@ pub fn finish(
         old_size,
         new_size,
         aggressive,
+        cached: false,
     })
 }
 

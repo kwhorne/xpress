@@ -49,3 +49,10 @@ objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
 # them to the per-user bundle dir on first run. Off by default so the crate
 # builds without any vendored binaries present.
 embed-tools = ["dep:include_dir"]
+
+[target.'cfg(unix)'.dependencies]
+# "Already optimised" markers stored as extended attributes (see cache.rs).
+xattr = "1"
+
+[target.'cfg(unix)'.dev-dependencies]
+xattr = "1"

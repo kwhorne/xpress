@@ -222,6 +222,7 @@ impl XpressApp {
             preserve_dates: true,
             output: None,
             allow_larger: false,
+            use_cache: true,
         }
     }
 

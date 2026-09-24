@@ -6721,6 +6721,7 @@ dependencies = [
  "walkdir",
  "webp",
  "which",
+ "xattr",
 ]
 
 [[package]]
