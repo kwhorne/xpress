@@ -419,3 +419,170 @@ fn crop_file_smart_ratio_keeps_the_subject() {
         "smart crop contains the detailed subject"
     );
 }
+
+const XMP: &[u8] = br#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="5"/></rdf:RDF></x:xmpmeta>"#;
+
+fn xmp_of(path: &Path) -> Option<Vec<u8>> {
+    image::ImageReader::open(path)
+        .unwrap()
+        .with_guessed_format()
+        .unwrap()
+        .into_decoder()
+        .unwrap()
+        .xmp_metadata()
+        .unwrap()
+}
+
+/// Write a JPEG with an XMP packet by splicing an APP1 segment after SOI.
+fn write_jpeg_with_xmp(path: &Path, img: &DynamicImage) {
+    let mut jpeg = Vec::new();
+    img.write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+        &mut jpeg, 98,
+    ))
+    .unwrap();
+    let ns = b"http://ns.adobe.com/xap/1.0/\0";
+    let len = (2 + ns.len() + XMP.len()) as u16;
+    let mut out = jpeg[..2].to_vec();
+    out.extend_from_slice(&[0xFF, 0xE1]);
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(ns);
+    out.extend_from_slice(XMP);
+    out.extend_from_slice(&jpeg[2..]);
+    std::fs::write(path, out).unwrap();
+}
+
+#[test]
+fn xmp_survives_jpeg_png_and_webp() {
+    let dir = tmpdir("xmp");
+    let f = dir.join("rated.jpg");
+    write_jpeg_with_xmp(&f, &photo(96, 64));
+    assert_eq!(xmp_of(&f).as_deref(), Some(XMP), "fixture carries XMP");
+
+    let jpg = ximage::optimise(
+        &f,
+        &OptimiseOptions {
+            output: Some(dir.join("out.jpg")),
+            allow_larger: true,
+            ..opts()
+        },
+    )
+    .unwrap();
+    assert_eq!(xmp_of(&jpg.output).as_deref(), Some(XMP), "JPEG keeps XMP");
+
+    let png = ximage::convert(&f, ImageFormat::Png, &opts()).unwrap();
+    assert_eq!(xmp_of(&png.output).as_deref(), Some(XMP), "PNG keeps XMP");
+
+    let webp = ximage::convert(&f, ImageFormat::Webp, &opts()).unwrap();
+    assert_eq!(xmp_of(&webp.output).as_deref(), Some(XMP), "WebP keeps XMP");
+}
+
+#[test]
+fn webp_carries_exif() {
+    let dir = tmpdir("webp-exif");
+    let f = dir.join("portrait.jpg");
+    write_jpeg_with_meta(&f, &photo(64, 32), 6);
+
+    let r = ximage::convert(&f, ImageFormat::Webp, &opts()).unwrap();
+
+    let (dims, orientation, icc, exif) = inspect(&r.output);
+    assert_eq!(dims, (32, 64));
+    assert_eq!(orientation, Orientation::NoTransforms);
+    assert_eq!(icc.as_deref(), Some(FAKE_ICC));
+    assert!(contains(&exif.expect("EXIF in WebP"), b"Test"));
+}
+
+#[test]
+fn strip_metadata_drops_xmp() {
+    let dir = tmpdir("xmp-strip");
+    let f = dir.join("rated.jpg");
+    write_jpeg_with_xmp(&f, &photo(96, 64));
+    let r = ximage::optimise(
+        &f,
+        &OptimiseOptions {
+            strip_metadata: true,
+            allow_larger: true,
+            ..opts()
+        },
+    )
+    .unwrap();
+    assert!(xmp_of(&r.output).is_none());
+}
+
+/// A minimal ICC v2 RGB matrix/TRC profile with the sRGB red and green
+/// colorants swapped: a pure red pixel in it is sRGB green.
+fn swapped_rg_profile() -> Vec<u8> {
+    fn s15(v: f64) -> [u8; 4] {
+        ((v * 65536.0).round() as i32).to_be_bytes()
+    }
+    fn xyz(v: [f64; 3]) -> Vec<u8> {
+        let mut t = b"XYZ \0\0\0\0".to_vec();
+        for c in v {
+            t.extend_from_slice(&s15(c));
+        }
+        t
+    }
+    // sRGB colorants, D50-adapted, and gamma-2.2 curves.
+    let red = [0.4361, 0.2225, 0.0139];
+    let green = [0.3851, 0.7169, 0.0971];
+    let blue = [0.1431, 0.0606, 0.7141];
+    let curve = b"curv\0\0\0\0\0\0\0\x01\x02\x33\0\0".to_vec();
+    let tags: Vec<(&[u8; 4], Vec<u8>)> = vec![
+        (b"wtpt", xyz([0.9642, 1.0, 0.8249])),
+        (b"rXYZ", xyz(green)),
+        (b"gXYZ", xyz(red)),
+        (b"bXYZ", xyz(blue)),
+        (b"rTRC", curve.clone()),
+        (b"gTRC", curve.clone()),
+        (b"bTRC", curve),
+    ];
+    let table_len = 4 + 12 * tags.len();
+    let mut data = Vec::new();
+    let mut table = (tags.len() as u32).to_be_bytes().to_vec();
+    for (sig, body) in &tags {
+        let offset = 128 + table_len + data.len();
+        table.extend_from_slice(*sig);
+        table.extend_from_slice(&(offset as u32).to_be_bytes());
+        table.extend_from_slice(&(body.len() as u32).to_be_bytes());
+        data.extend_from_slice(body);
+        while data.len() % 4 != 0 {
+            data.push(0);
+        }
+    }
+    let size = 128 + table.len() + data.len();
+    let mut h = vec![0u8; 128];
+    h[0..4].copy_from_slice(&(size as u32).to_be_bytes());
+    h[8..12].copy_from_slice(&[0x02, 0x10, 0, 0]);
+    h[12..16].copy_from_slice(b"mntr");
+    h[16..20].copy_from_slice(b"RGB ");
+    h[20..24].copy_from_slice(b"XYZ ");
+    h[36..40].copy_from_slice(b"acsp");
+    h[68..72].copy_from_slice(&s15(0.9642));
+    h[72..76].copy_from_slice(&s15(1.0));
+    h[76..80].copy_from_slice(&s15(0.8249));
+    [h, table, data].concat()
+}
+
+#[test]
+fn convert_to_srgb_applies_the_source_profile() {
+    let red = DynamicImage::ImageRgb8(RgbImage::from_pixel(8, 8, image::Rgb([255, 0, 0])));
+    let out = ximage::convert_to_srgb(&red, &swapped_rg_profile()).expect("profile usable");
+    let [r, g, b] = out.to_rgb8().get_pixel(4, 4).0;
+    assert!(
+        g > 200 && r < 60 && b < 60,
+        "red in the swapped space is sRGB green, got {r},{g},{b}"
+    );
+}
+
+#[test]
+fn convert_to_avif_with_foreign_profile_works() {
+    let dir = tmpdir("avif-icc");
+    let f = dir.join("wide.png");
+    let img = photo(48, 48);
+    let file = std::fs::File::create(&f).unwrap();
+    let mut enc = image::codecs::png::PngEncoder::new(file);
+    enc.set_icc_profile(swapped_rg_profile()).unwrap();
+    img.write_with_encoder(enc).unwrap();
+
+    let r = ximage::convert(&f, ImageFormat::Avif, &opts()).unwrap();
+    assert_eq!(&std::fs::read(&r.output).unwrap()[4..12], b"ftypavif");
+}

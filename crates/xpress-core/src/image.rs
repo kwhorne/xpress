@@ -42,6 +42,8 @@ pub struct Meta {
     pub icc: Option<Vec<u8>>,
     /// Raw EXIF (TIFF) block, with the orientation tag already reset to "normal".
     pub exif: Option<Vec<u8>>,
+    /// XMP packet (edit history, ratings, captions, …).
+    pub xmp: Option<Vec<u8>>,
 }
 
 /// Whether `path` is an animated image (multi-frame GIF, animated WebP or APNG).
@@ -86,13 +88,14 @@ pub fn load(path: &Path) -> Result<(DynamicImage, Meta), OptimiseError> {
     let mut decoder = open_decoder(path)?;
     let icc = decoder.icc_profile().ok().flatten();
     let mut exif = decoder.exif_metadata().ok().flatten();
+    let xmp = decoder.xmp_metadata().ok().flatten();
     let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
     let mut img = DynamicImage::from_decoder(decoder).map_err(other)?;
     img.apply_orientation(orientation);
     if let Some(e) = exif.as_mut() {
         let _ = Orientation::remove_from_exif_chunk(e);
     }
-    Ok((img, Meta { icc, exif }))
+    Ok((img, Meta { icc, exif, xmp }))
 }
 
 /// Decode a still image upright, without its metadata (e.g. for previews).
@@ -164,10 +167,62 @@ fn write_jpeg(
     quality: u8,
     meta: &Meta,
 ) -> Result<(), OptimiseError> {
-    let f = BufWriter::new(std::fs::File::create(out)?);
-    let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(f, quality.clamp(1, 100));
+    let mut buf = Vec::new();
+    let mut enc =
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality.clamp(1, 100));
     apply_meta(&mut enc, meta);
-    flatten_alpha(img).write_with_encoder(enc).map_err(other)
+    flatten_alpha(img).write_with_encoder(enc).map_err(other)?;
+    let buf = match &meta.xmp {
+        Some(xmp) => jpeg_with_xmp(buf, xmp),
+        None => buf,
+    };
+    std::fs::write(out, buf)?;
+    Ok(())
+}
+
+/// Insert an XMP packet as an APP1 segment after the JPEG's other APPn
+/// headers (JFIF/EXIF/ICC). Packets too big for one segment are dropped
+/// (extended XMP is not supported).
+fn jpeg_with_xmp(jpeg: Vec<u8>, xmp: &[u8]) -> Vec<u8> {
+    const NS: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+    let seg_len = 2 + NS.len() + xmp.len();
+    if seg_len > u16::MAX as usize || jpeg.len() < 4 || jpeg[..2] != [0xFF, 0xD8] {
+        return jpeg;
+    }
+    let mut pos = 2;
+    while pos + 4 <= jpeg.len() && jpeg[pos] == 0xFF && (0xE0..=0xE2).contains(&jpeg[pos + 1]) {
+        pos += 2 + u16::from_be_bytes([jpeg[pos + 2], jpeg[pos + 3]]) as usize;
+    }
+    let pos = pos.min(jpeg.len());
+    let mut out = Vec::with_capacity(jpeg.len() + seg_len + 2);
+    out.extend_from_slice(&jpeg[..pos]);
+    out.extend_from_slice(&[0xFF, 0xE1]);
+    out.extend_from_slice(&(seg_len as u16).to_be_bytes());
+    out.extend_from_slice(NS);
+    out.extend_from_slice(xmp);
+    out.extend_from_slice(&jpeg[pos..]);
+    out
+}
+
+/// Insert an XMP packet as an uncompressed `iTXt` chunk right after `IHDR`.
+fn png_with_xmp(png: Vec<u8>, xmp: &[u8]) -> Vec<u8> {
+    const IHDR_END: usize = 8 + 4 + 4 + 13 + 4;
+    if png.len() < IHDR_END || &png[12..16] != b"IHDR" {
+        return png;
+    }
+    let mut chunk = b"iTXt".to_vec();
+    chunk.extend_from_slice(b"XML:com.adobe.xmp\0");
+    chunk.extend_from_slice(&[0, 0, 0, 0]); // uncompressed, method, empty lang + keyword
+    chunk.extend_from_slice(xmp);
+    let data_len = (chunk.len() - 4) as u32;
+    let crc = crc32fast::hash(&chunk);
+    let mut out = Vec::with_capacity(png.len() + chunk.len() + 8);
+    out.extend_from_slice(&png[..IHDR_END]);
+    out.extend_from_slice(&data_len.to_be_bytes());
+    out.extend_from_slice(&chunk);
+    out.extend_from_slice(&crc.to_be_bytes());
+    out.extend_from_slice(&png[IHDR_END..]);
+    out
 }
 
 /// Save an intermediate (resized/cropped) image in the format given by `out`'s
@@ -177,19 +232,39 @@ fn save_with_meta(img: &DynamicImage, out: &Path, meta: &Meta) -> Result<(), Opt
     match extension_lower(out).as_deref() {
         Some("jpg") | Some("jpeg") => write_jpeg(img, out, 95, meta),
         Some("png") => {
-            let f = BufWriter::new(std::fs::File::create(out)?);
-            let mut enc = image::codecs::png::PngEncoder::new(f);
-            apply_meta(&mut enc, meta);
-            img.write_with_encoder(enc).map_err(other)
+            let buf = encode_png(img, meta)?;
+            std::fs::write(out, buf)?;
+            Ok(())
         }
         Some("webp") => {
-            let f = BufWriter::new(std::fs::File::create(out)?);
-            let mut enc = image::codecs::webp::WebPEncoder::new_lossless(f);
-            apply_meta(&mut enc, meta);
-            img.write_with_encoder(enc).map_err(other)
+            let mut buf = Vec::new();
+            img.write_with_encoder(image::codecs::webp::WebPEncoder::new_lossless(&mut buf))
+                .map_err(other)?;
+            let buf = webp_with_meta(
+                &buf,
+                meta,
+                img.width(),
+                img.height(),
+                img.color().has_alpha(),
+            )
+            .unwrap_or(buf);
+            std::fs::write(out, buf)?;
+            Ok(())
         }
         _ => img.save(out).map_err(other),
     }
+}
+
+/// Lossless PNG with ICC, EXIF and XMP.
+fn encode_png(img: &DynamicImage, meta: &Meta) -> Result<Vec<u8>, OptimiseError> {
+    let mut buf = Vec::new();
+    let mut enc = image::codecs::png::PngEncoder::new(&mut buf);
+    apply_meta(&mut enc, meta);
+    img.write_with_encoder(enc).map_err(other)?;
+    Ok(match &meta.xmp {
+        Some(xmp) => png_with_xmp(buf, xmp),
+        None => buf,
+    })
 }
 
 /// Encode lossy WebP via libwebp at `quality` (0–100), embedding the ICC profile.
@@ -213,17 +288,15 @@ fn write_webp(
     if encoded.is_empty() {
         return Err(other("webp encoding failed"));
     }
-    let bytes = match &meta.icc {
-        Some(icc) => webp_with_icc(&encoded, icc, w, h, alpha).unwrap_or(encoded),
-        None => encoded,
-    };
+    let bytes = webp_with_meta(&encoded, meta, w, h, alpha).unwrap_or(encoded);
     std::fs::write(out, bytes)?;
     Ok(())
 }
 
-/// Insert an `ICCP` chunk into a WebP file produced by libwebp's simple encoder,
-/// adding (or updating) the `VP8X` extended header that must precede it.
-fn webp_with_icc(webp: &[u8], icc: &[u8], w: u32, h: u32, alpha: bool) -> Option<Vec<u8>> {
+/// Rewrite a WebP file's metadata: drop any existing `ICCP`/`EXIF`/`XMP `
+/// chunks and add the ones in `meta`, with a `VP8X` header whose flags match.
+/// Returns `None` (keep the input) when it isn't a WebP we understand.
+fn webp_with_meta(webp: &[u8], meta: &Meta, w: u32, h: u32, alpha: bool) -> Option<Vec<u8>> {
     if webp.len() < 12 || &webp[0..4] != b"RIFF" || &webp[8..12] != b"WEBP" {
         return None;
     }
@@ -241,7 +314,7 @@ fn webp_with_icc(webp: &[u8], icc: &[u8], w: u32, h: u32, alpha: bool) -> Option
         }
         match fourcc {
             b"VP8X" => vp8x = Some(webp[pos + 8..end].to_vec()),
-            b"ICCP" => {}
+            b"ICCP" | b"EXIF" | b"XMP " => {}
             _ => {
                 has_alph |= fourcc == b"ALPH";
                 rest.extend_from_slice(&webp[pos..padded.min(webp.len())]);
@@ -249,31 +322,52 @@ fn webp_with_icc(webp: &[u8], icc: &[u8], w: u32, h: u32, alpha: bool) -> Option
         }
         pos = padded;
     }
+    if meta.icc.is_none() && meta.exif.is_none() && meta.xmp.is_none() && vp8x.is_none() {
+        return None;
+    }
 
     const ICC_FLAG: u8 = 0x20;
     const ALPHA_FLAG: u8 = 0x10;
+    const EXIF_FLAG: u8 = 0x08;
+    const XMP_FLAG: u8 = 0x04;
     let mut header = vp8x.unwrap_or_else(|| {
         let mut v = vec![0u8; 10];
         v[4..7].copy_from_slice(&(w - 1).to_le_bytes()[..3]);
         v[7..10].copy_from_slice(&(h - 1).to_le_bytes()[..3]);
         v
     });
-    header[0] |= ICC_FLAG;
-    if alpha || has_alph {
-        header[0] |= ALPHA_FLAG;
+    header[0] &= !(ICC_FLAG | EXIF_FLAG | XMP_FLAG);
+    for (present, flag) in [
+        (meta.icc.is_some(), ICC_FLAG),
+        (meta.exif.is_some(), EXIF_FLAG),
+        (meta.xmp.is_some(), XMP_FLAG),
+        (alpha || has_alph, ALPHA_FLAG),
+    ] {
+        if present {
+            header[0] |= flag;
+        }
     }
 
+    fn push_chunk(body: &mut Vec<u8>, fourcc: &[u8; 4], data: &[u8]) {
+        body.extend_from_slice(fourcc);
+        body.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        body.extend_from_slice(data);
+        if data.len() % 2 == 1 {
+            body.push(0);
+        }
+    }
     let mut body = b"WEBP".to_vec();
-    body.extend_from_slice(b"VP8X");
-    body.extend_from_slice(&(header.len() as u32).to_le_bytes());
-    body.extend_from_slice(&header);
-    body.extend_from_slice(b"ICCP");
-    body.extend_from_slice(&(icc.len() as u32).to_le_bytes());
-    body.extend_from_slice(icc);
-    if icc.len() % 2 == 1 {
-        body.push(0);
+    push_chunk(&mut body, b"VP8X", &header);
+    if let Some(icc) = &meta.icc {
+        push_chunk(&mut body, b"ICCP", icc);
     }
     body.extend_from_slice(&rest);
+    if let Some(exif) = &meta.exif {
+        push_chunk(&mut body, b"EXIF", exif);
+    }
+    if let Some(xmp) = &meta.xmp {
+        push_chunk(&mut body, b"XMP ", xmp);
+    }
 
     let mut out = b"RIFF".to_vec();
     out.extend_from_slice(&(body.len() as u32).to_le_bytes());
@@ -281,10 +375,22 @@ fn webp_with_icc(webp: &[u8], icc: &[u8], w: u32, h: u32, alpha: bool) -> Option
     Some(out)
 }
 
-/// AVIF via the pure-Rust `ravif` encoder. `quality` is 1–100.
-fn write_avif(img: &DynamicImage, out: &Path, quality: u8) -> Result<(), OptimiseError> {
+/// AVIF via the pure-Rust `ravif` encoder. `quality` is 1–100. The encoder
+/// can't embed an ICC profile (the file is tagged sRGB), so pixels in another
+/// colour space (e.g. Display P3) are converted to sRGB first.
+fn write_avif(
+    img: &DynamicImage,
+    out: &Path,
+    quality: u8,
+    meta: &Meta,
+) -> Result<(), OptimiseError> {
     let f = BufWriter::new(std::fs::File::create(out)?);
     let enc = image::codecs::avif::AvifEncoder::new_with_speed_quality(f, 6, quality);
+    let converted = meta
+        .icc
+        .as_deref()
+        .and_then(|icc| convert_to_srgb(img, icc));
+    let img = converted.as_ref().unwrap_or(img);
     let img = if img.color().has_alpha() {
         DynamicImage::ImageRgba8(img.to_rgba8())
     } else {
@@ -293,10 +399,47 @@ fn write_avif(img: &DynamicImage, out: &Path, quality: u8) -> Result<(), Optimis
     img.write_with_encoder(enc).map_err(other)
 }
 
-/// Drop the EXIF block when the user asked to strip metadata (ICC stays).
+/// Convert an image's pixels from the colour space described by `icc` to sRGB
+/// (8-bit, perceptual intent). `None` if the profile is unusable, already sRGB,
+/// or not an RGB profile.
+pub fn convert_to_srgb(img: &DynamicImage, icc: &[u8]) -> Option<DynamicImage> {
+    let input = qcms::Profile::new_from_slice(icc, false)?;
+    if input.is_sRGB() {
+        return None;
+    }
+    let mut output = qcms::Profile::new_sRGB();
+    output.precache_output_transform();
+    if img.color().has_alpha() {
+        let mut rgba = img.to_rgba8();
+        let xfm = qcms::Transform::new(
+            &input,
+            &output,
+            qcms::DataType::RGBA8,
+            qcms::Intent::default(),
+        )?;
+        xfm.apply(&mut rgba);
+        Some(DynamicImage::ImageRgba8(rgba))
+    } else {
+        let mut rgb = img.to_rgb8();
+        let xfm = qcms::Transform::new(
+            &input,
+            &output,
+            qcms::DataType::RGB8,
+            qcms::Intent::default(),
+        )?;
+        xfm.apply(&mut rgb);
+        Some(DynamicImage::ImageRgb8(rgb))
+    }
+}
+
+/// Drop EXIF and XMP when the user asked to strip metadata (ICC stays).
 fn meta_for(meta: Meta, strip: bool) -> Meta {
     if strip {
-        Meta { exif: None, ..meta }
+        Meta {
+            icc: meta.icc,
+            exif: None,
+            xmp: None,
+        }
     } else {
         meta
     }
@@ -368,13 +511,7 @@ fn optimise_png(
         .transpose()?;
     let raw = match paletted {
         Some(bytes) => bytes,
-        None => {
-            let mut buf = Vec::new();
-            let mut enc = image::codecs::png::PngEncoder::new(&mut buf);
-            apply_meta(&mut enc, &meta);
-            img.write_with_encoder(enc).map_err(other)?;
-            buf
-        }
+        None => encode_png(&img, &meta)?,
     };
     let opts = oxipng::Options::from_preset(2);
     let optimised = oxipng::optimize_from_memory(&raw, &opts).unwrap_or(raw);
@@ -475,7 +612,10 @@ fn write_indexed_png(
     let mut writer = enc.write_header().map_err(other)?;
     writer.write_image_data(indices).map_err(other)?;
     writer.finish().map_err(other)?;
-    Ok(buf)
+    Ok(match &meta.xmp {
+        Some(xmp) => png_with_xmp(buf, xmp),
+        None => buf,
+    })
 }
 
 /// JPEG: decode (upright) and re-encode at a quality derived from the
@@ -820,8 +960,13 @@ pub fn convert(
             )?;
         }
         ImageFormat::Avif => {
-            let (img, _) = load(&work_src)?;
-            write_avif(&img, &temp_out, cq.conversion_quality().clamp(1, 100) as u8)?;
+            let (img, meta) = load(&work_src)?;
+            write_avif(
+                &img,
+                &temp_out,
+                cq.conversion_quality().clamp(1, 100) as u8,
+                &meta,
+            )?;
         }
         ImageFormat::Heic => {
             #[cfg(target_os = "macos")]

@@ -26,6 +26,9 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 webp = { version = "0.3", default-features = false }
 quantette = { version = "0.6", default-features = false, features = ["kmeans", "threads", "image"] }
 exoquant = "0.2"
+# ICC -> sRGB conversion (for AVIF, which cannot carry an ICC profile).
+qcms = "0.3"
+crc32fast = "1"
 png = "0.17"
 oxipng = { version = "9", default-features = false, features = ["parallel", "zopfli"] }
 include_dir = { version = "0.7", optional = true }

@@ -4187,6 +4187,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0c5ccf5294c6ccd63a74f1565028353830a9c2f5eb0c682c355c471726a6e3f"
 
 [[package]]
+name = "qcms"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edecfcd5d755a5e5d98e24cf43113e7cdaec5a070edd0f6b250c03a573da30fa"
+
+[[package]]
 name = "quantette"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6690,6 +6696,7 @@ name = "xpress-core"
 version = "0.4.8"
 dependencies = [
  "anyhow",
+ "crc32fast",
  "exoquant",
  "image",
  "imagesize",
@@ -6702,6 +6709,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "oxipng",
  "png 0.17.16",
+ "qcms",
  "quantette",
  "rayon",
  "regex",

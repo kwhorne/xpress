@@ -33,6 +33,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Rust, `ravif`), with quality taken from the compression value.
 - **WebP conversion** was lossless-only (often larger than the PNG); it is now
   lossy via libwebp, keeps alpha and the ICC profile.
+- XMP metadata (ratings, captions, edit history) is kept through JPEG, PNG and
+  WebP outputs, and WebP now also carries EXIF; `--strip-metadata` drops XMP.
+- AVIF output (which can't embed an ICC profile) is converted to sRGB from the
+  source's colour profile, so Display-P3 and other wide-gamut images no longer
+  shift colour.
 - Transparent images converted to JPEG are flattened onto white instead of
   black.
 - `downscale`/`crop` of an image **backed up the already-modified file**, so
