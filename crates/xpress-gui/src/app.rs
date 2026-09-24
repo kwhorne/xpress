@@ -36,6 +36,15 @@ const ERR_RED: Color32 = Color32::from_rgb(0xf7, 0x76, 0x8e);
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// Perceptual quality targets offered in Preferences (SSIMULACRA2 scores).
+const QUALITY_TARGETS: [(&str, Option<f64>); 5] = [
+    ("Off — use the compression slider", None),
+    ("Visually lossless", Some(90.0)),
+    ("High", Some(80.0)),
+    ("Medium", Some(70.0)),
+    ("Low", Some(50.0)),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Optimise,
@@ -68,6 +77,9 @@ pub struct XpressApp {
     aggressive: bool,
     backup: bool,
     strip_metadata: bool,
+    /// Index into [`QUALITY_TARGETS`].
+    quality_target: usize,
+    skip_optimised: bool,
     always_on_top: bool,
     pipeline_dsl: String,
     use_pipeline: bool,
@@ -100,59 +112,31 @@ pub struct XpressApp {
 
 impl XpressApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        install_style(&cc.egui_ctx);
+        Self::build(&cc.egui_ctx, true)
+    }
+
+    /// The app state. `integrations` sets up the platform side — menu-bar
+    /// icon, global hotkeys and the background update check — which tests
+    /// leave out (they need the main thread and the network).
+    fn build(ctx: &egui::Context, integrations: bool) -> Self {
+        install_style(ctx);
         let (tx, rx) = channel();
 
         let update_info: Arc<Mutex<Option<xpress_core::update::UpdateInfo>>> =
             Arc::new(Mutex::new(None));
         let update_checking = Arc::new(AtomicBool::new(false));
-        spawn_update_check(
-            cc.egui_ctx.clone(),
-            update_info.clone(),
-            update_checking.clone(),
-        );
-
-        // Menu-bar (status bar) icon for quick access.
-        let menu = Menu::new();
-        let open_item = MenuItem::new("Open xpress\t⌘⇧X", true, None);
-        let clip_item = MenuItem::new("Optimise clipboard\t⌘⇧O", true, None);
-        let update_item = MenuItem::new("Check for updates", true, None);
-        let quit_item = MenuItem::new("Quit xpress", true, None);
-        let _ = menu.append_items(&[
-            &open_item,
-            &PredefinedMenuItem::separator(),
-            &clip_item,
-            &update_item,
-            &PredefinedMenuItem::separator(),
-            &quit_item,
-        ]);
-        let (open_id, clip_id, update_id, quit_id) = (
-            open_item.id().0.clone(),
-            clip_item.id().0.clone(),
-            update_item.id().0.clone(),
-            quit_item.id().0.clone(),
-        );
-        let tray = tray_icon_image().and_then(|(rgba, w, h)| {
-            let icon = tray_icon::Icon::from_rgba(rgba, w, h).ok()?;
-            TrayIconBuilder::new()
-                .with_menu(Box::new(menu))
-                .with_icon(icon)
-                .with_tooltip("xpress")
-                .build()
-                .ok()
-        });
-
-        // Global hotkeys: ⌘⇧O optimises the clipboard, ⌘⇧X shows the window.
-        // (⌘X alone is the system “cut” shortcut, so we use ⌘⇧X.)
-        let (manager, clip_hk, show_hk) = match GlobalHotKeyManager::new() {
-            Ok(m) => {
-                let clip = HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyO);
-                let show = HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyX);
-                let clip = m.register(clip).ok().map(|_| clip);
-                let show = m.register(show).ok().map(|_| show);
-                (Some(m), clip, show)
-            }
-            Err(_) => (None, None, None),
+        if integrations {
+            spawn_update_check(ctx.clone(), update_info.clone(), update_checking.clone());
+        }
+        let (tray, [open_id, clip_id, update_id, quit_id]) = if integrations {
+            build_tray()
+        } else {
+            (None, Default::default())
+        };
+        let (manager, clip_hk, show_hk) = if integrations {
+            register_hotkeys()
+        } else {
+            (None, None, None)
         };
 
         Self {
@@ -161,6 +145,8 @@ impl XpressApp {
             aggressive: false,
             backup: true,
             strip_metadata: false,
+            quality_target: 0,
+            skip_optimised: true,
             always_on_top: false,
             pipeline_dsl: "crop(longEdge: 2000) -> convert(to: webp)".to_string(),
             use_pipeline: false,
@@ -222,8 +208,14 @@ impl XpressApp {
             preserve_dates: true,
             output: None,
             allow_larger: false,
-            use_cache: true,
+            use_cache: self.skip_optimised,
         }
+    }
+
+    fn quality(&self) -> Option<f64> {
+        QUALITY_TARGETS
+            .get(self.quality_target)
+            .and_then(|(_, q)| *q)
     }
 
     fn check_for_updates(&mut self, ctx: &egui::Context) {
@@ -260,7 +252,7 @@ impl XpressApp {
                 }
             }
         } else {
-            work::spawn(path, options, ctx.clone(), self.tx.clone());
+            work::spawn(path, options, self.quality(), ctx.clone(), self.tx.clone());
         }
     }
 
@@ -295,12 +287,19 @@ impl XpressApp {
             let from_clipboard = done.source.starts_with(clipboard_dir());
             let card = match done.result {
                 Ok(r) => {
-                    let mut detail = format!(
-                        "{} → {}{}",
-                        human(r.old_size),
-                        human(r.new_size),
-                        if r.aggressive { "  ·  aggressive" } else { "" }
-                    );
+                    let mut detail = if r.cached {
+                        format!("{}  ·  already optimised — skipped", human(r.old_size))
+                    } else {
+                        format!(
+                            "{} → {}{}",
+                            human(r.old_size),
+                            human(r.new_size),
+                            if r.aggressive { "  ·  aggressive" } else { "" }
+                        )
+                    };
+                    if let Some(score) = r.score {
+                        detail.push_str(&format!("  ·  SSIMULACRA2 {score:.0}"));
+                    }
                     if from_clipboard && xpress_core::clipboard::set_clipboard_png(&r.output) {
                         detail.push_str("  ·  copied back");
                     }
@@ -431,6 +430,13 @@ impl eframe::App for XpressApp {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.draw(ui);
+    }
+}
+
+impl XpressApp {
+    /// Draw the whole window (and accept dropped files).
+    fn draw(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
@@ -621,10 +627,19 @@ impl XpressApp {
         card(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("Compression").strong());
+                let quality = self.quality();
                 ui.add_enabled(
-                    !self.aggressive,
+                    !self.aggressive && quality.is_none(),
                     egui::Slider::new(&mut self.factor, 5..=100).show_value(true),
                 );
+                if quality.is_some() {
+                    let (name, _) = QUALITY_TARGETS[self.quality_target];
+                    ui.label(
+                        RichText::new(format!("images: quality target “{name}”"))
+                            .weak()
+                            .small(),
+                    );
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     toggle_labeled(ui, &mut self.aggressive, "Aggressive");
                 });
@@ -685,6 +700,34 @@ impl XpressApp {
                 "Remove EXIF (camera, location, date)",
                 |ui| {
                     toggle(ui, &mut self.strip_metadata);
+                },
+            );
+        });
+
+        ui.add_space(12.0);
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Quality target",
+                "Images: the smallest file that still looks this good",
+                |ui| {
+                    egui::ComboBox::from_id_salt("quality_target")
+                        .selected_text(QUALITY_TARGETS[self.quality_target].0)
+                        .width(230.0)
+                        .show_ui(ui, |ui| {
+                            for (i, (name, _)) in QUALITY_TARGETS.iter().enumerate() {
+                                ui.selectable_value(&mut self.quality_target, i, *name);
+                            }
+                        });
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Skip already-optimised files",
+                "Leave files xpress already squeezed with these settings",
+                |ui| {
+                    toggle(ui, &mut self.skip_optimised);
                 },
             );
         });
@@ -980,8 +1023,81 @@ impl XpressApp {
 
 // ---- Small UI helpers ------------------------------------------------------
 
+/// The menu-bar (status bar) icon and its menu; returns the menu item ids
+/// (open, clipboard, update, quit).
+fn build_tray() -> (Option<TrayIcon>, [String; 4]) {
+    let menu = Menu::new();
+    let open_item = MenuItem::new("Open xpress\t⌘⇧X", true, None);
+    let clip_item = MenuItem::new("Optimise clipboard\t⌘⇧O", true, None);
+    let update_item = MenuItem::new("Check for updates", true, None);
+    let quit_item = MenuItem::new("Quit xpress", true, None);
+    let _ = menu.append_items(&[
+        &open_item,
+        &PredefinedMenuItem::separator(),
+        &clip_item,
+        &update_item,
+        &PredefinedMenuItem::separator(),
+        &quit_item,
+    ]);
+    let (open_id, clip_id, update_id, quit_id) = (
+        open_item.id().0.clone(),
+        clip_item.id().0.clone(),
+        update_item.id().0.clone(),
+        quit_item.id().0.clone(),
+    );
+    let tray = tray_icon_image().and_then(|(rgba, w, h)| {
+        let icon = tray_icon::Icon::from_rgba(rgba, w, h).ok()?;
+        TrayIconBuilder::new()
+            .with_menu(Box::new(menu))
+            .with_icon(icon)
+            .with_tooltip("xpress")
+            .build()
+            .ok()
+    });
+    (tray, [open_id, clip_id, update_id, quit_id])
+}
+
+/// Register the global hotkeys: ⌘⇧O optimises the clipboard, ⌘⇧X shows the
+/// window. (⌘X alone is the system “cut” shortcut, so we use ⌘⇧X.)
+fn register_hotkeys() -> (Option<GlobalHotKeyManager>, Option<HotKey>, Option<HotKey>) {
+    match GlobalHotKeyManager::new() {
+        Ok(m) => {
+            let clip = HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyO);
+            let show = HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyX);
+            let clip = m.register(clip).ok().map(|_| clip);
+            let show = m.register(show).ok().map(|_| show);
+            (Some(m), clip, show)
+        }
+        Err(_) => (None, None, None),
+    }
+}
+
+/// egui's bundled fonts lack symbols we show (⇧ in hotkey hints, → in result
+/// cards), which render as boxes. On macOS, add the system's Apple Symbols
+/// font as a fallback for both families.
+fn install_fallback_fonts(ctx: &egui::Context) {
+    const APPLE_SYMBOLS: &str = "/System/Library/Fonts/Apple Symbols.ttf";
+    let Ok(bytes) = std::fs::read(APPLE_SYMBOLS) else {
+        return;
+    };
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "apple-symbols".into(),
+        std::sync::Arc::new(egui::FontData::from_owned(bytes)),
+    );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push("apple-symbols".into());
+    }
+    ctx.set_fonts(fonts);
+}
+
 fn install_style(ctx: &egui::Context) {
     use egui::{CornerRadius, Stroke};
+    install_fallback_fonts(ctx);
     let mut style = (*ctx.global_style()).clone();
     style.spacing.item_spacing = egui::vec2(10.0, 10.0);
     style.spacing.button_padding = egui::vec2(12.0, 7.0);
@@ -1070,6 +1186,11 @@ fn draw_x_logo(painter: &egui::Painter, center: Pos2, size: f32) {
 fn nav_item(ui: &mut egui::Ui, selected: bool, tile: Color32, icon: &str, label: &str) -> bool {
     let (rect, resp) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), Sense::click());
+    // Painted by hand, so describe it for screen readers (VoiceOver) as a
+    // selectable item carrying its label.
+    resp.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, label)
+    });
     if selected {
         ui.painter().rect_filled(rect, 8.0, ACCENT2);
     } else if resp.hovered() {
@@ -1393,4 +1514,95 @@ fn clipboard_image_to_file() -> Result<PathBuf, String> {
     let path = dir.join(format!("clip-{ts}.png"));
     buf.save(&path).map_err(|e| e.to_string())?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui_kittest::kittest::Queryable;
+    use egui_kittest::Harness;
+
+    fn harness() -> Harness<'static, XpressApp> {
+        let app = XpressApp::build(&egui::Context::default(), false);
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(960.0, 692.0))
+            .build_ui_state(|ui, app: &mut XpressApp| app.draw(ui), app);
+        h.run();
+        h
+    }
+
+    #[test]
+    fn sidebar_navigates_between_views() {
+        let mut h = harness();
+        assert!(
+            h.query_by_label("Optimise clipboard").is_some(),
+            "starts on Optimise"
+        );
+
+        h.get_by_label("Preferences").click();
+        h.run();
+        assert_eq!(h.state().tab, Tab::Settings);
+        assert!(h.query_by_label("Quality target").is_some());
+        assert!(h.query_by_label("Skip already-optimised files").is_some());
+
+        h.get_by_label("About").click();
+        h.run();
+        assert_eq!(h.state().tab, Tab::About);
+        assert!(h.query_by_label("Developed by Knut W. Horne").is_some());
+
+        h.get_by_label("Optimise").click();
+        h.run();
+        assert_eq!(h.state().tab, Tab::Optimise);
+    }
+
+    #[test]
+    fn quality_target_disables_the_slider_and_is_used() {
+        let mut h = harness();
+        h.state_mut().quality_target = 2;
+        h.run();
+        assert!(h.query_by_label_contains("quality target “High”").is_some());
+        assert_eq!(h.state().quality(), Some(80.0));
+        h.state_mut().skip_optimised = false;
+        assert!(!h.state().options().use_cache);
+    }
+
+    #[test]
+    fn crop_view_opens_and_cancels() {
+        let dir = std::env::temp_dir().join(format!("xpress-gui-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = dir.join("pic.png");
+        image::RgbImage::from_pixel(64, 48, image::Rgb([200, 100, 50]))
+            .save(&img)
+            .unwrap();
+
+        let mut h = harness();
+        let ctx = h.ctx.clone();
+        h.state_mut().enter_crop(img, &ctx);
+        h.run();
+        assert!(h.state().crop.is_some());
+        assert!(h.query_by_label("Apply crop").is_some());
+        assert!(h.query_by_label("Drag to select a region.").is_some());
+
+        h.get_by_label("Cancel").click();
+        h.run();
+        assert!(h.state().crop.is_none(), "back to the main view");
+        assert!(h.query_by_label("Optimise clipboard").is_some());
+    }
+
+    #[test]
+    fn result_cards_show_cached_and_score() {
+        let mut h = harness();
+        h.state_mut().push_card(Card {
+            title: "photo.jpg".into(),
+            detail: "244.8 KB → 94.6 KB  ·  SSIMULACRA2 80".into(),
+            saved_pct: 61.0,
+            ok: true,
+            output: None,
+            texture: None,
+            pending_thumb: None,
+        });
+        h.run();
+        assert!(h.query_by_label("photo.jpg").is_some());
+        assert!(h.query_by_label_contains("SSIMULACRA2 80").is_some());
+    }
 }

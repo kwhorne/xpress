@@ -6,6 +6,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Desktop app:** a *Quality target* in Preferences (visually lossless /
+  high / medium / low — the smallest image that still looks that good, with the
+  SSIMULACRA2 score on the result card) and a *Skip already-optimised files*
+  toggle. The compression slider is disabled while a quality target is set.
+
+### Fixed
+- Desktop app: `⇧` in the hotkey hints and `→` on result cards rendered as
+  boxes; the macOS Apple Symbols font is now a fallback.
+- Desktop app: sidebar items are now exposed to screen readers (VoiceOver).
+
 ### Changed
 - The macOS release tarball's `xpress` and `xpress-gui` binaries (also what
   `xpress update` installs) are now Developer ID signed with the hardened

@@ -19,11 +19,23 @@ pub enum Msg {
     Done(Box<Done>),
 }
 
-/// Optimise a single file on a background thread.
-pub fn spawn(path: PathBuf, options: OptimiseOptions, ctx: egui::Context, tx: Sender<Msg>) {
+/// Optimise a single file on a background thread. With a `quality` target,
+/// images get the smallest file that still meets it (SSIMULACRA2).
+pub fn spawn(
+    path: PathBuf,
+    options: OptimiseOptions,
+    quality: Option<f64>,
+    ctx: egui::Context,
+    tx: Sender<Msg>,
+) {
     std::thread::spawn(move || {
-        let result = xpress_core::optimise_file(&path, &options, AudioFormat::SameAsInput, None)
-            .map_err(|e| e.to_string());
+        let result = match quality {
+            Some(target) if classify(&path) == Some(MediaKind::Image) => {
+                xpress_core::quality::optimise_to_quality(&path, target, &options)
+            }
+            _ => xpress_core::optimise_file(&path, &options, AudioFormat::SameAsInput, None),
+        }
+        .map_err(|e| e.to_string());
         let thumbnail = result
             .as_ref()
             .ok()
