@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.9] - 2026-09-24
+
 ### Added
 - **`--max-size` for video and audio now targets the size directly.** The
   bitrate is computed from the budget and duration and encoded two-pass
@@ -281,7 +283,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.8...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.4.9...HEAD
+[0.4.9]: https://github.com/kwhorne/xpress/compare/v0.4.8...v0.4.9
 [0.4.8]: https://github.com/kwhorne/xpress/compare/v0.4.7...v0.4.8
 [0.4.7]: https://github.com/kwhorne/xpress/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/kwhorne/xpress/compare/v0.4.5...v0.4.6
