@@ -920,11 +920,12 @@ fn run_crop_pdf(args: CropPdfArgs) -> Result<()> {
         };
         // Crop to a temp then move, so in-place crop is safe.
         let tmp = std::env::temp_dir().join(format!("xpress-crop-{}.pdf", std::process::id()));
-        match xpress_core::pdf::crop(f, &tmp, aspect).and_then(|_| {
-            std::fs::rename(&tmp, &out)
-                .or_else(|_| std::fs::copy(&tmp, &out).map(|_| ()))
+        let res = xpress_core::pdf::crop(f, &tmp, aspect).and_then(|_| {
+            xpress_core::result::place_file(&tmp, &out)
                 .map_err(xpress_core::result::OptimiseError::Io)
-        }) {
+        });
+        let _ = std::fs::remove_file(&tmp);
+        match res {
             Ok(()) => {
                 n += 1;
                 println!(
@@ -950,11 +951,11 @@ fn run_uncrop_pdf(args: FilesArg) -> Result<()> {
     let mut n = 0;
     for f in &files {
         let tmp = std::env::temp_dir().join(format!("xpress-uncrop-{}.pdf", std::process::id()));
-        match xpress_core::pdf::uncrop(f, &tmp).and_then(|_| {
-            std::fs::rename(&tmp, f)
-                .or_else(|_| std::fs::copy(&tmp, f).map(|_| ()))
-                .map_err(xpress_core::result::OptimiseError::Io)
-        }) {
+        let res = xpress_core::pdf::uncrop(f, &tmp).and_then(|_| {
+            xpress_core::result::place_file(&tmp, f).map_err(xpress_core::result::OptimiseError::Io)
+        });
+        let _ = std::fs::remove_file(&tmp);
+        match res {
             Ok(()) => {
                 n += 1;
                 println!("{} uncropped {}", render::CHECK, f.display());
