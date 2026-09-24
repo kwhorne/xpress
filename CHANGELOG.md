@@ -6,7 +6,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `--pdf-dpi` now works: embedded JPEG images are downsampled to at most that
+  DPI at the size they are actually drawn (read from the page content streams,
+  falling back to the page size).
+
 ### Fixed
+- PDF optimisation no longer re-encodes CMYK (or Lab/Indexed/Separation) JPEGs
+  — decoding turned them into RGB while the PDF still declared CMYK, corrupting
+  the colours. Gray images stay 1-component JPEGs.
+- Shrink-only pipelines (e.g. the watch daemon's default `optimise`) no longer
+  replace a file with a bigger result.
 - **Animated GIFs were flattened to their first frame** (and reported as a big
   saving). Animated GIF/WebP/APNG are now never decoded to a single frame: GIFs
   go through `gifsicle` when installed, otherwise they are left untouched;

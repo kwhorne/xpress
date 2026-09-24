@@ -57,7 +57,7 @@ xpress optimise [OPTIONS] <ITEMS>...
 Auto-detects each file's type. Extra options:
 
 - `--kind image|video|pdf|audio` — restrict to one media kind.
-- `--pdf-dpi <48..300>` — downsample PDF images to this DPI (omit for none).
+- `--pdf-dpi <36..600>` — downsample embedded JPEG images to at most this DPI at the size they are drawn on the page (omit to keep their resolution). Only images whose colours can be re-encoded exactly (RGB/Gray/ICC) are touched; CMYK and other colour spaces are left as they are.
 - `--max-size <size>` — compress to fit a budget (`500kb`, `1.5mb`, `250000`).
 - `--adaptive` — for images, try multiple formats and keep the smallest.
 

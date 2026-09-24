@@ -183,7 +183,8 @@ struct OptimiseArgs {
     /// Restrict to a media kind: image | video | pdf | audio.
     #[arg(long, value_parser = parse_kind)]
     kind: Option<MediaKind>,
-    /// PDF render DPI for downsampling (48–300). Omit for no downsample.
+    /// Downsample embedded JPEG images in PDFs to at most this DPI at the size
+    /// they are drawn (36–600). Omit to keep their resolution.
     #[arg(long)]
     pdf_dpi: Option<i32>,
     /// Compress to fit a budget, e.g. 500kb, 1.5mb, 250000.
