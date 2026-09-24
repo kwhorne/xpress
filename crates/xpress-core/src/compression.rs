@@ -192,7 +192,17 @@ impl CompressionQuality {
     ///
     /// `arm` toggles the VideoToolbox hardware path used on Apple Silicon for the
     /// `Fast` tier.
+    ///
+    /// Always forces 8-bit 4:2:0 (`yuv420p`): given a 10-bit source (iPhone HDR
+    /// video) libx264 would otherwise pick the High 10 profile, which QuickTime,
+    /// Safari and most phones cannot play.
     pub fn video_h264_args(&self, arm: bool) -> Vec<String> {
+        let mut args = self.video_h264_encoder_args(arm);
+        args.extend(["-pix_fmt".to_string(), "yuv420p".to_string()]);
+        args
+    }
+
+    fn video_h264_encoder_args(&self, arm: bool) -> Vec<String> {
         let s = |v: &str| v.to_string();
         match self.tier {
             CompressionTier::Lossless => {
@@ -292,6 +302,24 @@ mod tests {
             cq.gifsicle_args(),
             vec!["-O3", "--lossy=80", "--colors=202"]
         );
+    }
+
+    #[test]
+    fn h264_always_8bit_420() {
+        for tier in [
+            CompressionTier::Lossless,
+            CompressionTier::Fast,
+            CompressionTier::Custom,
+        ] {
+            for arm in [false, true] {
+                let args = CompressionQuality::new(tier, 30).video_h264_args(arm);
+                let i = args
+                    .iter()
+                    .position(|a| a == "-pix_fmt")
+                    .expect("pix_fmt set");
+                assert_eq!(args[i + 1], "yuv420p");
+            }
+        }
     }
 
     #[test]

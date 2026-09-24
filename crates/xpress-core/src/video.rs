@@ -6,7 +6,7 @@ use tempfile::TempDir;
 
 use crate::filetype::MediaKind;
 use crate::result::{
-    backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
+    file_size, finish, OptimisationResult, OptimiseError, OptimiseOptions, Placement,
 };
 use crate::tools::{self, Tool};
 
@@ -186,33 +186,21 @@ pub fn convert_codec(
         tools::run(Tool::Ffmpeg, build(true))?;
     }
 
-    let new_size = file_size(&temp_out);
-    let dest = options
-        .output
-        .clone()
-        .unwrap_or_else(|| path.with_extension(ext));
-    let backup = if options.backup && options.output.is_none() && dest == path {
-        Some(backup_file(path)?)
-    } else {
-        None
-    };
-    std::fs::copy(&temp_out, &dest)?;
-    if options.preserve_dates {
-        copy_dates(path, &dest);
-    }
-    if options.output.is_none() && dest != path && path.exists() {
-        let _ = std::fs::remove_file(path);
-    }
-
-    Ok(OptimisationResult {
-        kind: MediaKind::Video,
-        source: path.to_path_buf(),
-        output: dest,
-        backup,
+    // Converting in place replaces the source (backed up first, when enabled).
+    finish(
+        MediaKind::Video,
+        path,
+        &temp_out,
+        path.with_extension(ext),
         old_size,
-        new_size,
-        aggressive: cq.image_is_aggressive(),
-    })
+        cq.image_is_aggressive(),
+        options,
+        Placement {
+            size_guard: false,
+            backup: true,
+            replace_source: true,
+        },
+    )
 }
 
 /// Convert a video to an animated GIF.
@@ -304,25 +292,21 @@ pub fn to_gif(
         )?;
     }
 
-    let new_size = file_size(&out);
-    let dest = options
-        .output
-        .clone()
-        .unwrap_or_else(|| path.with_extension("gif"));
-    std::fs::copy(&out, &dest)?;
-    if options.preserve_dates {
-        copy_dates(path, &dest);
-    }
-
-    Ok(OptimisationResult {
-        kind: MediaKind::Image,
-        source: path.to_path_buf(),
-        output: dest,
-        backup: None,
+    // The GIF is written alongside the video, which is kept.
+    finish(
+        MediaKind::Image,
+        path,
+        &out,
+        path.with_extension("gif"),
         old_size,
-        new_size,
-        aggressive: options.compression.image_is_aggressive(),
-    })
+        options.compression.image_is_aggressive(),
+        options,
+        Placement {
+            size_guard: false,
+            backup: false,
+            replace_source: false,
+        },
+    )
 }
 
 /// Cap the frame rate at `fps`. Writes to `dst`.
@@ -384,53 +368,23 @@ pub fn optimise_with_filter(
         tools::run(Tool::Ffmpeg, build(true))?;
     }
 
-    let new_size = file_size(&temp_out);
-
-    let same_ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("mp4"))
-        .unwrap_or(false);
-
-    if !options.allow_larger && same_ext && new_size >= old_size {
-        return Ok(OptimisationResult {
-            kind: MediaKind::Video,
-            source: path.to_path_buf(),
-            output: path.to_path_buf(),
-            backup: None,
-            old_size,
-            new_size: old_size,
-            aggressive: cq.image_is_aggressive(),
-        });
-    }
-
-    let dest = options
-        .output
-        .clone()
-        .unwrap_or_else(|| path.with_extension("mp4"));
-
-    let backup = if options.backup && options.output.is_none() {
-        Some(backup_file(path)?)
-    } else {
-        None
-    };
-
-    std::fs::copy(&temp_out, &dest)?;
-    if options.preserve_dates {
-        copy_dates(path, &dest);
-    }
-    // If we changed the extension (e.g. mov -> mp4) and replaced in place, remove the original.
-    if options.output.is_none() && dest != path && path.exists() {
-        let _ = std::fs::remove_file(path);
-    }
-
-    Ok(OptimisationResult {
-        kind: MediaKind::Video,
-        source: path.to_path_buf(),
-        output: dest,
-        backup,
+    // A plain optimise must never replace a video with a bigger one — including
+    // a `.mov` that would become a larger `.mp4` (e.g. an iPhone HEVC clip
+    // re-encoded to H.264). Crops/scales (`vf`) were asked for explicitly, so
+    // they are kept regardless of size. An in-place `.mov` -> `.mp4` replaces
+    // the source (backed up first, when enabled).
+    finish(
+        MediaKind::Video,
+        path,
+        &temp_out,
+        path.with_extension("mp4"),
         old_size,
-        new_size,
-        aggressive: cq.image_is_aggressive(),
-    })
+        cq.image_is_aggressive(),
+        options,
+        Placement {
+            size_guard: vf.is_none(),
+            backup: true,
+            replace_source: true,
+        },
+    )
 }

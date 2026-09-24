@@ -58,10 +58,16 @@ done
 {halve}"#));
 
         // ffmpeg ... -i <in> ... <out>   (out is always the last arg)
+        // Like a non-macOS build it has no `aac_at` encoder, and inputs named
+        // `*grow*` produce a larger output (to exercise the size guard).
         stub(&dir, "ffmpeg",
             r#"args=("$@"); inp=""; out="${args[${#args[@]}-1]}"
+for a in "$@"; do [[ "$a" == "aac_at" ]] && { echo "Unknown encoder 'aac_at'" >&2; exit 1; }; done
 for ((i=0;i<${#args[@]};i++)); do [[ "${args[$i]}" == "-i" ]] && inp="${args[$((i+1))]}"; done
-sz=$(wc -c < "$inp"); head -c $((sz/2 + 1)) "$inp" > "$out""#);
+case "$(basename "$inp")" in
+  *grow*) cat "$inp" "$inp" > "$out" ;;
+  *) sz=$(wc -c < "$inp"); head -c $((sz/2 + 1)) "$inp" > "$out" ;;
+esac"#);
 
         // vips resize|crop <in> <out> ...   -> copy in to out
         stub(&dir, "vips", r#"cp "$2" "$3""#);

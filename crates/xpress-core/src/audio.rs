@@ -10,7 +10,7 @@ use tempfile::TempDir;
 use crate::compression::CompressionQuality;
 use crate::filetype::{extension_lower, MediaKind};
 use crate::result::{
-    backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
+    file_size, finish, OptimisationResult, OptimiseError, OptimiseOptions, Placement,
 };
 use crate::tools::{self, Tool};
 
@@ -117,6 +117,17 @@ impl AudioFormat {
             b if b <= 192 => 2,
             _ => 0,
         }
+    }
+
+    /// Args for ffmpeg's built-in AAC encoder, available in every build (unlike
+    /// the macOS-only `aac_at` that [`AudioFormat::Aac`] prefers).
+    pub fn native_aac_args(bitrate: i32) -> Vec<String> {
+        vec![
+            "-c:a".into(),
+            "aac".into(),
+            "-b:a".into(),
+            format!("{bitrate}k"),
+        ]
     }
 
     /// ffmpeg encoding args, using VBR where supported.
@@ -245,59 +256,49 @@ pub fn optimise(
         crate::result::file_stem_lossy(path)
     ));
 
-    let mut args: Vec<String> = vec!["-y".into(), "-i".into(), path.display().to_string()];
-    args.extend(format.encoding_args(bitrate, aggressive, None));
-    args.push(temp_out.display().to_string());
-    tools::run(Tool::Ffmpeg, &args)?;
-
-    let new_size = file_size(&temp_out);
-
-    let dest = options.output.clone().unwrap_or_else(|| {
-        if out_ext.is_empty() {
-            path.to_path_buf()
-        } else {
-            path.with_extension(out_ext)
-        }
-    });
-
-    let same_format = dest
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case(out_ext))
-        .unwrap_or(false);
-    if !options.allow_larger && same_format && new_size >= old_size {
-        return Ok(OptimisationResult {
-            kind: MediaKind::Audio,
-            source: path.to_path_buf(),
-            output: path.to_path_buf(),
-            backup: None,
-            old_size,
-            new_size: old_size,
-            aggressive,
-        });
-    }
-
-    let backup = if options.backup && options.output.is_none() {
-        Some(backup_file(path)?)
-    } else {
-        None
+    let encode = |codec_args: Vec<String>| {
+        let mut args: Vec<String> = vec!["-y".into(), "-i".into(), path.display().to_string()];
+        args.extend(codec_args);
+        args.push(temp_out.display().to_string());
+        tools::run(Tool::Ffmpeg, &args)
     };
-
-    std::fs::copy(&temp_out, &dest)?;
-    if options.preserve_dates {
-        copy_dates(path, &dest);
+    if let Err(e) = encode(format.encoding_args(bitrate, aggressive, None)) {
+        // `aac_at` (AudioToolbox) only exists in macOS ffmpeg builds that enable
+        // it; everywhere else fall back to ffmpeg's native AAC encoder.
+        if format != AudioFormat::Aac {
+            return Err(e.into());
+        }
+        encode(AudioFormat::native_aac_args(bitrate))?;
     }
-    if options.output.is_none() && dest != path && path.exists() {
-        let _ = std::fs::remove_file(path);
-    }
 
-    Ok(OptimisationResult {
-        kind: MediaKind::Audio,
-        source: path.to_path_buf(),
-        output: dest,
-        backup,
+    // Re-encoding to the same format must shrink the file; an explicit format
+    // change is kept regardless. In place, a changed extension replaces the
+    // source (backed up first, when enabled).
+    let default_dest = if out_ext.is_empty() {
+        path.to_path_buf()
+    } else {
+        path.with_extension(out_ext)
+    };
+    let dest_ext = options
+        .output
+        .as_deref()
+        .unwrap_or(&default_dest)
+        .extension();
+    let same_format = dest_ext
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case(out_ext));
+    finish(
+        MediaKind::Audio,
+        path,
+        &temp_out,
+        default_dest,
         old_size,
-        new_size,
         aggressive,
-    })
+        options,
+        Placement {
+            size_guard: same_format,
+            backup: true,
+            replace_source: true,
+        },
+    )
 }

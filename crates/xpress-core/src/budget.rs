@@ -6,7 +6,9 @@ use std::path::Path;
 use crate::audio::AudioFormat;
 use crate::compression::{CompressionQuality, CompressionTier};
 use crate::filetype::{classify, MediaKind};
-use crate::result::{file_size, OptimisationResult, OptimiseError, OptimiseOptions};
+use crate::result::{
+    file_size, finish, OptimisationResult, OptimiseError, OptimiseOptions, Placement,
+};
 
 /// Optimise `path` so the result is at most `max_bytes`, trying progressively
 /// harder compression. Returns the best result achieved (which may still exceed
@@ -55,29 +57,22 @@ pub fn optimise_to_budget(
 
     let best = best.ok_or_else(|| OptimiseError::Other("budget: no candidate produced".into()))?;
 
-    // Place the best candidate at the final destination.
-    let old_size = file_size(path);
-    let new_size = file_size(&best.output);
-    let dest = base.output.clone().unwrap_or_else(|| path.to_path_buf());
-    let backup = if base.backup && base.output.is_none() {
-        Some(crate::result::backup_file(path)?)
-    } else {
-        None
-    };
-    std::fs::copy(&best.output, &dest)?;
-    if base.preserve_dates {
-        crate::result::copy_dates(path, &dest);
-    }
-
-    Ok(OptimisationResult {
+    // Place the best candidate at the final destination (even if it is still
+    // over budget: it is the smallest this format can get).
+    finish(
         kind,
-        source: path.to_path_buf(),
-        output: dest,
-        backup,
-        old_size,
-        new_size,
-        aggressive: true,
-    })
+        path,
+        &best.output,
+        path.to_path_buf(),
+        file_size(path),
+        true,
+        base,
+        Placement {
+            size_guard: false,
+            backup: true,
+            replace_source: false,
+        },
+    )
 }
 
 fn run_one(

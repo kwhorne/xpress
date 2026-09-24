@@ -10,7 +10,7 @@ use tempfile::TempDir;
 
 use crate::filetype::MediaKind;
 use crate::result::{
-    backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
+    file_size, finish, OptimisationResult, OptimiseError, OptimiseOptions, Placement,
 };
 use crate::tools::{self, Tool};
 
@@ -230,39 +230,18 @@ pub fn optimise(
     doc.save(&temp_out)
         .map_err(|e| OptimiseError::Other(format!("pdf save: {e}")))?;
 
-    let new_size = file_size(&temp_out);
-    let aggressive = cq.image_is_aggressive();
-
-    if !options.allow_larger && (new_size == 0 || new_size >= old_size) {
-        return Ok(OptimisationResult {
-            kind: MediaKind::Pdf,
-            source: path.to_path_buf(),
-            output: path.to_path_buf(),
-            backup: None,
-            old_size,
-            new_size: old_size,
-            aggressive,
-        });
-    }
-
-    let backup = if options.backup && options.output.is_none() {
-        Some(backup_file(path)?)
-    } else {
-        None
-    };
-    let dest = options.output.clone().unwrap_or_else(|| path.to_path_buf());
-    std::fs::copy(&temp_out, &dest)?;
-    if options.preserve_dates {
-        copy_dates(path, &dest);
-    }
-
-    Ok(OptimisationResult {
-        kind: MediaKind::Pdf,
-        source: path.to_path_buf(),
-        output: dest,
-        backup,
+    finish(
+        MediaKind::Pdf,
+        path,
+        &temp_out,
+        path.to_path_buf(),
         old_size,
-        new_size,
-        aggressive,
-    })
+        cq.image_is_aggressive(),
+        options,
+        Placement {
+            size_guard: true,
+            backup: true,
+            replace_source: false,
+        },
+    )
 }

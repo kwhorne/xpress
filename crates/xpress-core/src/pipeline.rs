@@ -16,7 +16,7 @@ use crate::crop::{self, CropSpec};
 use crate::filetype::{classify, extension_lower, MediaKind};
 use crate::image::{self, ImageFormat};
 use crate::result::{
-    backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
+    file_size, finish, OptimisationResult, OptimiseError, OptimiseOptions, Placement,
 };
 use crate::tools;
 use crate::{scale, video};
@@ -284,40 +284,32 @@ pub fn run(
         current = target;
     }
 
-    // Place the final artifact.
+    // Place the final artifact: a same-type result replaces the source (with a
+    // backup); a changed type (e.g. convert) is written alongside, keeping the
+    // original.
     let final_ext = extension_lower(&current).unwrap_or_default();
     let src_ext = extension_lower(source).unwrap_or_default();
-    let new_size = file_size(&current);
-
-    let (dest, backup) = if let Some(out) = &options.output {
-        (out.clone(), None)
-    } else if final_ext == src_ext {
-        // Same type: replace in place with a backup.
-        let b = if options.backup {
-            Some(backup_file(source)?)
-        } else {
-            None
-        };
-        (source.to_path_buf(), b)
+    let same_type = final_ext == src_ext;
+    let default_dest = if same_type {
+        source.to_path_buf()
     } else {
-        // Type changed (e.g. convert): write alongside, keep the original.
-        (source.with_extension(&final_ext), None)
+        source.with_extension(&final_ext)
     };
-
-    std::fs::copy(&current, &dest)?;
-    if options.preserve_dates {
-        copy_dates(source, &dest);
-    }
-
-    Ok(OptimisationResult {
-        kind: classify(&dest).unwrap_or(MediaKind::Image),
-        source: source.to_path_buf(),
-        output: dest,
-        backup,
+    let kind = classify(&default_dest).unwrap_or(MediaKind::Image);
+    finish(
+        kind,
+        source,
+        &current,
+        default_dest,
         old_size,
-        new_size,
-        aggressive: options.compression.image_is_aggressive(),
-    })
+        options.compression.image_is_aggressive(),
+        options,
+        Placement {
+            size_guard: false,
+            backup: same_type,
+            replace_source: false,
+        },
+    )
 }
 
 /// What extension the step's output will carry.

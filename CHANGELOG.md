@@ -6,6 +6,42 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Animated GIFs were flattened to their first frame** (and reported as a big
+  saving). Animated GIF/WebP/APNG are now never decoded to a single frame: GIFs
+  go through `gifsicle` when installed, otherwise they are left untouched;
+  resize/crop/convert of an animated image fails instead of dropping frames.
+- **Photos lost their orientation, colour profile and EXIF** when optimised,
+  converted, resized or cropped — portrait iPhone shots came out sideways and
+  Display-P3 images washed out. The EXIF orientation is now applied to the
+  pixels (tag reset), and the ICC profile and EXIF are carried through.
+  `--strip-metadata` drops the EXIF but keeps the colour profile.
+- **AVIF conversion** failed with "format not supported"; it now works (pure
+  Rust, `ravif`), with quality taken from the compression value.
+- **WebP conversion** was lossless-only (often larger than the PNG); it is now
+  lossy via libwebp, keeps alpha and the ICC profile.
+- Transparent images converted to JPEG are flattened onto white instead of
+  black.
+- `downscale`/`crop` of an image **backed up the already-modified file**, so
+  `restore` could not bring the original back. The backup is now taken first.
+- Optimising a `.mov` no longer replaces it with a *larger* `.mp4` (and deletes
+  the original); video conversions back the source up before removing it.
+- H.264 output is always 8-bit 4:2:0, so iPhone HDR (10-bit) clips no longer
+  become High-10 files that QuickTime/Safari can't play.
+- AAC encoding falls back to ffmpeg's native `aac` encoder when `aac_at`
+  (macOS AudioToolbox) is unavailable — e.g. on Linux.
+- `watch`: files are only processed once they stop changing (no more
+  half-copied files), and a run's own output (e.g. `clip.mp4`, `photo.webp`) no
+  longer triggers a second run.
+- `watch --clipboard`: the optimised image put back on the clipboard is no
+  longer picked up and re-optimised in a loop; clipboard images are written to
+  PNG in pure Rust (no ffmpeg needed).
+
+### Changed
+- All outputs are written atomically (temp file + rename next to the
+  destination, keeping permissions and, on macOS, Finder tags/xattrs), so a
+  crash mid-write can't leave a truncated file.
+
 ## [0.4.8] - 2026-07-01
 
 ### Added

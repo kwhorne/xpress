@@ -235,6 +235,58 @@ fn video_optimise_normalises_to_mp4() {
 }
 
 #[test]
+fn video_mov_is_kept_when_mp4_would_be_larger() {
+    common::install_stubs();
+    let dir = tmpdir("video-grow");
+    let f = dir.join("clip-grow.mov");
+    common::write_dummy(&f, 8000);
+    let r = video::optimise(&f, &opts()).unwrap();
+    assert!(!r.improved());
+    assert_eq!(r.output, f, "original kept in place");
+    assert!(f.exists(), "original must not be deleted");
+    assert!(!dir.join("clip-grow.mp4").exists());
+}
+
+#[test]
+fn video_crop_is_kept_even_when_larger() {
+    common::install_stubs();
+    let dir = tmpdir("video-crop-grow");
+    let f = dir.join("clip-grow.mp4");
+    common::write_dummy(&f, 8000);
+    let r = crop::crop_file(&f, &CropSpec::size(640, 0), &opts()).unwrap();
+    assert!(r.output.exists());
+    assert!(
+        r.new_size > r.old_size,
+        "an explicit crop is applied regardless"
+    );
+}
+
+#[test]
+fn video_convert_backs_up_the_source_it_replaces() {
+    common::install_stubs();
+    let dir = tmpdir("video-convert-backup");
+    let f = dir.join("clip.mov");
+    common::write_dummy(&f, 8000);
+    let r = video::convert_codec(&f, video::VideoCodec::Hevc, &opts(), false).unwrap();
+    assert_eq!(r.output, dir.join("clip.mp4"));
+    assert!(!f.exists(), "converted in place");
+    let backup = dir.join(".clip.mov.orig");
+    assert_eq!(r.backup.as_deref(), Some(backup.as_path()));
+    assert_eq!(std::fs::metadata(&backup).unwrap().len(), 8000);
+}
+
+#[test]
+fn audio_aac_falls_back_without_audiotoolbox() {
+    common::install_stubs(); // the stub ffmpeg, like Linux builds, lacks aac_at
+    let dir = tmpdir("audio-aac");
+    let f = dir.join("song.wav");
+    common::write_dummy(&f, 4000);
+    let r = audio::optimise(&f, &opts(), AudioFormat::Aac, Some(128)).unwrap();
+    assert_eq!(r.output, dir.join("song.m4a"));
+    assert!(r.output.exists());
+}
+
+#[test]
 fn downscale_image_by_factor() {
     common::install_stubs();
     let dir = tmpdir("scale");

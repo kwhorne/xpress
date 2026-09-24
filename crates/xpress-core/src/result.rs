@@ -167,6 +167,134 @@ pub fn find_backups(inputs: &[PathBuf], recursive: bool) -> Vec<(PathBuf, PathBu
     out
 }
 
+/// Atomically put the contents of `staged` at `dest`: copy into a hidden temp
+/// file next to `dest`, flush it to disk, then `rename` it over `dest`. A crash
+/// or full disk mid-write can never leave a truncated `dest` behind. The
+/// existing file's permissions (and on macOS its xattrs, e.g. Finder tags) are
+/// carried over.
+pub fn place_file(staged: &Path, dest: &Path) -> std::io::Result<()> {
+    let dir = match dest.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    let mut tmp = tempfile::Builder::new()
+        .prefix(".xpress-")
+        .suffix(".tmp")
+        .tempfile_in(dir)?;
+    std::io::copy(&mut fs::File::open(staged)?, tmp.as_file_mut())?;
+    tmp.as_file().sync_all()?;
+
+    let perms_from = if dest.exists() { dest } else { staged };
+    if let Ok(meta) = fs::metadata(perms_from) {
+        let _ = fs::set_permissions(tmp.path(), meta.permissions());
+    }
+    #[cfg(target_os = "macos")]
+    if dest.exists() {
+        copy_xattrs(dest, tmp.path());
+    }
+
+    tmp.persist(dest).map_err(|e| e.error)?;
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn copy_xattrs(from: &Path, to: &Path) {
+    use std::os::unix::ffi::OsStrExt;
+    let (Ok(from), Ok(to)) = (
+        std::ffi::CString::new(from.as_os_str().as_bytes()),
+        std::ffi::CString::new(to.as_os_str().as_bytes()),
+    ) else {
+        return;
+    };
+    // SAFETY: both paths are valid NUL-terminated strings; a null state is allowed.
+    unsafe {
+        libc::copyfile(
+            from.as_ptr(),
+            to.as_ptr(),
+            std::ptr::null_mut(),
+            libc::COPYFILE_XATTR,
+        );
+    }
+}
+
+/// How [`finish`] places an optimiser's output.
+#[derive(Debug, Clone, Copy)]
+pub struct Placement {
+    /// Keep the original (report "no change") unless the result is smaller.
+    /// Ignored when [`OptimiseOptions::allow_larger`] is set.
+    pub size_guard: bool,
+    /// Back the source up first (only for in-place writes with backups on).
+    pub backup: bool,
+    /// After an in-place write to a different path (e.g. `clip.mov` ->
+    /// `clip.mp4`), delete the source.
+    pub replace_source: bool,
+}
+
+/// The result for "nothing written; the original stays as it was".
+pub fn unchanged(
+    kind: MediaKind,
+    src: &Path,
+    old_size: u64,
+    aggressive: bool,
+) -> OptimisationResult {
+    OptimisationResult {
+        kind,
+        source: src.to_path_buf(),
+        output: src.to_path_buf(),
+        backup: None,
+        old_size,
+        new_size: old_size,
+        aggressive,
+    }
+}
+
+/// The final step shared by every optimiser: apply the size guard, back up the
+/// original *before* anything is overwritten, atomically place `staged` at
+/// `options.output` (or `default_dest`), carry the timestamps over and, for
+/// in-place format changes, remove the old source.
+#[allow(clippy::too_many_arguments)]
+pub fn finish(
+    kind: MediaKind,
+    src: &Path,
+    staged: &Path,
+    default_dest: PathBuf,
+    old_size: u64,
+    aggressive: bool,
+    options: &OptimiseOptions,
+    placement: Placement,
+) -> Result<OptimisationResult, OptimiseError> {
+    let new_size = file_size(staged);
+    if placement.size_guard && !options.allow_larger && (new_size == 0 || new_size >= old_size) {
+        return Ok(unchanged(kind, src, old_size, aggressive));
+    }
+
+    let in_place = options.output.is_none();
+    let dest = options.output.clone().unwrap_or(default_dest);
+    let backup = if placement.backup && options.backup && in_place {
+        Some(backup_file(src)?)
+    } else {
+        None
+    };
+
+    place_file(staged, &dest)?;
+    if options.preserve_dates {
+        copy_dates(src, &dest);
+    }
+    if placement.replace_source && in_place && dest != src && src.exists() {
+        let _ = fs::remove_file(src);
+    }
+
+    Ok(OptimisationResult {
+        kind,
+        source: src.to_path_buf(),
+        output: dest,
+        backup,
+        old_size,
+        new_size,
+        aggressive,
+    })
+}
+
 /// Copy creation/modification times from `src` to `dst` (mtime only, portably).
 pub fn copy_dates(src: &Path, dst: &Path) {
     if let Ok(meta) = fs::metadata(src) {

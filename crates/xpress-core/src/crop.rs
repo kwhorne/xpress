@@ -4,14 +4,11 @@
 //! videos use ffmpeg `scale=`/`crop=` expressions. The result is then optimised.
 
 use std::path::Path;
-use std::path::PathBuf;
 
 use tempfile::TempDir;
 
 use crate::filetype::{classify, MediaKind};
-use crate::result::{
-    backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
-};
+use crate::result::{file_size, OptimisationResult, OptimiseError, OptimiseOptions};
 use crate::scale::image_dimensions;
 
 use crate::{image, video};
@@ -267,22 +264,5 @@ fn finalise_image(
     old_size: u64,
     options: &OptimiseOptions,
 ) -> Result<OptimisationResult, OptimiseError> {
-    let dest: PathBuf = options.output.clone().unwrap_or_else(|| path.to_path_buf());
-    let opt_options = OptimiseOptions {
-        output: Some(dest.clone()),
-        backup: false,
-        allow_larger: true,
-        ..options.clone()
-    };
-    let mut result = image::optimise(cropped, &opt_options)?;
-    if options.backup && options.output.is_none() {
-        result.backup = Some(backup_file(path)?);
-    }
-    if options.preserve_dates {
-        copy_dates(path, &dest);
-    }
-    result.source = path.to_path_buf();
-    result.output = dest;
-    result.old_size = old_size;
-    Ok(result)
+    image::finish_transformed(path, cropped, old_size, options)
 }
