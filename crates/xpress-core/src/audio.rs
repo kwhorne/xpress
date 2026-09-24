@@ -291,14 +291,10 @@ pub fn optimise(
     } else {
         path.with_extension(out_ext)
     };
-    let dest_ext = options
-        .output
-        .as_deref()
-        .unwrap_or(&default_dest)
-        .extension();
-    let same_format = dest_ext
-        .and_then(|e| e.to_str())
-        .is_some_and(|e| e.eq_ignore_ascii_case(out_ext));
+    // Optimising (same format) must shrink the file and may replace it in
+    // place, e.g. `.oga` -> `.ogg`. A conversion to another format is written
+    // alongside, keeping the source, like image and video conversion.
+    let converting = format != AudioFormat::SameAsInput.resolved(&input_ext);
     finish(
         MediaKind::Audio,
         path,
@@ -308,9 +304,9 @@ pub fn optimise(
         aggressive,
         options,
         Placement {
-            size_guard: same_format,
-            backup: true,
-            replace_source: true,
+            size_guard: !converting,
+            backup: !converting,
+            replace_source: !converting,
         },
     )
 }

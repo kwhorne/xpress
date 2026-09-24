@@ -434,19 +434,22 @@ pub fn convert_codec(
         tools::run(Tool::Ffmpeg, build(None, true))?;
     }
 
-    // Converting in place replaces the source (backed up first, when enabled).
+    // Like image conversion, the result is written alongside and the source is
+    // kept — unless the target has the same path, which is backed up first.
+    let default_dest = path.with_extension(ext);
+    let overwrites_source = default_dest == path;
     finish(
         MediaKind::Video,
         path,
         &temp_out,
-        path.with_extension(ext),
+        default_dest,
         old_size,
         cq.image_is_aggressive(),
         options,
         Placement {
             size_guard: false,
-            backup: true,
-            replace_source: true,
+            backup: overwrites_source,
+            replace_source: false,
         },
     )
 }

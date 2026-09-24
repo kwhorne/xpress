@@ -262,17 +262,46 @@ fn video_crop_is_kept_even_when_larger() {
 }
 
 #[test]
-fn video_convert_backs_up_the_source_it_replaces() {
+fn video_convert_keeps_the_source() {
     common::install_stubs();
-    let dir = tmpdir("video-convert-backup");
+    let dir = tmpdir("video-convert-keep");
     let f = dir.join("clip.mov");
     common::write_dummy(&f, 8000);
     let r = video::convert_codec(&f, video::VideoCodec::Hevc, &opts(), false).unwrap();
     assert_eq!(r.output, dir.join("clip.mp4"));
-    assert!(!f.exists(), "converted in place");
-    let backup = dir.join(".clip.mov.orig");
-    assert_eq!(r.backup.as_deref(), Some(backup.as_path()));
-    assert_eq!(std::fs::metadata(&backup).unwrap().len(), 8000);
+    assert!(
+        f.exists(),
+        "a conversion writes alongside and keeps the source"
+    );
+    assert!(r.backup.is_none());
+    // The same source can then be converted again (e.g. to a GIF).
+    assert!(video::to_gif(&f, &opts(), 10, None).is_ok());
+}
+
+#[test]
+fn audio_convert_keeps_the_source_and_may_grow() {
+    common::install_stubs();
+    let dir = tmpdir("audio-convert-keep");
+    let f = dir.join("song-grow.mp3");
+    common::write_dummy(&f, 4000);
+    let r = audio::optimise(&f, &opts(), AudioFormat::Flac, None).unwrap();
+    assert_eq!(r.output, dir.join("song-grow.flac"));
+    assert!(
+        r.output.exists(),
+        "a bigger lossless target is still written"
+    );
+    assert!(f.exists(), "source kept");
+}
+
+#[test]
+fn audio_optimise_never_grows_the_file() {
+    common::install_stubs();
+    let dir = tmpdir("audio-optimise-guard");
+    let f = dir.join("song-grow.mp3");
+    common::write_dummy(&f, 4000);
+    let r = audio::optimise(&f, &opts(), AudioFormat::SameAsInput, None).unwrap();
+    assert!(!r.improved());
+    assert_eq!(std::fs::metadata(&f).unwrap().len(), 4000);
 }
 
 #[test]
