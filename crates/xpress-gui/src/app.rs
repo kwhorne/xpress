@@ -328,7 +328,9 @@ impl XpressApp {
     }
 
     fn enter_crop(&mut self, path: PathBuf, ctx: &egui::Context) {
-        let Ok(img) = image::open(&path) else { return };
+        let Ok(img) = xpress_core::image::open_oriented(&path) else {
+            return;
+        };
         let disp = img.thumbnail(1400, 1400).to_rgba8();
         let (w, h) = (disp.width(), disp.height());
         let color =
@@ -562,9 +564,9 @@ impl XpressApp {
             ui.allocate_exact_size(egui::vec2(ui.available_width(), drop_h), Sense::hover());
         let hovering_files = ctx.input(|i| !i.raw.hovered_files.is_empty());
         let stroke = if hovering_files {
-            egui::Stroke::new(2.0, ACCENT)
+            egui::Stroke::new(2.0_f32, ACCENT)
         } else {
-            egui::Stroke::new(1.5, ui.visuals().widgets.noninteractive.bg_stroke.color)
+            egui::Stroke::new(1.5_f32, ui.visuals().widgets.noninteractive.bg_stroke.color)
         };
         ui.painter().rect(
             rect,
@@ -951,7 +953,7 @@ impl XpressApp {
                 painter.rect_stroke(
                     sel,
                     0.0,
-                    egui::Stroke::new(2.0, ACCENT),
+                    egui::Stroke::new(2.0_f32, ACCENT),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -981,16 +983,16 @@ fn install_style(ctx: &egui::Context) {
     v.override_text_color = Some(TEXT);
     v.panel_fill = BG2;
     v.window_fill = PANEL;
-    v.window_stroke = Stroke::new(1.0, BORDER);
+    v.window_stroke = Stroke::new(1.0_f32, BORDER);
     v.window_corner_radius = CornerRadius::same(12);
     v.extreme_bg_color = BG; // text-edit background
     v.faint_bg_color = BG3;
     v.hyperlink_color = ACCENT;
     v.selection.bg_fill = ACCENT.gamma_multiply(0.35);
-    v.selection.stroke = Stroke::new(1.0, ACCENT);
+    v.selection.stroke = Stroke::new(1.0_f32, ACCENT);
 
-    let border = Stroke::new(1.0, BORDER);
-    let text = Stroke::new(1.0, TEXT);
+    let border = Stroke::new(1.0_f32, BORDER);
+    let text = Stroke::new(1.0_f32, TEXT);
     for w in [
         &mut v.widgets.noninteractive,
         &mut v.widgets.inactive,
@@ -1006,10 +1008,10 @@ fn install_style(ctx: &egui::Context) {
     }
     v.widgets.hovered.bg_fill = ACCENT2;
     v.widgets.hovered.weak_bg_fill = ACCENT2;
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, ACCENT);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT);
     v.widgets.active.bg_fill = ACCENT2;
     v.widgets.active.weak_bg_fill = ACCENT2;
-    v.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
+    v.widgets.active.bg_stroke = Stroke::new(1.0_f32, ACCENT);
     v.widgets.noninteractive.bg_stroke = border;
 
     style.visuals = v;
