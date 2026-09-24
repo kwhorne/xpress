@@ -16,6 +16,7 @@ pub mod filetype;
 pub mod image;
 pub mod pdf;
 pub mod pipeline;
+pub mod quality;
 pub mod result;
 pub mod scale;
 pub mod store;

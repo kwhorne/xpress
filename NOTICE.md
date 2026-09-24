@@ -29,6 +29,9 @@ so the binaries themselves can be distributed under MIT:
 | libwebp (libwebp-sys)| lossy WebP                 | BSD-3-Clause       |
 | ravif / rav1e        | AVIF                       | BSD-3 / BSD-2      |
 | lopdf                | PDF                        | MIT                |
+| qcms                 | ICC -> sRGB (AVIF)         | MIT                |
+| ssimulacra2          | `--quality` metric         | BSD-2-Clause       |
+| xattr                | "already optimised" marks  | MIT OR Apache-2.0  |
 
 (Earlier releases linked `libimagequant`, which is GPL-3.0; it has been
 replaced.) The full dependency licence list is available via

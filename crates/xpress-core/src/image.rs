@@ -267,6 +267,16 @@ fn encode_png(img: &DynamicImage, meta: &Meta) -> Result<Vec<u8>, OptimiseError>
     })
 }
 
+/// Write `src` as lossless WebP (with its metadata, minus EXIF/XMP if `strip`).
+pub(crate) fn write_lossless_webp(
+    src: &Path,
+    out: &Path,
+    strip: bool,
+) -> Result<(), OptimiseError> {
+    let (img, meta) = load(src)?;
+    save_with_meta(&img, out, &meta_for(meta, strip))
+}
+
 /// Encode lossy WebP via libwebp at `quality` (0–100), embedding the ICC profile.
 fn write_webp(
     img: &DynamicImage,
@@ -276,15 +286,21 @@ fn write_webp(
 ) -> Result<(), OptimiseError> {
     let (w, h) = (img.width(), img.height());
     let alpha = img.color().has_alpha();
+    // Sharp RGB->YUV conversion keeps coloured edges (text, UI, saturated
+    // detail) crisp through WebP's 4:2:0 chroma subsampling.
+    let mut config = webp::WebPConfig::new().map_err(|_| other("webp config"))?;
+    config.quality = quality.clamp(0.0, 100.0);
+    config.alpha_compression = 1;
+    config.use_sharp_yuv = 1;
     let encoded = if alpha {
         let rgba = img.to_rgba8();
-        webp::Encoder::from_rgba(&rgba, w, h)
-            .encode(quality)
-            .to_vec()
+        webp::Encoder::from_rgba(&rgba, w, h).encode_advanced(&config)
     } else {
         let rgb = img.to_rgb8();
-        webp::Encoder::from_rgb(&rgb, w, h).encode(quality).to_vec()
-    };
+        webp::Encoder::from_rgb(&rgb, w, h).encode_advanced(&config)
+    }
+    .map_err(|e| other(format!("webp encoding failed: {e:?}")))?
+    .to_vec();
     if encoded.is_empty() {
         return Err(other("webp encoding failed"));
     }

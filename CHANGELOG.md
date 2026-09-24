@@ -7,6 +7,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Perceptual quality targets.** `optimise --quality high` (or
+  `visually-lossless`, `medium`, `low`, or a score 1–100) and
+  `convert --to webp|jpeg|png --quality …` find the smallest file that still
+  meets a SSIMULACRA2 score against the original, instead of guessing a
+  compression factor, and report the score achieved.
 - **Already-optimised files are skipped.** `optimise` marks each result with an
   extended attribute (settings + CRC32 of the content); re-running over a
   folder skips unchanged files that were optimised at least as hard — instantly
@@ -64,6 +69,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   PNG in pure Rust (no ffmpeg needed).
 
 ### Changed
+- WebP encodes use libwebp's sharp RGB→YUV conversion, keeping coloured edges
+  crisp; compression factors below 30 now reach WebP/HEIC/AVIF quality 95
+  (previously capped at 72). The normal preset is unchanged.
 - **Licence:** PNG quantisation no longer uses GPL-3.0 `libimagequant`
   (statically linked, which made the MIT binaries effectively GPL). Opaque PNGs
   now use `quantette` (k-means in Oklab, dithered), PNGs with transparency use

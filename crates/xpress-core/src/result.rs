@@ -38,6 +38,9 @@ pub struct OptimisationResult {
     /// Skipped because the file was already optimised with these settings
     /// (see [`crate::cache`]).
     pub cached: bool,
+    /// SSIMULACRA2 score of the output, when a quality target was used
+    /// (see [`crate::quality`]).
+    pub score: Option<f64>,
 }
 
 impl OptimisationResult {
@@ -253,6 +256,7 @@ pub fn unchanged(
         new_size: old_size,
         aggressive,
         cached: false,
+        score: None,
     }
 }
 
@@ -301,6 +305,7 @@ pub fn finish(
         new_size,
         aggressive,
         cached: false,
+        score: None,
     })
 }
 

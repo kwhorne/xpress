@@ -198,6 +198,11 @@ struct OptimiseArgs {
     /// For images: try multiple formats and keep the smallest.
     #[arg(long)]
     adaptive: bool,
+    /// For images: the smallest file that still looks this good, measured with
+    /// SSIMULACRA2 — visually-lossless (90), high (80), medium (70), low (50)
+    /// or a score 1–100. Other media use the normal optimiser.
+    #[arg(long, value_parser = xpress_core::quality::parse_target, conflicts_with_all = ["max_size", "adaptive"])]
+    quality: Option<f64>,
     /// Files, folders or globs to optimise.
     #[arg(required = true)]
     items: Vec<PathBuf>,
@@ -227,6 +232,10 @@ struct ConvertArgs {
     /// Use a hardware encoder (VideoToolbox) for video codecs on Apple Silicon.
     #[arg(long)]
     hw: bool,
+    /// For jpeg/png/webp: the smallest file that still looks this good
+    /// (SSIMULACRA2) — visually-lossless, high, medium, low or a score 1–100.
+    #[arg(long, value_parser = xpress_core::quality::parse_target)]
+    quality: Option<f64>,
     #[arg(required = true)]
     items: Vec<PathBuf>,
 }
@@ -583,9 +592,13 @@ fn run_optimise(args: OptimiseArgs) -> Result<()> {
 
     let max_size = args.max_size;
     let adaptive = args.adaptive;
+    let quality = args.quality;
     let pdf_dpi = args.pdf_dpi;
     let results = progress::run_jobs(jobs, mode, args.common.jobs, |f, o| {
-        if let Some(max) = max_size {
+        let is_image = xpress_core::filetype::classify(f) == Some(MediaKind::Image);
+        if let (Some(target), true) = (quality, is_image) {
+            xpress_core::quality::optimise_to_quality(f, target, o)
+        } else if let Some(max) = max_size {
             xpress_core::budget::optimise_to_budget(f, max, o)
         } else if adaptive && xpress_core::filetype::classify(f) == Some(MediaKind::Image) {
             xpress_core::image::optimise_adaptive(f, o)
@@ -698,9 +711,13 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
                 )
             })
             .collect();
+        let quality = args.quality;
         let results =
             progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
-                xpress_core::image::convert(f, format, o)
+                match quality {
+                    Some(target) => xpress_core::quality::convert_to_quality(f, format, target, o),
+                    None => xpress_core::image::convert(f, format, o),
+                }
             });
         render::summarise(&results, args.common.output_mode());
         return Ok(());

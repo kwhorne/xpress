@@ -60,6 +60,7 @@ fn summarise_json(results: &[(PathBuf, Result<OptimisationResult, OptimiseError>
                 "aggressive": r.aggressive,
                 "improved": r.improved(),
                 "cached": r.cached,
+                "ssimulacra2": r.score,
             }),
             Err(e) => serde_json::json!({
                 "source": path.display().to_string(),
@@ -75,6 +76,13 @@ fn summarise_json(results: &[(PathBuf, Result<OptimisationResult, OptimiseError>
 }
 
 /// Print a per-file summary plus aggregate savings.
+/// `  [SSIMULACRA2 87.3]` when a quality target was used.
+fn score_note(r: &OptimisationResult) -> String {
+    r.score
+        .map(|s| format!("  [SSIMULACRA2 {s:.1}]"))
+        .unwrap_or_default()
+}
+
 pub fn summarise(
     results: &[(PathBuf, Result<OptimisationResult, OptimiseError>)],
     mode: OutputMode,
@@ -109,23 +117,25 @@ pub fn summarise(
                     );
                 } else if r.improved() {
                     println!(
-                        "{CHECK} {} {ARROW} {}  ({} {ARROW} {}, -{:.0}%){}",
+                        "{CHECK} {} {ARROW} {}  ({} {ARROW} {}, -{:.0}%){}{}",
                         path.display(),
                         r.output.display(),
                         human_size(r.old_size),
                         human_size(r.new_size),
                         r.saved_percent(),
                         if r.aggressive { "  [aggressive]" } else { "" },
+                        score_note(r),
                     );
                 } else if r.output != r.source {
                     // A new file was produced (e.g. a format conversion) even
                     // though it isn't smaller — report it as done, not "optimal".
                     println!(
-                        "{CHECK} {} {ARROW} {}  ({} {ARROW} {})",
+                        "{CHECK} {} {ARROW} {}  ({} {ARROW} {}){}",
                         path.display(),
                         r.output.display(),
                         human_size(r.old_size),
                         human_size(r.new_size),
+                        score_note(r),
                     );
                 } else {
                     println!(

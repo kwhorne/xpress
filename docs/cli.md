@@ -70,6 +70,12 @@ Auto-detects each file's type. Extra options:
 - `--pdf-dpi <36..600>` — downsample embedded JPEG images to at most this DPI at the size they are drawn on the page (omit to keep their resolution). Only images whose colours can be re-encoded exactly (RGB/Gray/ICC) are touched; CMYK and other colour spaces are left as they are.
 - `--max-size <size>` — compress to fit a budget (`500kb`, `1.5mb`, `250000`).
 - `--adaptive` — for images, try multiple formats and keep the smallest.
+- `--quality <target>` — for images, the smallest file that still *looks* this
+  good instead of a fixed compression factor. Targets are SSIMULACRA2 scores:
+  `visually-lossless` (90), `high` (80), `medium` (70), `low` (50) or a number
+  1–100. xpress binary-searches the compression and reports the achieved score
+  (`[SSIMULACRA2 80.8]`; `"ssimulacra2"` in `--json`). Other media in the same
+  run use the normal optimiser. Never grows a file.
 
 ```sh
 xpress optimise photo.png clip.mov doc.pdf
@@ -98,8 +104,8 @@ xpress downscale [OPTIONS] -f <FACTOR> <ITEMS>...
 
 - `-f, --factor <0.05..1.0>` — scale factor (default `0.5`).
 
-Images scale via `vips` (or `ffmpeg`), GIFs via `gifsicle`, videos via an
-`ffmpeg` `scale=` filter folded into the re-encode.
+Images are scaled in pure Rust (animated GIFs are refused rather than
+flattened), videos via an `ffmpeg` `scale=` filter folded into the re-encode.
 
 ```sh
 xpress downscale -f 0.5 photo.png
@@ -115,6 +121,15 @@ xpress convert [OPTIONS] -t <FORMAT> <ITEMS>...
 - `-t, --to` — image (`webp|avif|heic|jxl|png|jpeg`), audio (`aac|mp3|opus|wav|flac|aiff`), or video (`gif|mp4|hevc|av1|webm`).
 - `--bitrate <kbps>` — explicit audio bitrate.
 - `--hw` — use a hardware (VideoToolbox) encoder for video on Apple Silicon.
+- `--quality <target>` — for `jpeg`, `png` and `webp`: the smallest output that
+  still scores the target against the original (see `optimise --quality`).
+  WebP falls back to lossless when lossy can't reach the target, unless that
+  would be larger than the source.
+
+```sh
+xpress convert --to webp --quality high photos/      # smallest WebP that looks "high"
+xpress optimise --quality visually-lossless shot.png
+```
 
 **iPhone photos (HEIC/HEIF)** convert both ways on macOS — the built-in `sips`
 is used automatically, so no extra tools are needed to read an Apple photo or to

@@ -153,9 +153,17 @@ impl CompressionQuality {
         args
     }
 
-    /// cwebp / heif-enc -q quality (0-100). factor 30 -> 60.
+    /// WebP / HEIC / AVIF quality (0-100). factor 30 -> 60 (normal); below 30
+    /// it rises to 95 at factor 0 so gentle settings really reach high quality,
+    /// above 30 it falls by 0.5 per step (factor 100 -> 25).
     pub fn conversion_quality(&self) -> i32 {
-        cq_clamp((75.0 - self.factor as f64 * 0.5).round() as i32, 20, 90)
+        let f = self.factor as f64;
+        let q = if f < 30.0 {
+            95.0 - f * (35.0 / 30.0)
+        } else {
+            75.0 - f * 0.5
+        };
+        cq_clamp(q.round() as i32, 20, 95)
     }
 
     /// JXLCoder quality (0-100). factor 30 -> 60.
@@ -315,6 +323,17 @@ mod tests {
             cq.gifsicle_args(),
             vec!["-O3", "--lossy=80", "--colors=202"]
         );
+    }
+
+    #[test]
+    fn conversion_quality_spans_the_range() {
+        assert_eq!(CompressionQuality::normal().conversion_quality(), 60);
+        assert_eq!(CompressionQuality::factor(5).conversion_quality(), 89);
+        assert_eq!(CompressionQuality::factor(100).conversion_quality(), 25);
+        let qs: Vec<i32> = (5..=100)
+            .map(|f| CompressionQuality::factor(f).conversion_quality())
+            .collect();
+        assert!(qs.windows(2).all(|w| w[0] >= w[1]), "monotonic");
     }
 
     #[test]

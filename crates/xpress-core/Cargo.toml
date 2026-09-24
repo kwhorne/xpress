@@ -29,6 +29,8 @@ exoquant = "0.2"
 # ICC -> sRGB conversion (for AVIF, which cannot carry an ICC profile).
 qcms = "0.3"
 crc32fast = "1"
+# Perceptual quality metric for --quality targets.
+ssimulacra2 = "0.5"
 png = "0.17"
 oxipng = { version = "9", default-features = false, features = ["parallel", "zopfli"] }
 include_dir = { version = "0.7", optional = true }
