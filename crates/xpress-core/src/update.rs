@@ -125,6 +125,30 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// The release asset names (see .github/workflows/release.yml) must keep
+    /// the CLI tarball the *first* asset, alphabetically (GitHub's order),
+    /// containing the target: CLIs up to 0.5.0 pick the first match, and the
+    /// desktop app's updater needs `<target>…-app.zip`.
+    #[test]
+    fn release_asset_names_keep_the_cli_tarball_first() {
+        let tag = "v9.9.9";
+        let target = "aarch64-apple-darwin";
+        let mut names = [
+            format!("xpress-{tag}-{target}.tar.gz"),
+            format!("xpress-{tag}-{target}.tar.gz.sha256"),
+            format!("xpress-{tag}-macos-{target}-app.zip"),
+            format!("xpress-{tag}-macos-{target}-app.zip.sha256"),
+            format!("xpress-{tag}-macos-{target}.dmg"),
+            format!("xpress-{tag}-macos-{target}.dmg.sha256"),
+        ];
+        names.sort();
+        let first = names.iter().find(|n| n.contains(target)).unwrap();
+        assert_eq!(first, &format!("xpress-{tag}-{target}.tar.gz"));
+        assert!(names
+            .iter()
+            .any(|n| n.contains(target) && n.ends_with("-app.zip")));
+    }
+
     #[test]
     fn version_comparison() {
         assert!(is_newer("0.5.0", "0.4.0"));
