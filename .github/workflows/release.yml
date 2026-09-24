@@ -49,19 +49,6 @@ jobs:
           cargo build --release --target ${{ matrix.target }} -p xpress-cli
           cargo build --release --target ${{ matrix.target }} -p xpress-gui
 
-      - name: Package
-        shell: bash
-        run: |
-          set -euo pipefail
-          dist="xpress-${GITHUB_REF_NAME}-${{ matrix.target }}"
-          mkdir -p "$dist"
-          bin_dir="target/${{ matrix.target }}/release"
-          cp "$bin_dir/xpress" "$dist/"
-          cp "$bin_dir/xpress-gui" "$dist/"
-          cp README.md LICENSE NOTICE.md "$dist/"
-          tar -czf "$dist.tar.gz" "$dist"
-          shasum -a 256 "$dist.tar.gz" > "$dist.tar.gz.sha256"
-
       - name: Import signing certificate
         if: runner.os == 'macOS' && env.MACOS_CERT_P12 != ''
         env:
@@ -78,6 +65,29 @@ jobs:
           security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
           security set-key-partition-list -S apple-tool:,apple: -s -k "$pw" "$kc"
           rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Package
+        shell: bash
+        env:
+          XPRESS_SIGN_ID: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          XPRESS_NOTARIZE: ${{ env.APPLE_APP_PASSWORD != '' && '1' || '0' }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          dist="xpress-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir -p "$dist"
+          bin_dir="target/${{ matrix.target }}/release"
+          cp "$bin_dir/xpress" "$dist/"
+          cp "$bin_dir/xpress-gui" "$dist/"
+          # Developer ID sign + notarise the standalone binaries too, so a
+          # downloaded tarball (and `xpress update`) doesn't trip Gatekeeper.
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            scripts/sign-binaries.sh "$dist/xpress" "$dist/xpress-gui"
+          fi
+          cp README.md LICENSE NOTICE.md "$dist/"
+          tar -czf "$dist.tar.gz" "$dist"
+          shasum -a 256 "$dist.tar.gz" > "$dist.tar.gz.sha256"
 
       - name: Build macOS .app bundle
         if: runner.os == 'macOS'

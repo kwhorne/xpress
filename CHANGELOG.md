@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The macOS release tarball's `xpress` and `xpress-gui` binaries (also what
+  `xpress update` installs) are now Developer ID signed with the hardened
+  runtime and notarised, like the `.app`/`.dmg`; they used to be ad-hoc signed.
+
 ## [0.4.9] - 2026-09-24
 
 ### Added

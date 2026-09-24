@@ -51,6 +51,12 @@ spctl -a -vvv -t exec dist/xpress.app   # should say "accepted / Notarized Devel
 following repository secrets are set** (Settings → Secrets and variables →
 Actions). Without them the release still builds, just unsigned.
 
+That covers the `.app`, the `.dmg` **and the standalone `xpress` /
+`xpress-gui` binaries in the macOS tarball** (`scripts/sign-binaries.sh`),
+which is also what `xpress update` installs. Bare executables can't be
+stapled, so Gatekeeper checks their notarisation online on first run. To sign
+binaries locally: `scripts/sign-binaries.sh target/release/xpress`.
+
 | Secret | What it is |
 |--------|------------|
 | `MACOS_CERT_P12` | Your Developer ID Application cert + key, exported as `.p12` and base64-encoded |
