@@ -58,10 +58,29 @@ done
 {halve}"#));
 
         // ffmpeg ... -i <in> ... <out>   (out is always the last arg)
+        // Like a non-macOS build it has no `aac_at` encoder, and inputs named
+        // `*grow*` produce a larger output (to exercise the size guard).
         stub(&dir, "ffmpeg",
             r#"args=("$@"); inp=""; out="${args[${#args[@]}-1]}"
+for a in "$@"; do [[ "$a" == "aac_at" ]] && { echo "Unknown encoder 'aac_at'" >&2; exit 1; }; done
 for ((i=0;i<${#args[@]};i++)); do [[ "${args[$i]}" == "-i" ]] && inp="${args[$((i+1))]}"; done
-sz=$(wc -c < "$inp"); head -c $((sz/2 + 1)) "$inp" > "$out""#);
+# Log every invocation next to the input, so tests can inspect the arguments.
+[[ -n "$inp" ]] && printf '%s\n' "$*" >> "$inp.ffmpeg-log"
+# Like ffmpeg: with no output file, print the stream info and fail. Inputs
+# named `*hdr*` report an HLG (HDR) video stream.
+if [[ "$out" == "$inp" ]]; then
+  echo "  Duration: 00:00:10.00, start: 0.000000, bitrate: 6400 kb/s" >&2
+  case "$(basename "$inp")" in
+    *hdr*) echo "  Stream #0:0: Video: hevc (Main 10), yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67), 1920x1080, 30 fps" >&2 ;;
+    *) echo "  Stream #0:0: Video: h264 (High), yuv420p(tv, bt709), 1920x1080, 30 fps" >&2 ;;
+  esac
+  echo "  Stream #0:1: Audio: aac (LC), 48000 Hz, stereo, fltp, 128 kb/s" >&2
+  exit 1
+fi
+case "$(basename "$inp")" in
+  *grow*) cat "$inp" "$inp" > "$out" ;;
+  *) sz=$(wc -c < "$inp"); head -c $((sz/2 + 1)) "$inp" > "$out" ;;
+esac"#);
 
         // vips resize|crop <in> <out> ...   -> copy in to out
         stub(&dir, "vips", r#"cp "$2" "$3""#);

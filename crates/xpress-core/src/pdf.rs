@@ -1,16 +1,18 @@
 //! Pure-Rust PDF optimisation and non-destructive crop.
 //!
-//! Optimisation recompresses embedded JPEG images (via the image engine) and
+//! Optimisation recompresses embedded JPEG images (via the image engine),
+//! optionally downsampling them to a target DPI at their drawn size, and
 //! losslessly re-compresses streams with `lopdf` — no external tool. Only
 //! `extract-pages` (rendering pages to images) still uses ghostscript.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use tempfile::TempDir;
 
 use crate::filetype::MediaKind;
 use crate::result::{
-    backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
+    file_size, finish, OptimisationResult, OptimiseError, OptimiseOptions, Placement,
 };
 use crate::tools::{self, Tool};
 
@@ -148,29 +150,186 @@ pub fn extract_pages(
     Ok(out)
 }
 
-/// Optimise a PDF. `dpi` controls downsampling; `None` means no downsample (300).
-/// Whether a stream dictionary is a JPEG (DCTDecode) image XObject.
-fn is_dct_image(dict: &lopdf::Dictionary) -> bool {
-    let is_image = matches!(dict.get(b"Subtype"), Ok(lopdf::Object::Name(n)) if n == b"Image");
-    if !is_image {
-        return false;
+type ObjectId = (u32, u16);
+
+/// If `dict` is a JPEG image XObject that can be decoded and re-encoded without
+/// changing its colours, the number of colour channels (1 or 3). Only a plain
+/// `DCTDecode` stream in DeviceGray/DeviceRGB (or a 1-/3-component ICCBased
+/// space) at 8 bits with no `/Decode` remapping qualifies; CMYK, Lab, Indexed,
+/// Separation/DeviceN or chained filters are left untouched, since the decoder
+/// would silently convert them to RGB while the PDF still declares the old
+/// colour space.
+fn recompressible_channels(doc: &lopdf::Document, dict: &lopdf::Dictionary) -> Option<u8> {
+    use lopdf::Object;
+    if !matches!(dict.get(b"Subtype"), Ok(Object::Name(n)) if n == b"Image") {
+        return None;
     }
-    match dict.get(b"Filter") {
-        Ok(lopdf::Object::Name(n)) => n == b"DCTDecode",
-        Ok(lopdf::Object::Array(a)) => a
-            .iter()
-            .any(|o| matches!(o, lopdf::Object::Name(n) if n == b"DCTDecode")),
+    let plain_dct = match dict.get(b"Filter").ok()? {
+        Object::Name(n) => n == b"DCTDecode",
+        Object::Array(a) => a.len() == 1 && matches!(&a[0], Object::Name(n) if n == b"DCTDecode"),
         _ => false,
+    };
+    if !plain_dct || dict.has(b"Decode") || dict.has(b"DecodeParms") {
+        return None;
+    }
+    if !matches!(
+        dict.get(b"BitsPerComponent"),
+        Ok(Object::Integer(8)) | Err(_)
+    ) {
+        return None;
+    }
+    let resolve = |o: &Object| -> Option<Object> {
+        match o {
+            Object::Reference(id) => doc.get_object(*id).ok().cloned(),
+            other => Some(other.clone()),
+        }
+    };
+    match resolve(dict.get(b"ColorSpace").ok()?)? {
+        Object::Name(n) if n == b"DeviceRGB" => Some(3),
+        Object::Name(n) if n == b"DeviceGray" => Some(1),
+        Object::Array(a)
+            if a.len() == 2 && matches!(&a[0], Object::Name(n) if n == b"ICCBased") =>
+        {
+            let Object::Stream(icc) = resolve(&a[1])? else {
+                return None;
+            };
+            match icc.dict.get(b"N") {
+                Ok(Object::Integer(1)) => Some(1),
+                Ok(Object::Integer(3)) => Some(3),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
-/// Optimise a PDF in pure Rust: re-compress embedded JPEG (DCTDecode) images at
-/// the target quality and losslessly re-compress content streams. `dpi` is
-/// currently advisory (image downsampling is a future addition).
+/// Multiply two PDF matrices `[a b c d e f]` (`m` applied first).
+fn mat_mul(m: [f64; 6], n: [f64; 6]) -> [f64; 6] {
+    [
+        m[0] * n[0] + m[1] * n[2],
+        m[0] * n[1] + m[1] * n[3],
+        m[2] * n[0] + m[3] * n[2],
+        m[2] * n[1] + m[3] * n[3],
+        m[4] * n[0] + m[5] * n[2] + n[4],
+        m[4] * n[1] + m[5] * n[3] + n[5],
+    ]
+}
+
+/// The page's XObject resource names -> object ids (inherited resources too).
+fn xobject_names(doc: &lopdf::Document, page_id: ObjectId) -> HashMap<Vec<u8>, ObjectId> {
+    let mut names = HashMap::new();
+    let Ok((inline, ids)) = doc.get_page_resources(page_id) else {
+        return names;
+    };
+    let dicts = inline
+        .into_iter()
+        .chain(ids.iter().filter_map(|id| doc.get_dictionary(*id).ok()));
+    for res in dicts {
+        let xobjects = match res.get(b"XObject") {
+            Ok(lopdf::Object::Dictionary(d)) => Some(d),
+            Ok(lopdf::Object::Reference(id)) => doc.get_dictionary(*id).ok(),
+            _ => None,
+        };
+        for (name, obj) in xobjects.into_iter().flat_map(|d| d.iter()) {
+            if let lopdf::Object::Reference(id) = obj {
+                names.entry(name.clone()).or_insert(*id);
+            }
+        }
+    }
+    names
+}
+
+/// The largest size (width, height in points) each image XObject is drawn at,
+/// found by tracking the transformation matrix through every page's content
+/// stream up to its `Do`. Images drawn only inside forms/patterns aren't found.
+fn placed_sizes(doc: &lopdf::Document) -> HashMap<ObjectId, (f64, f64)> {
+    let mut sizes: HashMap<ObjectId, (f64, f64)> = HashMap::new();
+    for page_id in doc.get_pages().into_values() {
+        let names = xobject_names(doc, page_id);
+        let bytes = doc.get_page_content(page_id);
+        let Ok(content) = lopdf::content::Content::decode(&bytes) else {
+            continue;
+        };
+        let mut ctm = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+        let mut stack = Vec::new();
+        for op in content.operations {
+            match op.operator.as_str() {
+                "q" => stack.push(ctm),
+                "Q" => ctm = stack.pop().unwrap_or(ctm),
+                "cm" => {
+                    let v: Vec<f64> = op
+                        .operands
+                        .iter()
+                        .filter_map(|o| o.as_float().ok().map(f64::from))
+                        .collect();
+                    if let Ok(m) = <[f64; 6]>::try_from(v) {
+                        ctm = mat_mul(m, ctm);
+                    }
+                }
+                "Do" => {
+                    let id = op
+                        .operands
+                        .first()
+                        .and_then(|o| o.as_name().ok())
+                        .and_then(|n| names.get(n));
+                    if let Some(id) = id {
+                        let w = ctm[0].hypot(ctm[1]);
+                        let h = ctm[2].hypot(ctm[3]);
+                        let e = sizes.entry(*id).or_insert((0.0, 0.0));
+                        *e = (e.0.max(w), e.1.max(h));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    sizes
+}
+
+/// The longest page edge in the document, in points.
+fn longest_page_edge(doc: &lopdf::Document) -> f64 {
+    doc.get_pages()
+        .into_values()
+        .map(|id| {
+            let [x0, y0, x1, y1] = resolve_mediabox(doc, id);
+            (x1 - x0).abs().max((y1 - y0).abs())
+        })
+        .fold(0.0, f64::max)
+}
+
+/// The pixel size to downsample a `w`x`h` image to so it is no sharper than
+/// `dpi` where it is drawn (or, if its placement is unknown, even when drawn
+/// across the longest page edge). `None` when it is already within the limit.
+fn downsampled_size(
+    w: u32,
+    h: u32,
+    dpi: f64,
+    placed: Option<(f64, f64)>,
+    page_edge: f64,
+) -> Option<(u32, u32)> {
+    let scale = match placed {
+        Some((pw, ph)) if pw > 0.0 && ph > 0.0 => {
+            (pw / 72.0 * dpi / w as f64).max(ph / 72.0 * dpi / h as f64)
+        }
+        _ if page_edge > 0.0 => page_edge / 72.0 * dpi / w.max(h) as f64,
+        _ => return None,
+    };
+    // Leave a little slack so near-target images aren't resampled for nothing.
+    if scale >= 0.9 {
+        return None;
+    }
+    let nw = ((w as f64 * scale).round() as u32).max(1);
+    let nh = ((h as f64 * scale).round() as u32).max(1);
+    Some((nw, nh))
+}
+
+/// Optimise a PDF in pure Rust: re-compress embedded JPEG images at the target
+/// quality (only where that can't change their colours), optionally downsample
+/// them to `dpi` at their drawn size, and losslessly re-compress streams.
 pub fn optimise(
     path: &Path,
     options: &OptimiseOptions,
-    _dpi: Option<i32>,
+    dpi: Option<i32>,
 ) -> Result<OptimisationResult, OptimiseError> {
     if !path.is_file() {
         return Err(OptimiseError::NotFound(path.to_path_buf()));
@@ -178,47 +337,81 @@ pub fn optimise(
     let old_size = file_size(path);
     let cq = options.compression;
     let quality = cq.jpeg_max_quality().clamp(1, 100) as u8;
+    let dpi = dpi.map(|d| d.clamp(36, 600) as f64);
 
     let mut doc =
         lopdf::Document::load(path).map_err(|e| OptimiseError::Other(format!("pdf load: {e}")))?;
 
-    // Re-encode embedded JPEG images at the target quality (keep the smaller one).
-    let ids: Vec<(u32, u16)> = doc
+    let placed = if dpi.is_some() {
+        placed_sizes(&doc)
+    } else {
+        HashMap::new()
+    };
+    let page_edge = longest_page_edge(&doc);
+
+    let targets: Vec<(ObjectId, u8)> = doc
         .objects
         .iter()
         .filter_map(|(id, obj)| match obj {
-            lopdf::Object::Stream(s) if is_dct_image(&s.dict) => Some(*id),
+            lopdf::Object::Stream(s) => recompressible_channels(&doc, &s.dict).map(|c| (*id, c)),
             _ => None,
         })
         .collect();
 
-    for id in ids {
-        if let Ok(lopdf::Object::Stream(stream)) = doc.get_object_mut(id) {
-            let original = std::mem::take(&mut stream.content);
-            let recompressed = match image::load_from_memory(&original) {
-                Ok(img) => {
-                    let mut buf = Vec::new();
-                    let mut enc =
-                        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, quality);
-                    if enc.encode_image(&img).is_ok()
-                        && !buf.is_empty()
-                        && buf.len() < original.len()
-                    {
-                        Some(buf)
-                    } else {
-                        None
-                    }
-                }
-                Err(_) => None, // CMYK/JPX/unsupported: leave untouched
-            };
-            match recompressed {
-                Some(buf) => {
-                    stream.dict.set("Length", buf.len() as i64);
-                    stream.set_content(buf);
-                }
-                None => stream.set_content(original),
+    for (id, channels) in targets {
+        let Ok(lopdf::Object::Stream(stream)) = doc.get_object_mut(id) else {
+            continue;
+        };
+        let Ok(img) = image::load_from_memory(&stream.content) else {
+            continue;
+        };
+        // Keep the declared channel count. (The decoder may return a grayscale
+        // JPEG as RGB; accept that only if every pixel really is gray.)
+        let img = match (channels, img) {
+            (1, img @ image::DynamicImage::ImageLuma8(_)) => img,
+            (1, image::DynamicImage::ImageRgb8(rgb))
+                if rgb.pixels().all(|p| p.0[0] == p.0[1] && p.0[1] == p.0[2]) =>
+            {
+                image::DynamicImage::ImageLuma8(image::GrayImage::from_fn(
+                    rgb.width(),
+                    rgb.height(),
+                    |x, y| image::Luma([rgb.get_pixel(x, y).0[0]]),
+                ))
             }
+            (3, img @ image::DynamicImage::ImageRgb8(_)) => img,
+            _ => continue,
+        };
+        let resize = dpi.and_then(|d| {
+            downsampled_size(
+                img.width(),
+                img.height(),
+                d,
+                placed.get(&id).copied(),
+                page_edge,
+            )
+        });
+        let img = match resize {
+            Some((w, h)) => img.resize_exact(w, h, image::imageops::FilterType::Lanczos3),
+            None => img,
+        };
+        let mut buf = Vec::new();
+        // `write_with_encoder` keeps the colour type (a gray image stays a
+        // 1-component JPEG); `encode_image` would always write RGB.
+        let encoded = img
+            .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(
+                &mut buf, quality,
+            ))
+            .is_ok();
+        // A downsampled image is always used; a same-size one only if smaller.
+        if !encoded || buf.is_empty() || (resize.is_none() && buf.len() >= stream.content.len()) {
+            continue;
         }
+        if resize.is_some() {
+            stream.dict.set("Width", img.width() as i64);
+            stream.dict.set("Height", img.height() as i64);
+        }
+        stream.dict.set("Length", buf.len() as i64);
+        stream.set_content(buf);
     }
 
     // Lossless structural gains: drop orphans and Flate-compress plain streams.
@@ -230,39 +423,18 @@ pub fn optimise(
     doc.save(&temp_out)
         .map_err(|e| OptimiseError::Other(format!("pdf save: {e}")))?;
 
-    let new_size = file_size(&temp_out);
-    let aggressive = cq.image_is_aggressive();
-
-    if !options.allow_larger && (new_size == 0 || new_size >= old_size) {
-        return Ok(OptimisationResult {
-            kind: MediaKind::Pdf,
-            source: path.to_path_buf(),
-            output: path.to_path_buf(),
-            backup: None,
-            old_size,
-            new_size: old_size,
-            aggressive,
-        });
-    }
-
-    let backup = if options.backup && options.output.is_none() {
-        Some(backup_file(path)?)
-    } else {
-        None
-    };
-    let dest = options.output.clone().unwrap_or_else(|| path.to_path_buf());
-    std::fs::copy(&temp_out, &dest)?;
-    if options.preserve_dates {
-        copy_dates(path, &dest);
-    }
-
-    Ok(OptimisationResult {
-        kind: MediaKind::Pdf,
-        source: path.to_path_buf(),
-        output: dest,
-        backup,
+    finish(
+        MediaKind::Pdf,
+        path,
+        &temp_out,
+        path.to_path_buf(),
         old_size,
-        new_size,
-        aggressive,
-    })
+        cq.image_is_aggressive(),
+        options,
+        Placement {
+            size_guard: true,
+            backup: true,
+            replace_source: false,
+        },
+    )
 }

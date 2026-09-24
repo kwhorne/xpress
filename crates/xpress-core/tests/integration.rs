@@ -235,6 +235,278 @@ fn video_optimise_normalises_to_mp4() {
 }
 
 #[test]
+fn video_mov_is_kept_when_mp4_would_be_larger() {
+    common::install_stubs();
+    let dir = tmpdir("video-grow");
+    let f = dir.join("clip-grow.mov");
+    common::write_dummy(&f, 8000);
+    let r = video::optimise(&f, &opts()).unwrap();
+    assert!(!r.improved());
+    assert_eq!(r.output, f, "original kept in place");
+    assert!(f.exists(), "original must not be deleted");
+    assert!(!dir.join("clip-grow.mp4").exists());
+}
+
+#[test]
+fn video_crop_is_kept_even_when_larger() {
+    common::install_stubs();
+    let dir = tmpdir("video-crop-grow");
+    let f = dir.join("clip-grow.mp4");
+    common::write_dummy(&f, 8000);
+    let r = crop::crop_file(&f, &CropSpec::size(640, 0), &opts()).unwrap();
+    assert!(r.output.exists());
+    assert!(
+        r.new_size > r.old_size,
+        "an explicit crop is applied regardless"
+    );
+}
+
+#[test]
+fn video_convert_keeps_the_source() {
+    common::install_stubs();
+    let dir = tmpdir("video-convert-keep");
+    let f = dir.join("clip.mov");
+    common::write_dummy(&f, 8000);
+    let r = video::convert_codec(&f, video::VideoCodec::Hevc, &opts(), false).unwrap();
+    assert_eq!(r.output, dir.join("clip.mp4"));
+    assert!(
+        f.exists(),
+        "a conversion writes alongside and keeps the source"
+    );
+    assert!(r.backup.is_none());
+    // The same source can then be converted again (e.g. to a GIF).
+    assert!(video::to_gif(&f, &opts(), 10, None).is_ok());
+}
+
+#[test]
+fn audio_convert_keeps_the_source_and_may_grow() {
+    common::install_stubs();
+    let dir = tmpdir("audio-convert-keep");
+    let f = dir.join("song-grow.mp3");
+    common::write_dummy(&f, 4000);
+    let r = audio::optimise(&f, &opts(), AudioFormat::Flac, None).unwrap();
+    assert_eq!(r.output, dir.join("song-grow.flac"));
+    assert!(
+        r.output.exists(),
+        "a bigger lossless target is still written"
+    );
+    assert!(f.exists(), "source kept");
+}
+
+#[test]
+fn audio_optimise_never_grows_the_file() {
+    common::install_stubs();
+    let dir = tmpdir("audio-optimise-guard");
+    let f = dir.join("song-grow.mp3");
+    common::write_dummy(&f, 4000);
+    let r = audio::optimise(&f, &opts(), AudioFormat::SameAsInput, None).unwrap();
+    assert!(!r.improved());
+    assert_eq!(std::fs::metadata(&f).unwrap().len(), 4000);
+}
+
+#[test]
+fn audio_aac_falls_back_without_audiotoolbox() {
+    common::install_stubs(); // the stub ffmpeg, like Linux builds, lacks aac_at
+    let dir = tmpdir("audio-aac");
+    let f = dir.join("song.wav");
+    common::write_dummy(&f, 4000);
+    let r = audio::optimise(&f, &opts(), AudioFormat::Aac, Some(128)).unwrap();
+    assert_eq!(r.output, dir.join("song.m4a"));
+    assert!(r.output.exists());
+}
+
+#[test]
+fn pipeline_optimise_never_grows_the_file() {
+    common::install_stubs();
+    let dir = tmpdir("pipeline-guard");
+    let f = dir.join("clip-grow.mp4");
+    common::write_dummy(&f, 8000);
+    let steps = pipeline::parse("optimise").unwrap();
+    let r = pipeline::run(&f, &steps, &opts()).unwrap();
+    assert!(!r.improved());
+    assert_eq!(std::fs::metadata(&f).unwrap().len(), 8000, "original kept");
+    assert!(r.backup.is_none());
+}
+
+#[test]
+fn pipeline_with_content_change_is_kept_even_if_larger() {
+    common::install_stubs();
+    let dir = tmpdir("pipeline-keep");
+    let f = dir.join("clip-grow.mp4");
+    common::write_dummy(&f, 8000);
+    let steps = pipeline::parse("capFps(fps: 24)").unwrap();
+    let r = pipeline::run(&f, &steps, &opts()).unwrap();
+    assert!(r.new_size > 8000);
+    assert!(r.backup.is_some(), "original backed up before replacing");
+}
+
+fn ffmpeg_log(input: &std::path::Path) -> String {
+    let mut log = input.as_os_str().to_owned();
+    log.push(".ffmpeg-log");
+    std::fs::read_to_string(log).unwrap_or_default()
+}
+
+#[test]
+fn hdr_video_is_tone_mapped_for_h264() {
+    common::install_stubs();
+    let dir = tmpdir("video-hdr");
+    let f = dir.join("iphone-hdr.mov");
+    common::write_dummy(&f, 8000);
+    video::optimise(&f, &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    let encode = log
+        .lines()
+        .find(|l| l.contains("-vcodec"))
+        .expect("an encode ran");
+    assert!(encode.contains("tonemap=tonemap=mobius"), "{encode}");
+    assert!(encode.contains("-pix_fmt yuv420p"));
+}
+
+#[test]
+fn sdr_video_is_not_tone_mapped() {
+    common::install_stubs();
+    let dir = tmpdir("video-sdr");
+    let f = dir.join("clip.mov");
+    common::write_dummy(&f, 8000);
+    video::optimise(&f, &opts()).unwrap();
+    assert!(!ffmpeg_log(&f).contains("tonemap"));
+}
+
+#[test]
+fn hdr_crop_chains_the_crop_before_tone_mapping() {
+    common::install_stubs();
+    let dir = tmpdir("video-hdr-crop");
+    let f = dir.join("hdr.mp4");
+    common::write_dummy(&f, 8000);
+    crop::crop_file(&f, &CropSpec::size(640, 0), &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    let encode = log.lines().find(|l| l.contains("-vcodec")).unwrap();
+    assert!(encode.contains("scale=640:-2,zscale=t=linear"), "{encode}");
+}
+
+#[test]
+fn hevc_conversion_keeps_hdr() {
+    common::install_stubs();
+    let dir = tmpdir("video-hdr-hevc");
+    let f = dir.join("hdr.mov");
+    common::write_dummy(&f, 8000);
+    let o = OptimiseOptions {
+        output: Some(dir.join("out.mp4")),
+        ..opts()
+    };
+    video::convert_codec(&f, video::VideoCodec::Hevc, &o, false).unwrap();
+    assert!(
+        !ffmpeg_log(&f).contains("tonemap"),
+        "10-bit HEVC can carry HDR"
+    );
+}
+
+/// The `-b:v` of every second-pass encode in the stub's log, in order.
+fn second_pass_bitrates(log: &str) -> Vec<u32> {
+    log.lines()
+        .filter(|l| l.contains("-pass 2"))
+        .filter_map(|l| {
+            let mut it = l.split_whitespace();
+            it.find(|a| *a == "-b:v")?;
+            it.next()?.trim_end_matches('k').parse().ok()
+        })
+        .collect()
+}
+
+#[test]
+fn video_budget_encodes_two_pass_at_the_computed_bitrate() {
+    common::install_stubs();
+    let dir = tmpdir("video-budget");
+    let f = dir.join("clip.mov");
+    common::write_dummy(&f, 8_000_000); // stub banner: 10 s, 1080p30, AAC
+    let r = xpress_core::budget::optimise_to_budget(&f, 5_000_000, &opts()).unwrap();
+
+    assert_eq!(r.output, dir.join("clip.mp4"));
+    assert!(r.new_size <= 5_000_000);
+    let log = ffmpeg_log(&f);
+    assert!(log.contains("-pass 1") && log.contains("-pass 2"), "{log}");
+    // 5 MB / 10 s = 4000 kbit/s, -4% = 3840, minus 128 audio.
+    assert_eq!(second_pass_bitrates(&log), vec![3712]);
+    assert!(log.contains("-c:a aac -b:a 128k"));
+    assert!(!log.contains("scale="), "3.7 Mbit/s is plenty for 1080p30");
+}
+
+#[test]
+fn video_budget_downscales_when_bits_are_thin() {
+    common::install_stubs();
+    let dir = tmpdir("video-budget-thin");
+    let f = dir.join("clip.mp4");
+    common::write_dummy(&f, 8_000_000);
+    xpress_core::budget::optimise_to_budget(&f, 1_000_000, &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    let pass2 = log.lines().find(|l| l.contains("-pass 2")).unwrap();
+    assert!(pass2.contains("scale="), "{pass2}");
+}
+
+#[test]
+fn video_budget_corrects_an_overshoot() {
+    common::install_stubs();
+    let dir = tmpdir("video-budget-over");
+    let f = dir.join("clip.mp4");
+    // The stub always outputs half the input (4 MB) whatever the settings, so
+    // a 3.5 MB budget overshoots slightly every time: xpress keeps lowering
+    // the bitrate (a small overshoot doesn't call for a smaller frame).
+    common::write_dummy(&f, 8_000_000);
+    let r = xpress_core::budget::optimise_to_budget(&f, 3_500_000, &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    let rates = second_pass_bitrates(&log);
+    assert_eq!(rates.len(), 4, "three corrections: {rates:?}");
+    assert!(rates.windows(2).all(|w| w[1] < w[0]), "{rates:?}");
+    assert!(r.new_size > 3_500_000, "still reports the smallest it got");
+}
+
+#[test]
+fn video_budget_shrinks_the_frame_on_a_big_overshoot() {
+    common::install_stubs();
+    let dir = tmpdir("video-budget-way-over");
+    let f = dir.join("clip.mp4");
+    // Output 4 MB vs a 2.5 MB budget (1.6x): the rate can't be the fix.
+    common::write_dummy(&f, 8_000_000);
+    xpress_core::budget::optimise_to_budget(&f, 2_500_000, &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    let heights: Vec<u32> = log
+        .lines()
+        .filter(|l| l.contains("-pass 2"))
+        .filter_map(|l| {
+            let s = l.split("scale=").nth(1)?;
+            s.split([':', ',']).nth(1)?.parse().ok()
+        })
+        .collect();
+    assert!(heights.len() >= 2, "{log}");
+    assert!(heights.windows(2).all(|w| w[1] < w[0]), "{heights:?}");
+}
+
+#[test]
+fn audio_budget_targets_a_bitrate() {
+    common::install_stubs();
+    let dir = tmpdir("audio-budget");
+    let f = dir.join("song.mp3");
+    common::write_dummy(&f, 400_000); // stub banner: 10 s
+    xpress_core::budget::optimise_to_budget(&f, 250_000, &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    // 250 kB / 10 s = 200 kbit/s -3% = 194 -> LAME VBR quality for <=256k.
+    assert!(log.contains("libmp3lame"), "{log}");
+}
+
+#[test]
+fn budget_already_met_just_optimises() {
+    common::install_stubs();
+    let dir = tmpdir("budget-met");
+    let f = dir.join("clip.mp4");
+    common::write_dummy(&f, 8000);
+    xpress_core::budget::optimise_to_budget(&f, 1_000_000, &opts()).unwrap();
+    assert!(
+        !ffmpeg_log(&f).contains("-pass"),
+        "no bitrate targeting needed"
+    );
+}
+
+#[test]
 fn downscale_image_by_factor() {
     common::install_stubs();
     let dir = tmpdir("scale");

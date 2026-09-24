@@ -5,11 +5,11 @@
 //! * Clipboard watcher — when an image is copied, optimise it and save the result
 //!   to a drop folder (feature `clipboard`).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{bail, Result};
 use notify::{RecursiveMode, Watcher};
@@ -174,8 +174,8 @@ fn folder_loop(
     }
     println!("(press Ctrl-C to stop)\n");
 
-    // Debounce: collect changed paths, process after a quiet period.
-    let mut pending: HashSet<PathBuf> = HashSet::new();
+    // Debounce: collect changed paths, process each once it has settled.
+    let mut pending: Pending = HashMap::new();
     let mut processed: HashMap<PathBuf, SystemTime> = HashMap::new();
 
     while running.load(std::sync::atomic::Ordering::SeqCst) {
@@ -186,26 +186,55 @@ fn folder_loop(
                     notify::EventKind::Create(_) | notify::EventKind::Modify(_)
                 ) {
                     for p in event.paths {
-                        if p.is_file() {
-                            pending.insert(p);
+                        if let Ok(meta) = std::fs::metadata(&p) {
+                            if meta.is_file() {
+                                pending.insert(p, (Instant::now(), meta.len()));
+                            }
                         }
                     }
                 }
             }
-            Ok(Err(_)) => {}
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                if !pending.is_empty() {
-                    let batch: Vec<PathBuf> = pending.drain().collect();
-                    for path in batch {
-                        process_path(&path, &targets, &options, &mut processed);
-                    }
-                }
-            }
+            Ok(Err(_)) | Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+        for path in take_settled(&mut pending, SETTLE) {
+            process_path(&path, &targets, &options, &mut processed);
         }
     }
     println!("\nstopped.");
     Ok(())
+}
+
+/// Changed files awaiting processing: when they last changed, and their size then.
+type Pending = HashMap<PathBuf, (Instant, u64)>;
+
+/// How long a file must go without events or size changes before it is
+/// processed, so a file that is still being copied/downloaded/recorded is never
+/// optimised half-written.
+const SETTLE: Duration = Duration::from_millis(1500);
+
+/// Remove and return the pending files that have settled for `settle`. Files
+/// that grew or shrank since the last look restart their wait; vanished files
+/// are dropped.
+fn take_settled(pending: &mut Pending, settle: Duration) -> Vec<PathBuf> {
+    let mut ready = Vec::new();
+    pending.retain(|path, (seen, size)| {
+        let Ok(meta) = std::fs::metadata(path) else {
+            return false;
+        };
+        if meta.len() != *size {
+            *seen = Instant::now();
+            *size = meta.len();
+            return true;
+        }
+        if seen.elapsed() < settle {
+            return true;
+        }
+        ready.push(path.clone());
+        false
+    });
+    ready.sort();
+    ready
 }
 
 fn process_path(
@@ -252,13 +281,13 @@ fn process_path(
                     r.saved_percent()
                 );
             }
-            // Record the post-write mtime so the resulting change event is ignored.
-            if let Ok(mt) = std::fs::metadata(&r.output).and_then(|m| m.modified()) {
-                processed.insert(path.to_path_buf(), mt);
-            }
-            if r.output != *path {
-                if let Ok(mt) = std::fs::metadata(path).and_then(|m| m.modified()) {
-                    processed.insert(path.to_path_buf(), mt);
+            // Record the source *and* the output at their post-write mtimes, so
+            // the change events our own writes produce are ignored — including a
+            // brand-new output file (clip.mov -> clip.mp4, photo.png -> photo.webp)
+            // that would otherwise be run through the pipeline a second time.
+            for p in [path, r.output.as_path()] {
+                if let Ok(mt) = std::fs::metadata(p).and_then(|m| m.modified()) {
+                    processed.insert(p.to_path_buf(), mt);
                 }
             }
         }
@@ -290,8 +319,6 @@ fn clipboard_loop(
     options: OptimiseOptions,
     steps: Vec<Step>,
 ) {
-    use std::hash::{Hash, Hasher};
-
     let Ok(mut clipboard) = arboard::Clipboard::new() else {
         eprintln!("{} could not access the clipboard", render::WARN);
         return;
@@ -304,24 +331,35 @@ fn clipboard_loop(
     let mut last_hash: u64 = 0;
     while running.load(std::sync::atomic::Ordering::SeqCst) {
         if let Ok(img) = clipboard.get_image() {
-            let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            img.width.hash(&mut hasher);
-            img.height.hash(&mut hasher);
-            img.bytes.len().hash(&mut hasher);
-            // Sample some bytes to detect content changes cheaply.
-            for b in img.bytes.iter().step_by(257).take(64) {
-                b.hash(&mut hasher);
-            }
-            let h = hasher.finish();
+            let h = clipboard_hash(&img);
             if h != last_hash {
                 last_hash = h;
                 if let Err(e) = handle_clipboard_image(&img, &drop_dir, &options, &steps) {
                     eprintln!("{} clipboard image: {e}", render::WARN);
                 }
+                // The optimised image we just put back is new clipboard content;
+                // remember it so it is not optimised (and saved) over and over.
+                if let Ok(back) = clipboard.get_image() {
+                    last_hash = clipboard_hash(&back);
+                }
             }
         }
         std::thread::sleep(Duration::from_millis(600));
     }
+}
+
+/// Cheap content fingerprint of a clipboard image (dimensions + sampled bytes).
+#[cfg(feature = "clipboard")]
+fn clipboard_hash(img: &arboard::ImageData) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    img.width.hash(&mut hasher);
+    img.height.hash(&mut hasher);
+    img.bytes.len().hash(&mut hasher);
+    for b in img.bytes.iter().step_by(257).take(64) {
+        b.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 #[cfg(feature = "clipboard")]
@@ -331,35 +369,13 @@ fn handle_clipboard_image(
     options: &OptimiseOptions,
     steps: &[Step],
 ) -> Result<()> {
-    // Write the raw RGBA to a temp PNG via ffmpeg (rawvideo -> png), then optimise.
+    // Write the raw RGBA pixels to a PNG (pure Rust, no ffmpeg), then optimise.
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let raw = std::env::temp_dir().join(format!("xpress-clip-{ts}.rgba"));
     let png = drop_dir.join(format!("clip-{ts}.png"));
-    std::fs::write(&raw, &img.bytes)?;
-
-    // ffmpeg -f rawvideo -pix_fmt rgba -s WxH -i raw png
-    let res = xpress_core::tools::run(
-        xpress_core::tools::Tool::Ffmpeg,
-        [
-            "-y",
-            "-f",
-            "rawvideo",
-            "-pix_fmt",
-            "rgba",
-            "-s",
-            &format!("{}x{}", img.width, img.height),
-            "-i",
-            &raw.display().to_string(),
-            &png.display().to_string(),
-        ],
-    );
-    let _ = std::fs::remove_file(&raw);
-    if let Err(e) = res {
-        bail!("ffmpeg raw->png failed (is ffmpeg installed?): {e}");
-    }
+    xpress_core::image::save_rgba_png(&img.bytes, img.width as u32, img.height as u32, &png)?;
 
     // Optimise (or run the configured pipeline) on the saved PNG, in place.
     let opts = OptimiseOptions {
@@ -408,4 +424,79 @@ fn clipboard_loop(
         "{} clipboard support not built in (enable the `clipboard` feature)",
         render::WARN
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmpdir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("xpress-watch-{}-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn growing_file_waits_until_it_settles() {
+        let dir = tmpdir("settle");
+        let f = dir.join("big.mov");
+        std::fs::write(&f, b"part").unwrap();
+        let mut pending: Pending = HashMap::new();
+        pending.insert(f.clone(), (Instant::now(), 4));
+        let settle = Duration::from_millis(200);
+
+        // Still being written: size changed, so it must not be picked up.
+        std::fs::write(&f, b"partial download").unwrap();
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(take_settled(&mut pending, settle).is_empty());
+
+        // Quiet and stable for the settle period: now it is ready.
+        std::thread::sleep(Duration::from_millis(250));
+        assert_eq!(take_settled(&mut pending, settle), vec![f]);
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn vanished_file_is_dropped() {
+        let mut pending: Pending = HashMap::new();
+        pending.insert(
+            PathBuf::from("/nonexistent/xpress/file.png"),
+            (Instant::now(), 1),
+        );
+        assert!(take_settled(&mut pending, Duration::ZERO).is_empty());
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn output_of_a_run_is_not_processed_again() {
+        let dir = tmpdir("output-loop");
+        let src = dir.join("photo.png");
+        let rgba: Vec<u8> = (0..64u32 * 64)
+            .flat_map(|i| [(i % 64) as u8 * 4, (i / 64) as u8 * 4, 90, 255])
+            .collect();
+        xpress_core::image::save_rgba_png(&rgba, 64, 64, &src).unwrap();
+        let targets = vec![FolderTarget {
+            folder: dir.clone(),
+            file_type: "all".into(),
+            steps: pipeline::parse("convert(to: webp)").unwrap(),
+            label: "test".into(),
+        }];
+        let options = OptimiseOptions {
+            backup: true,
+            ..Default::default()
+        };
+        let mut processed = HashMap::new();
+
+        process_path(&src, &targets, &options, &mut processed);
+        let webp = dir.join("photo.webp");
+        assert!(webp.exists());
+        let converted = std::fs::read(&webp).unwrap();
+
+        // The watcher then sees the new photo.webp appear; it must be skipped.
+        process_path(&webp, &targets, &options, &mut processed);
+        assert_eq!(std::fs::read(&webp).unwrap(), converted);
+        assert!(!dir.join(".photo.webp.orig").exists(), "no second run");
+    }
 }

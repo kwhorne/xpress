@@ -130,6 +130,10 @@ struct CommonOpts {
     /// Kill any single tool that runs longer than this many seconds (0 = no limit).
     #[arg(long)]
     timeout: Option<u64>,
+    /// Re-process files even if they are marked as already optimised with
+    /// these settings.
+    #[arg(long)]
+    force: bool,
 }
 
 impl CommonOpts {
@@ -172,6 +176,7 @@ impl CommonOpts {
             preserve_dates: !self.no_preserve_dates && cfg.preserve_dates,
             output: self.output.clone(),
             allow_larger: self.allow_larger,
+            use_cache: !self.force,
         }
     }
 }
@@ -183,7 +188,8 @@ struct OptimiseArgs {
     /// Restrict to a media kind: image | video | pdf | audio.
     #[arg(long, value_parser = parse_kind)]
     kind: Option<MediaKind>,
-    /// PDF render DPI for downsampling (48–300). Omit for no downsample.
+    /// Downsample embedded JPEG images in PDFs to at most this DPI at the size
+    /// they are drawn (36–600). Omit to keep their resolution.
     #[arg(long)]
     pdf_dpi: Option<i32>,
     /// Compress to fit a budget, e.g. 500kb, 1.5mb, 250000.
@@ -192,6 +198,11 @@ struct OptimiseArgs {
     /// For images: try multiple formats and keep the smallest.
     #[arg(long)]
     adaptive: bool,
+    /// For images: the smallest file that still looks this good, measured with
+    /// SSIMULACRA2 — visually-lossless (90), high (80), medium (70), low (50)
+    /// or a score 1–100. Other media use the normal optimiser.
+    #[arg(long, value_parser = xpress_core::quality::parse_target, conflicts_with_all = ["max_size", "adaptive"])]
+    quality: Option<f64>,
     /// Files, folders or globs to optimise.
     #[arg(required = true)]
     items: Vec<PathBuf>,
@@ -221,6 +232,10 @@ struct ConvertArgs {
     /// Use a hardware encoder (VideoToolbox) for video codecs on Apple Silicon.
     #[arg(long)]
     hw: bool,
+    /// For jpeg/png/webp: the smallest file that still looks this good
+    /// (SSIMULACRA2) — visually-lossless, high, medium, low or a score 1–100.
+    #[arg(long, value_parser = xpress_core::quality::parse_target)]
+    quality: Option<f64>,
     #[arg(required = true)]
     items: Vec<PathBuf>,
 }
@@ -235,7 +250,8 @@ struct CropArgs {
     /// Treat a single-number size as the longer edge (keeps aspect, no crop).
     #[arg(short = 'l', long)]
     long_edge: bool,
-    /// Crop by centring on detected features (needs vips).
+    /// Images: crop around the most salient region (detail, colour, skin
+    /// tones) instead of the centre. Videos are always cropped centred.
     #[arg(long)]
     smart_crop: bool,
     #[arg(required = true)]
@@ -576,9 +592,13 @@ fn run_optimise(args: OptimiseArgs) -> Result<()> {
 
     let max_size = args.max_size;
     let adaptive = args.adaptive;
+    let quality = args.quality;
     let pdf_dpi = args.pdf_dpi;
     let results = progress::run_jobs(jobs, mode, args.common.jobs, |f, o| {
-        if let Some(max) = max_size {
+        let is_image = xpress_core::filetype::classify(f) == Some(MediaKind::Image);
+        if let (Some(target), true) = (quality, is_image) {
+            xpress_core::quality::optimise_to_quality(f, target, o)
+        } else if let Some(max) = max_size {
             xpress_core::budget::optimise_to_budget(f, max, o)
         } else if adaptive && xpress_core::filetype::classify(f) == Some(MediaKind::Image) {
             xpress_core::image::optimise_adaptive(f, o)
@@ -587,6 +607,21 @@ fn run_optimise(args: OptimiseArgs) -> Result<()> {
         }
     });
     render::summarise(&results, mode);
+    if let (Some(max), false) = (max_size, mode == render::OutputMode::Json) {
+        for (path, r) in &results {
+            if let Ok(r) = r {
+                if r.new_size > max {
+                    eprintln!(
+                        "{} {} is still over the {} budget ({}) — the smallest it gets",
+                        render::WARN,
+                        path.display(),
+                        render::human_size(max),
+                        render::human_size(r.new_size)
+                    );
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -691,9 +726,13 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
                 )
             })
             .collect();
+        let quality = args.quality;
         let results =
             progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
-                xpress_core::image::convert(f, format, o)
+                match quality {
+                    Some(target) => xpress_core::quality::convert_to_quality(f, format, target, o),
+                    None => xpress_core::image::convert(f, format, o),
+                }
             });
         render::summarise(&results, args.common.output_mode());
         return Ok(());
@@ -920,11 +959,12 @@ fn run_crop_pdf(args: CropPdfArgs) -> Result<()> {
         };
         // Crop to a temp then move, so in-place crop is safe.
         let tmp = std::env::temp_dir().join(format!("xpress-crop-{}.pdf", std::process::id()));
-        match xpress_core::pdf::crop(f, &tmp, aspect).and_then(|_| {
-            std::fs::rename(&tmp, &out)
-                .or_else(|_| std::fs::copy(&tmp, &out).map(|_| ()))
+        let res = xpress_core::pdf::crop(f, &tmp, aspect).and_then(|_| {
+            xpress_core::result::place_file(&tmp, &out)
                 .map_err(xpress_core::result::OptimiseError::Io)
-        }) {
+        });
+        let _ = std::fs::remove_file(&tmp);
+        match res {
             Ok(()) => {
                 n += 1;
                 println!(
@@ -950,11 +990,11 @@ fn run_uncrop_pdf(args: FilesArg) -> Result<()> {
     let mut n = 0;
     for f in &files {
         let tmp = std::env::temp_dir().join(format!("xpress-uncrop-{}.pdf", std::process::id()));
-        match xpress_core::pdf::uncrop(f, &tmp).and_then(|_| {
-            std::fs::rename(&tmp, f)
-                .or_else(|_| std::fs::copy(&tmp, f).map(|_| ()))
-                .map_err(xpress_core::result::OptimiseError::Io)
-        }) {
+        let res = xpress_core::pdf::uncrop(f, &tmp).and_then(|_| {
+            xpress_core::result::place_file(&tmp, f).map_err(xpress_core::result::OptimiseError::Io)
+        });
+        let _ = std::fs::remove_file(&tmp);
+        match res {
             Ok(()) => {
                 n += 1;
                 println!("{} uncropped {}", render::CHECK, f.display());

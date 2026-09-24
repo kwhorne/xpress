@@ -1,17 +1,15 @@
 //! Crop / resize to a target size or aspect ratio.
 //!
-//! Images go through `vips`/`vipsthumbnail` (with a centre/attention smart crop);
-//! videos use ffmpeg `scale=`/`crop=` expressions. The result is then optimised.
+//! Images are resized/cropped in pure Rust (centred, or around the most salient
+//! region with `smart`); videos use ffmpeg `scale=`/`crop=` expressions
+//! (always centred). The result is then optimised.
 
 use std::path::Path;
-use std::path::PathBuf;
 
 use tempfile::TempDir;
 
 use crate::filetype::{classify, MediaKind};
-use crate::result::{
-    backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
-};
+use crate::result::{file_size, OptimisationResult, OptimiseError, OptimiseOptions};
 use crate::scale::image_dimensions;
 
 use crate::{image, video};
@@ -27,7 +25,7 @@ pub struct CropSpec {
     pub long_edge: Option<u32>,
     /// Aspect ratio `(w, h)` — crops to ratio without scaling.
     pub aspect: Option<(u32, u32)>,
-    /// Use feature-aware crop (vips `attention`) instead of centre.
+    /// Crop around the most salient region (images) instead of the centre.
     pub smart: bool,
 }
 
@@ -220,15 +218,10 @@ fn crop_image(
 
     let tmp = TempDir::new()?;
     let cropped = tmp.path().join(crate::result::file_name_lossy(path));
-    let _ = spec.smart; // smart (feature-aware) crop falls back to centre in the pure-Rust path
     match plan {
         Plan::Resize(w, h) => image::resize_to(path, &cropped, w, h)?,
-        Plan::Cover(w, h) => image::cover_crop(path, &cropped, w, h)?,
-        Plan::CropOnly(w, h) => {
-            let x = (sw - w) / 2;
-            let y = (sh - h) / 2;
-            image::crop_image_px(path, &cropped, x, y, w, h, None)?;
-        }
+        Plan::Cover(w, h) => image::cover_crop(path, &cropped, w, h, spec.smart)?,
+        Plan::CropOnly(w, h) => image::crop_window(path, &cropped, w, h, spec.smart)?,
     }
 
     finalise_image(path, &cropped, old_size, options)
@@ -267,22 +260,5 @@ fn finalise_image(
     old_size: u64,
     options: &OptimiseOptions,
 ) -> Result<OptimisationResult, OptimiseError> {
-    let dest: PathBuf = options.output.clone().unwrap_or_else(|| path.to_path_buf());
-    let opt_options = OptimiseOptions {
-        output: Some(dest.clone()),
-        backup: false,
-        allow_larger: true,
-        ..options.clone()
-    };
-    let mut result = image::optimise(cropped, &opt_options)?;
-    if options.backup && options.output.is_none() {
-        result.backup = Some(backup_file(path)?);
-    }
-    if options.preserve_dates {
-        copy_dates(path, &dest);
-    }
-    result.source = path.to_path_buf();
-    result.output = dest;
-    result.old_size = old_size;
-    Ok(result)
+    image::finish_transformed(path, cropped, old_size, options)
 }

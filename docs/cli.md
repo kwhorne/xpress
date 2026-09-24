@@ -39,14 +39,24 @@ Most commands accept these shared options:
 | `-o, --output <PATH>` | Output file (single input) or directory (multiple inputs) |
 | `-j, --jobs <N>` | Max files processed in parallel (default: number of CPUs) |
 | `--timeout <SECS>` | Kill any single tool running longer than this (0 = no limit) |
+| `--force` | Re-process files already marked as optimised (see below) |
 
 While a batch runs in a terminal, a live spinner shows `[done/total]` and elapsed
 time; it is suppressed under `--quiet`/`--json` or when output is piped.
 
 Originals are backed up next to the file as `.<name>.orig` unless `--no-backup`.
 Compression is a single percentage that each encoder maps to its native quality
-knob (jpegoptim `--max`, pngquant `--quality`, gifsicle `-O/--lossy`, libx264
-CRF/preset, audio bitrate).
+knob (JPEG quality, PNG palette size and quality floor, libx264 CRF/preset,
+audio bitrate).
+
+**Already-optimised files are skipped.** After `optimise`, each file gets an
+extended attribute (`com.xpress.optimised`, or `user.xpress.optimised` on Linux)
+recording the settings and a CRC32 of its content. Re-running over the same
+folder skips files whose content is unchanged and that were optimised at least
+as hard — instantly, and without re-encoding (which would only add generation
+loss). Editing a file, asking for more compression, `--strip-metadata` or a
+lower `--pdf-dpi` makes it run again; `--force` always does. On filesystems
+without extended attributes nothing is cached.
 
 ## optimise
 
@@ -57,9 +67,21 @@ xpress optimise [OPTIONS] <ITEMS>...
 Auto-detects each file's type. Extra options:
 
 - `--kind image|video|pdf|audio` — restrict to one media kind.
-- `--pdf-dpi <48..300>` — downsample PDF images to this DPI (omit for none).
-- `--max-size <size>` — compress to fit a budget (`500kb`, `1.5mb`, `250000`).
+- `--pdf-dpi <36..600>` — downsample embedded JPEG images to at most this DPI at the size they are drawn on the page (omit to keep their resolution). Only images whose colours can be re-encoded exactly (RGB/Gray/ICC) are touched; CMYK and other colour spaces are left as they are.
+- `--max-size <size>` — compress to fit a budget (`500kb`, `1.5mb`, `250000`;
+  decimal units). Video and lossy audio compute the bitrate the budget allows
+  from the duration and encode straight to it — two-pass H.264 for video,
+  downscaled (keeping aspect, never below 240 lines) when the bits are too thin
+  for the frame size — then correct if the result lands off; results typically
+  land at 85–97% of the budget. Images/PDFs step up the compression until they
+  fit. A file that can't get under the budget is reported with a warning.
 - `--adaptive` — for images, try multiple formats and keep the smallest.
+- `--quality <target>` — for images, the smallest file that still *looks* this
+  good instead of a fixed compression factor. Targets are SSIMULACRA2 scores:
+  `visually-lossless` (90), `high` (80), `medium` (70), `low` (50) or a number
+  1–100. xpress binary-searches the compression and reports the achieved score
+  (`[SSIMULACRA2 80.8]`; `"ssimulacra2"` in `--json`). Other media in the same
+  run use the normal optimiser. Never grows a file.
 
 ```sh
 xpress optimise photo.png clip.mov doc.pdf
@@ -88,8 +110,8 @@ xpress downscale [OPTIONS] -f <FACTOR> <ITEMS>...
 
 - `-f, --factor <0.05..1.0>` — scale factor (default `0.5`).
 
-Images scale via `vips` (or `ffmpeg`), GIFs via `gifsicle`, videos via an
-`ffmpeg` `scale=` filter folded into the re-encode.
+Images are scaled in pure Rust (animated GIFs are refused rather than
+flattened), videos via an `ffmpeg` `scale=` filter folded into the re-encode.
 
 ```sh
 xpress downscale -f 0.5 photo.png
@@ -105,6 +127,15 @@ xpress convert [OPTIONS] -t <FORMAT> <ITEMS>...
 - `-t, --to` — image (`webp|avif|heic|jxl|png|jpeg`), audio (`aac|mp3|opus|wav|flac|aiff`), or video (`gif|mp4|hevc|av1|webm`).
 - `--bitrate <kbps>` — explicit audio bitrate.
 - `--hw` — use a hardware (VideoToolbox) encoder for video on Apple Silicon.
+- `--quality <target>` — for `jpeg`, `png` and `webp`: the smallest output that
+  still scores the target against the original (see `optimise --quality`).
+  WebP falls back to lossless when lossy can't reach the target, unless that
+  would be larger than the source.
+
+```sh
+xpress convert --to webp --quality high photos/      # smallest WebP that looks "high"
+xpress optimise --quality visually-lossless shot.png
+```
 
 **iPhone photos (HEIC/HEIF)** convert both ways on macOS — the built-in `sips`
 is used automatically, so no extra tools are needed to read an Apple photo or to
@@ -127,7 +158,7 @@ xpress crop [OPTIONS] -s <SIZE> <ITEMS>...
 
 - `-s, --size` — `1200x630`, `1200x0`, `0x720`, aspect ratio `16:9`, or a single number.
 - `-l, --long-edge` — treat a single number as the longer edge (keeps aspect, no crop).
-- `--smart-crop` — centre on detected features (needs `vips`).
+- `--smart-crop` — for images, crop around the most salient region (detail, saturated colour, skin tones) instead of the centre. Pure Rust; videos are always cropped centred.
 
 ```sh
 xpress crop --size 1200x630 banner.png

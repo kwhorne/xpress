@@ -6,6 +6,100 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`--max-size` for video and audio now targets the size directly.** The
+  bitrate is computed from the budget and duration and encoded two-pass
+  (video), with the frame downscaled when the bits are too thin and up to three
+  corrections — instead of up to six CRF re-encodes that couldn't aim at a
+  size. Real 20 s 1080p clips landed at 87–93% of 10 MB / 4 MB / 1.5 MB budgets;
+  MP3/AAC at 87–97%. Files still over budget get a warning.
+- **Perceptual quality targets.** `optimise --quality high` (or
+  `visually-lossless`, `medium`, `low`, or a score 1–100) and
+  `convert --to webp|jpeg|png --quality …` find the smallest file that still
+  meets a SSIMULACRA2 score against the original, instead of guessing a
+  compression factor, and report the score achieved.
+- **Already-optimised files are skipped.** `optimise` marks each result with an
+  extended attribute (settings + CRC32 of the content); re-running over a
+  folder skips unchanged files that were optimised at least as hard — instantly
+  and without piling up generation loss. `--force` re-processes; `--json`
+  reports `"cached"`.
+- `--smart-crop` (and `smart: true` in pipelines) now works for images: a
+  pure-Rust saliency crop (edges, saturation, skin tones) picks the most
+  interesting region instead of the centre. It previously did nothing.
+- `--pdf-dpi` now works: embedded JPEG images are downsampled to at most that
+  DPI at the size they are actually drawn (read from the page content streams,
+  falling back to the page size).
+
+### Fixed
+- PDF optimisation no longer re-encodes CMYK (or Lab/Indexed/Separation) JPEGs
+  — decoding turned them into RGB while the PDF still declared CMYK, corrupting
+  the colours. Gray images stay 1-component JPEGs.
+- Shrink-only pipelines (e.g. the watch daemon's default `optimise`) no longer
+  replace a file with a bigger result.
+- **Animated GIFs were flattened to their first frame** (and reported as a big
+  saving). Animated GIF/WebP/APNG are now never decoded to a single frame: GIFs
+  go through `gifsicle` when installed, otherwise they are left untouched;
+  resize/crop/convert of an animated image fails instead of dropping frames.
+- **Photos lost their orientation, colour profile and EXIF** when optimised,
+  converted, resized or cropped — portrait iPhone shots came out sideways and
+  Display-P3 images washed out. The EXIF orientation is now applied to the
+  pixels (tag reset), and the ICC profile and EXIF are carried through.
+  `--strip-metadata` drops the EXIF but keeps the colour profile.
+- **AVIF conversion** failed with "format not supported"; it now works (pure
+  Rust, `ravif`), with quality taken from the compression value.
+- **WebP conversion** was lossless-only (often larger than the PNG); it is now
+  lossy via libwebp, keeps alpha and the ICC profile.
+- XMP metadata (ratings, captions, edit history) is kept through JPEG, PNG and
+  WebP outputs, and WebP now also carries EXIF; `--strip-metadata` drops XMP.
+- AVIF output (which can't embed an ICC profile) is converted to sRGB from the
+  source's colour profile, so Display-P3 and other wide-gamut images no longer
+  shift colour.
+- Transparent images converted to JPEG are flattened onto white instead of
+  black.
+- `downscale`/`crop` of an image **backed up the already-modified file**, so
+  `restore` could not bring the original back. The backup is now taken first.
+- Optimising a `.mov` no longer replaces it with a *larger* `.mp4` (and deletes
+  the original); video conversions back the source up before removing it.
+- H.264 output is always 8-bit 4:2:0, so iPhone HDR (10-bit) clips no longer
+  become High-10 files that QuickTime/Safari can't play — and HDR sources (HLG
+  or PQ) are tone-mapped to SDR BT.709 (zscale + mobius) instead of coming out
+  grey and washed out. Falls back to a plain encode if ffmpeg lacks zscale;
+  HEVC/AV1/VP9 conversions keep HDR untouched.
+- AAC encoding falls back to ffmpeg's native `aac` encoder when `aac_at`
+  (macOS AudioToolbox) is unavailable — e.g. on Linux.
+- `watch`: files are only processed once they stop changing (no more
+  half-copied files), and a run's own output (e.g. `clip.mp4`, `photo.webp`) no
+  longer triggers a second run.
+- `watch --clipboard`: the optimised image put back on the clipboard is no
+  longer picked up and re-optimised in a loop; clipboard images are written to
+  PNG in pure Rust (no ffmpeg needed).
+
+### Changed
+- **`convert` keeps the source for video and audio**, like it already did for
+  images: the result is written alongside. Previously a video/audio conversion
+  deleted the original (irrecoverably with `--no-backup`). Optimising a `.mov`
+  to `.mp4` still replaces it. An audio conversion to a bigger format (e.g.
+  MP3 → FLAC) is no longer refused by the size guard.
+- Dependencies: `lopdf` 0.45 (fixes RUSTSEC-2026-0187, a stack overflow on
+  crafted PDFs), `self_update` 1.x without the S3 backend, `egui`/`eframe`
+  0.36, and a `cargo update` — `cargo audit` reports no vulnerabilities.
+- An explicit MP3 bitrate (`lowerBitrate(kbps: …)`, size budgets) now encodes
+  CBR at that bitrate instead of the nearest VBR quality level, which could land
+  far from it.
+- WebP encodes use libwebp's sharp RGB→YUV conversion, keeping coloured edges
+  crisp; compression factors below 30 now reach WebP/HEIC/AVIF quality 95
+  (previously capped at 72). The normal preset is unchanged.
+- **Licence:** PNG quantisation no longer uses GPL-3.0 `libimagequant`
+  (statically linked, which made the MIT binaries effectively GPL). Opaque PNGs
+  now use `quantette` (k-means in Oklab, dithered), PNGs with transparency use
+  `exoquant`; on our samples results are smaller for screenshots/icons and ~6 %
+  larger for photos, with no visible difference. A PSNR floor
+  derived from the compression value keeps an image lossless when a palette
+  would cost too much quality. MSRV is now Rust 1.90.
+- All outputs are written atomically (temp file + rename next to the
+  destination, keeping permissions and, on macOS, Finder tags/xattrs), so a
+  crash mid-write can't leave a truncated file.
+
 ## [0.4.8] - 2026-07-01
 
 ### Added

@@ -15,6 +15,28 @@ underlying tools (ffmpeg, pngquant, jpegoptim, gifsicle, ghostscript, etc.).
 If you want the original Clop application, get it at https://lowtechguys.com/clop —
 it is a separate work under its own (GPLv3) licence.
 
+## Linked libraries
+
+The xpress binaries statically link only permissively licensed codec libraries,
+so the binaries themselves can be distributed under MIT:
+
+| Library              | Purpose                    | Licence            |
+|----------------------|----------------------------|--------------------|
+| quantette            | PNG palette (opaque)       | MIT OR Apache-2.0  |
+| exoquant             | PNG palette (with alpha)   | MIT                |
+| oxipng               | lossless PNG squeeze       | MIT                |
+| image / zune-jpeg    | decode/encode, JPEG        | MIT OR Apache-2.0  |
+| libwebp (libwebp-sys)| lossy WebP                 | BSD-3-Clause       |
+| ravif / rav1e        | AVIF                       | BSD-3 / BSD-2      |
+| lopdf                | PDF                        | MIT                |
+| qcms                 | ICC -> sRGB (AVIF)         | MIT                |
+| ssimulacra2          | `--quality` metric         | BSD-2-Clause       |
+| xattr                | "already optimised" marks  | MIT OR Apache-2.0  |
+
+(Earlier releases linked `libimagequant`, which is GPL-3.0; it has been
+replaced.) The full dependency licence list is available via
+`cargo metadata` / `cargo about`.
+
 ## Bundled third-party binaries
 
 xpress can bundle or download external command-line tools to perform the actual

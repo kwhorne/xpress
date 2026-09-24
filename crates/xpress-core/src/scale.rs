@@ -3,21 +3,18 @@
 //! Images are scaled in pure Rust (the `image` crate); videos via an ffmpeg
 //! `scale=` filter folded into the optimise encode.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tempfile::TempDir;
 
 use crate::filetype::{classify, MediaKind};
-use crate::result::{
-    backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
-};
+use crate::result::{file_size, OptimisationResult, OptimiseError, OptimiseOptions};
 use crate::{image, video};
 
-/// Read the pixel dimensions of an image file, if possible.
+/// Read the pixel dimensions of an image file as displayed (EXIF orientation
+/// applied), if possible.
 pub fn image_dimensions(path: &Path) -> Option<(u32, u32)> {
-    imagesize::size(path)
-        .ok()
-        .map(|s| (s.width as u32, s.height as u32))
+    image::oriented_dimensions(path)
 }
 
 /// Downscale a single file by `factor` (0.0–1.0), then optimise it.
@@ -63,26 +60,5 @@ fn downscale_image(
     // Pure-Rust resize for all raster image formats.
     image::scale_image(path, &scaled, factor)?;
 
-    // Optimise the scaled temp, writing to the final destination. We always keep
-    // the scaled result (allow_larger) since the user explicitly asked to shrink.
-    let dest: PathBuf = options.output.clone().unwrap_or_else(|| path.to_path_buf());
-    let opt_options = OptimiseOptions {
-        output: Some(dest.clone()),
-        backup: false,
-        allow_larger: true,
-        ..options.clone()
-    };
-    let mut result = image::optimise(&scaled, &opt_options)?;
-
-    // Restore the true source identity + original size for accurate reporting.
-    if options.backup && options.output.is_none() {
-        result.backup = Some(backup_file(path)?);
-    }
-    if options.preserve_dates {
-        copy_dates(path, &dest);
-    }
-    result.source = path.to_path_buf();
-    result.output = dest;
-    result.old_size = old_size;
-    Ok(result)
+    image::finish_transformed(path, &scaled, old_size, options)
 }

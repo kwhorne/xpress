@@ -6,9 +6,251 @@ use tempfile::TempDir;
 
 use crate::filetype::MediaKind;
 use crate::result::{
-    backup_file, copy_dates, file_size, OptimisationResult, OptimiseError, OptimiseOptions,
+    file_size, finish, OptimisationResult, OptimiseError, OptimiseOptions, Placement,
 };
 use crate::tools::{self, Tool};
+
+/// Tone-maps HDR (PQ / HLG, BT.2020) to SDR BT.709 in 8 bits. H.264 output is
+/// always 8-bit 4:2:0, and squeezing an iPhone HDR clip into that without
+/// tone-mapping leaves it grey and washed out (or wrongly tagged as HDR).
+///
+/// Mobius keeps tones up to the knee (`param`) linear, so normally exposed
+/// footage keeps its brightness, and rolls highlights off smoothly above it.
+pub const HDR_TO_SDR: &str = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,\
+     tonemap=tonemap=mobius:param=0.5:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
+
+/// Whether ffmpeg's stream banner (its `-i` output) shows an HDR video stream,
+/// i.e. a PQ (`smpte2084`) or HLG (`arib-std-b67`) transfer.
+pub fn describes_hdr(ffmpeg_stderr: &str) -> bool {
+    ffmpeg_stderr
+        .lines()
+        .any(|l| l.contains("Video:") && (l.contains("smpte2084") || l.contains("arib-std-b67")))
+}
+
+/// What ffmpeg's stream banner says about a media file.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct MediaInfo {
+    /// Duration in seconds (0 if unknown).
+    pub duration: f64,
+    /// Overall bitrate in kbit/s (0 if unknown).
+    pub bitrate_kbps: f64,
+    /// Video frame size and rate (0 if unknown / no video).
+    pub width: u32,
+    pub height: u32,
+    pub fps: f64,
+    pub has_audio: bool,
+    /// PQ or HLG transfer (see [`describes_hdr`]).
+    pub hdr: bool,
+}
+
+/// Parse ffmpeg's `-i` banner (stderr) into a [`MediaInfo`].
+pub fn parse_banner(stderr: &str) -> MediaInfo {
+    use std::sync::OnceLock;
+    static RE: OnceLock<[regex::Regex; 4]> = OnceLock::new();
+    let [duration, bitrate, size, fps] = RE.get_or_init(|| {
+        [
+            regex::Regex::new(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)").unwrap(),
+            regex::Regex::new(r"bitrate: (\d+(?:\.\d+)?) kb/s").unwrap(),
+            regex::Regex::new(r"[ ,](\d{2,5})x(\d{2,5})[ ,\[]").unwrap(),
+            regex::Regex::new(r"(\d+(?:\.\d+)?) fps").unwrap(),
+        ]
+    });
+    let mut info = MediaInfo {
+        hdr: describes_hdr(stderr),
+        ..Default::default()
+    };
+    for line in stderr.lines() {
+        if let Some(c) = duration.captures(line) {
+            let n = |i: usize| c[i].parse::<f64>().unwrap_or(0.0);
+            info.duration = n(1) * 3600.0 + n(2) * 60.0 + n(3);
+        }
+        if line.contains("Duration:") {
+            if let Some(c) = bitrate.captures(line) {
+                info.bitrate_kbps = c[1].parse().unwrap_or(0.0);
+            }
+        }
+        if line.contains("Video:") && info.width == 0 {
+            if let Some(c) = size.captures(line) {
+                info.width = c[1].parse().unwrap_or(0);
+                info.height = c[2].parse().unwrap_or(0);
+            }
+            if let Some(c) = fps.captures(line) {
+                info.fps = c[1].parse().unwrap_or(0.0);
+            }
+        }
+        info.has_audio |= line.contains("Audio:");
+    }
+    info
+}
+
+/// Probe a media file with ffmpeg. `None` if ffmpeg can't be run.
+pub fn probe(path: &Path) -> Option<MediaInfo> {
+    // With no output file ffmpeg prints the stream info and exits non-zero.
+    let stderr = match tools::run(
+        Tool::Ffmpeg,
+        ["-hide_banner", "-i", &path.display().to_string()],
+    ) {
+        Err(tools::ToolError::Failed { stderr, .. }) => stderr,
+        Ok(out) => String::from_utf8_lossy(&out.stderr).into_owned(),
+        Err(_) => return None,
+    };
+    Some(parse_banner(&stderr))
+}
+
+/// Probe `path` for an HDR video stream. Best-effort: false if unsure.
+pub fn is_hdr(path: &Path) -> bool {
+    probe(path).is_some_and(|i| i.hdr)
+}
+
+/// Bitrates (and, if needed, a smaller frame size) for hitting a file size.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BitratePlan {
+    pub video_kbps: u32,
+    /// AAC bitrate, or `None` for no audio track.
+    pub audio_kbps: Option<u32>,
+    /// Downscale to this size when the bitrate is too thin for the original.
+    pub scale: Option<(u32, u32)>,
+}
+
+/// Below this many bits per pixel per frame H.264 turns to mush, so a smaller
+/// frame size looks better than the full one at the same bitrate.
+const MIN_BITS_PER_PIXEL: f64 = 0.05;
+
+/// Plan the bitrates for a `max_bytes` file: the budget over the duration,
+/// minus ~4% container overhead, split between AAC audio (10%, 32–128 kbit/s)
+/// and video; downscaled (keeping aspect, not below 240 lines) when the video
+/// bitrate is too low for the frame size. `None` without a known duration.
+pub fn plan_bitrate(max_bytes: u64, info: &MediaInfo) -> Option<BitratePlan> {
+    if info.duration <= 0.0 {
+        return None;
+    }
+    let total_kbps = max_bytes as f64 * 8.0 / info.duration / 1000.0 * 0.96;
+    let audio = info
+        .has_audio
+        .then(|| (total_kbps * 0.1).clamp(32.0, 128.0));
+    let video = (total_kbps - audio.unwrap_or(0.0)).max(20.0);
+
+    let even = |n: f64| ((n / 2.0).round() as u32 * 2).max(2);
+    let scale = if info.width > 0 && info.height > 0 && info.fps > 0.0 {
+        let bpp = video * 1000.0 / (info.width as f64 * info.height as f64 * info.fps);
+        let min_h = 240.0_f64.min(info.height as f64);
+        let k = (bpp / MIN_BITS_PER_PIXEL).sqrt();
+        (k < 0.9).then(|| {
+            let h = (info.height as f64 * k).max(min_h);
+            let w = h * info.width as f64 / info.height as f64;
+            (even(w), even(h))
+        })
+    } else {
+        None
+    };
+    Some(BitratePlan {
+        video_kbps: video.round() as u32,
+        audio_kbps: audio.map(|a| a.round() as u32),
+        scale,
+    })
+}
+
+/// Two-pass libx264 encode of `path` to `out` at the planned bitrates (with the
+/// HDR tone-map when needed). Two-pass lands close to the requested size.
+pub fn encode_to_bitrate(
+    path: &Path,
+    out: &Path,
+    plan: &BitratePlan,
+    hdr: bool,
+) -> Result<(), OptimiseError> {
+    let tmp = TempDir::new()?;
+    let log = tmp.path().join("x264");
+    let scale = plan
+        .scale
+        .map(|(w, h)| format!("scale={w}:{h}:flags=lanczos,setsar=1"));
+    let mut filters: Vec<Option<String>> = Vec::new();
+    if hdr {
+        filters.push(Some(match &scale {
+            Some(s) => format!("{s},{HDR_TO_SDR}"),
+            None => HDR_TO_SDR.to_string(),
+        }));
+    }
+    filters.push(scale);
+
+    let s = |v: &str| v.to_string();
+    let mut last = None;
+    for vf in &filters {
+        let common = |pass: &str| -> Vec<String> {
+            let mut a = vec![s("-y"), s("-i"), path.display().to_string()];
+            if let Some(f) = vf {
+                a.extend([s("-vf"), f.clone()]);
+            }
+            a.extend([
+                s("-c:v"),
+                s("libx264"),
+                s("-preset"),
+                s("medium"),
+                s("-b:v"),
+                format!("{}k", plan.video_kbps),
+                s("-pix_fmt"),
+                s("yuv420p"),
+                s("-pass"),
+                s(pass),
+                s("-passlogfile"),
+                log.display().to_string(),
+                s("-hide_banner"),
+                s("-nostats"),
+            ]);
+            a
+        };
+        let mut pass1 = common("1");
+        pass1.extend([s("-an"), s("-f"), s("mp4")]);
+        pass1.push(tmp.path().join("pass1.mp4").display().to_string());
+        let mut pass2 = common("2");
+        match plan.audio_kbps {
+            Some(a) => pass2.extend([s("-c:a"), s("aac"), s("-b:a"), format!("{a}k")]),
+            None => pass2.push(s("-an")),
+        }
+        pass2.extend([s("-movflags"), s("+faststart")]);
+        pass2.push(out.display().to_string());
+
+        match tools::run(Tool::Ffmpeg, &pass1).and_then(|_| tools::run(Tool::Ffmpeg, &pass2)) {
+            Ok(_) => return Ok(()),
+            Err(e @ tools::ToolError::Timeout { .. }) => return Err(e.into()),
+            Err(e) => last = Some(e),
+        }
+    }
+    Err(last
+        .map(Into::into)
+        .unwrap_or_else(|| OptimiseError::Other("ffmpeg failed".into())))
+}
+
+/// Run an H.264 encode built by `build(filter, reencode_audio)`: tone-mapping
+/// HDR input first (falling back to plain if this ffmpeg lacks `zscale`), and
+/// copying the audio before re-encoding it.
+fn run_h264_encode(
+    path: &Path,
+    vf: Option<&str>,
+    build: impl Fn(Option<&str>, bool) -> Vec<String>,
+) -> Result<(), OptimiseError> {
+    let mut filters: Vec<Option<String>> = Vec::new();
+    if is_hdr(path) {
+        filters.push(Some(match vf {
+            Some(f) => format!("{f},{HDR_TO_SDR}"),
+            None => HDR_TO_SDR.to_string(),
+        }));
+    }
+    filters.push(vf.map(String::from));
+    let mut last = None;
+    for filter in &filters {
+        for reencode_audio in [false, true] {
+            match tools::run(Tool::Ffmpeg, build(filter.as_deref(), reencode_audio)) {
+                Ok(_) => return Ok(()),
+                // A timeout won't get better with another attempt.
+                Err(e @ tools::ToolError::Timeout { .. }) => return Err(e.into()),
+                Err(e) => last = Some(e),
+            }
+        }
+    }
+    Err(last
+        .map(Into::into)
+        .unwrap_or_else(|| OptimiseError::Other("ffmpeg failed".into())))
+}
 
 /// Optimise a video in place (or to `options.output`), re-encoding to H.264/mp4.
 pub fn optimise(
@@ -159,8 +401,11 @@ pub fn convert_codec(
         .path()
         .join(format!("{}.{ext}", crate::result::file_stem_lossy(path)));
 
-    let build = |reencode_audio: bool| -> Vec<String> {
+    let build = |vf: Option<&str>, reencode_audio: bool| -> Vec<String> {
         let mut args: Vec<String> = vec![s("-y"), s("-i"), path.display().to_string()];
+        if let Some(f) = vf {
+            args.extend([s("-vf"), f.to_string()]);
+        }
         args.extend(vcodec_args.clone());
         if webm {
             args.extend(
@@ -182,37 +427,31 @@ pub fn convert_codec(
         args
     };
 
-    if tools::run(Tool::Ffmpeg, build(false)).is_err() {
-        tools::run(Tool::Ffmpeg, build(true))?;
+    if codec == VideoCodec::H264 {
+        // 8-bit H.264: tone-map HDR sources. HEVC/AV1/VP9 keep 10-bit HDR as is.
+        run_h264_encode(path, None, build)?;
+    } else if tools::run(Tool::Ffmpeg, build(None, false)).is_err() {
+        tools::run(Tool::Ffmpeg, build(None, true))?;
     }
 
-    let new_size = file_size(&temp_out);
-    let dest = options
-        .output
-        .clone()
-        .unwrap_or_else(|| path.with_extension(ext));
-    let backup = if options.backup && options.output.is_none() && dest == path {
-        Some(backup_file(path)?)
-    } else {
-        None
-    };
-    std::fs::copy(&temp_out, &dest)?;
-    if options.preserve_dates {
-        copy_dates(path, &dest);
-    }
-    if options.output.is_none() && dest != path && path.exists() {
-        let _ = std::fs::remove_file(path);
-    }
-
-    Ok(OptimisationResult {
-        kind: MediaKind::Video,
-        source: path.to_path_buf(),
-        output: dest,
-        backup,
+    // Like image conversion, the result is written alongside and the source is
+    // kept — unless the target has the same path, which is backed up first.
+    let default_dest = path.with_extension(ext);
+    let overwrites_source = default_dest == path;
+    finish(
+        MediaKind::Video,
+        path,
+        &temp_out,
+        default_dest,
         old_size,
-        new_size,
-        aggressive: cq.image_is_aggressive(),
-    })
+        cq.image_is_aggressive(),
+        options,
+        Placement {
+            size_guard: false,
+            backup: overwrites_source,
+            replace_source: false,
+        },
+    )
 }
 
 /// Convert a video to an animated GIF.
@@ -304,25 +543,21 @@ pub fn to_gif(
         )?;
     }
 
-    let new_size = file_size(&out);
-    let dest = options
-        .output
-        .clone()
-        .unwrap_or_else(|| path.with_extension("gif"));
-    std::fs::copy(&out, &dest)?;
-    if options.preserve_dates {
-        copy_dates(path, &dest);
-    }
-
-    Ok(OptimisationResult {
-        kind: MediaKind::Image,
-        source: path.to_path_buf(),
-        output: dest,
-        backup: None,
+    // The GIF is written alongside the video, which is kept.
+    finish(
+        MediaKind::Image,
+        path,
+        &out,
+        path.with_extension("gif"),
         old_size,
-        new_size,
-        aggressive: options.compression.image_is_aggressive(),
-    })
+        options.compression.image_is_aggressive(),
+        options,
+        Placement {
+            size_guard: false,
+            backup: false,
+            replace_source: false,
+        },
+    )
 }
 
 /// Cap the frame rate at `fps`. Writes to `dst`.
@@ -364,7 +599,7 @@ pub fn optimise_with_filter(
         .path()
         .join(crate::result::file_name_lossy(&path.with_extension("mp4")));
 
-    let build = |reencode_audio: bool| -> Vec<String> {
+    let build = |vf: Option<&str>, reencode_audio: bool| -> Vec<String> {
         // ffmpeg -y -i <in> [-vf <filter>] <encoderArgs> [-c:a copy -map ...] -movflags +faststart <out>
         let mut args: Vec<String> = vec!["-y".into(), "-i".into(), path.display().to_string()];
         if let Some(f) = vf {
@@ -379,58 +614,89 @@ pub fn optimise_with_filter(
         args
     };
 
-    // Try the audio-copy variant; on failure, retry re-encoding audio.
-    if tools::run(Tool::Ffmpeg, build(false)).is_err() {
-        tools::run(Tool::Ffmpeg, build(true))?;
-    }
+    run_h264_encode(path, vf, build)?;
 
-    let new_size = file_size(&temp_out);
-
-    let same_ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("mp4"))
-        .unwrap_or(false);
-
-    if !options.allow_larger && same_ext && new_size >= old_size {
-        return Ok(OptimisationResult {
-            kind: MediaKind::Video,
-            source: path.to_path_buf(),
-            output: path.to_path_buf(),
-            backup: None,
-            old_size,
-            new_size: old_size,
-            aggressive: cq.image_is_aggressive(),
-        });
-    }
-
-    let dest = options
-        .output
-        .clone()
-        .unwrap_or_else(|| path.with_extension("mp4"));
-
-    let backup = if options.backup && options.output.is_none() {
-        Some(backup_file(path)?)
-    } else {
-        None
-    };
-
-    std::fs::copy(&temp_out, &dest)?;
-    if options.preserve_dates {
-        copy_dates(path, &dest);
-    }
-    // If we changed the extension (e.g. mov -> mp4) and replaced in place, remove the original.
-    if options.output.is_none() && dest != path && path.exists() {
-        let _ = std::fs::remove_file(path);
-    }
-
-    Ok(OptimisationResult {
-        kind: MediaKind::Video,
-        source: path.to_path_buf(),
-        output: dest,
-        backup,
+    // A plain optimise must never replace a video with a bigger one — including
+    // a `.mov` that would become a larger `.mp4` (e.g. an iPhone HEVC clip
+    // re-encoded to H.264). Crops/scales (`vf`) were asked for explicitly, so
+    // they are kept regardless of size. An in-place `.mov` -> `.mp4` replaces
+    // the source (backed up first, when enabled).
+    finish(
+        MediaKind::Video,
+        path,
+        &temp_out,
+        path.with_extension("mp4"),
         old_size,
-        new_size,
-        aggressive: cq.image_is_aggressive(),
-    })
+        cq.image_is_aggressive(),
+        options,
+        Placement {
+            size_guard: vf.is_none(),
+            backup: true,
+            replace_source: true,
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BANNER: &str = "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'clip.mov':
+  Duration: 00:01:02.50, start: 0.000000, bitrate: 6400 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 1920x1080 [SAR 1:1 DAR 16:9], 6200 kb/s, 29.97 fps, 29.97 tbr
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 128 kb/s";
+
+    #[test]
+    fn parses_the_ffmpeg_banner() {
+        let i = parse_banner(BANNER);
+        assert!((i.duration - 62.5).abs() < 1e-9);
+        assert_eq!(i.bitrate_kbps, 6400.0);
+        assert_eq!((i.width, i.height), (1920, 1080));
+        assert!((i.fps - 29.97).abs() < 1e-9);
+        assert!(i.has_audio);
+        assert!(!i.hdr);
+        assert_eq!(parse_banner("garbage"), MediaInfo::default());
+    }
+
+    #[test]
+    fn plans_bitrate_from_the_budget() {
+        let info = parse_banner(BANNER);
+        // 25 MB over 62.5 s = 3200 kbit/s, minus 4% overhead = 3072; audio 10%
+        // capped at 128.
+        let p = plan_bitrate(25_000_000, &info).unwrap();
+        assert_eq!(p.audio_kbps, Some(128));
+        assert_eq!(p.video_kbps, 2944);
+        assert_eq!(p.scale, None, "enough bits for 1080p");
+    }
+
+    #[test]
+    fn thin_budgets_downscale_keeping_aspect() {
+        let info = parse_banner(BANNER);
+        // 8 MB for a minute of 1080p: too thin, so shrink the frame.
+        let p = plan_bitrate(8_000_000, &info).unwrap();
+        let (w, h) = p.scale.expect("downscaled");
+        assert!((240..1080).contains(&h) && h % 2 == 0 && w % 2 == 0);
+        assert!(((w as f64 / h as f64) - 16.0 / 9.0).abs() < 0.02);
+        // Never below 240 lines, even for absurd budgets.
+        let tiny = plan_bitrate(200_000, &info).unwrap();
+        assert_eq!(tiny.scale.unwrap().1, 240);
+    }
+
+    #[test]
+    fn no_duration_no_plan() {
+        assert!(plan_bitrate(1_000_000, &MediaInfo::default()).is_none());
+    }
+
+    #[test]
+    fn detects_hdr_transfers() {
+        let hlg = "  Stream #0:0[0x1]: Video: hevc (Main 10) (hvc1 / 0x31637668), \
+                   yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67, progressive), 640x360";
+        let pq = "  Stream #0:0: Video: hevc (Main 10), yuv420p10le(tv, bt2020nc/bt2020/smpte2084)";
+        let sdr = "  Stream #0:0: Video: h264 (High), yuv420p(tv, bt709, progressive)";
+        let audio_only = "  Stream #0:1: Audio: aac, 48000 Hz, stereo (arib-std-b67 in a tag)";
+        assert!(describes_hdr(hlg));
+        assert!(describes_hdr(pq));
+        assert!(!describes_hdr(sdr));
+        assert!(!describes_hdr(audio_only));
+    }
 }

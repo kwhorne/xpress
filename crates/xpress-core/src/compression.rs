@@ -104,6 +104,19 @@ impl CompressionQuality {
         format!("0-{max}")
     }
 
+    /// Palette size for lossy PNG quantisation: the full 256 colours up to the
+    /// normal preset, falling linearly to 64 at factor 100.
+    pub fn png_palette_size(&self) -> u16 {
+        let f = self.factor.clamp(30, 100);
+        (256.0 - (f - 30) as f64 * (192.0 / 70.0)).round() as u16
+    }
+
+    /// Lowest acceptable PSNR (dB) for a quantised PNG; below it the image is
+    /// kept lossless. factor 5 -> 37 dB, 30 -> 34.5 dB, 100 -> 27.5 dB.
+    pub fn png_min_psnr(&self) -> f64 {
+        37.0 - (self.factor.clamp(5, 100) - 5) as f64 * 0.1
+    }
+
     /// pngquant --speed (1 = slowest/best, 11 = fastest).
     pub fn pngquant_speed(&self) -> i32 {
         match self.factor {
@@ -140,9 +153,17 @@ impl CompressionQuality {
         args
     }
 
-    /// cwebp / heif-enc -q quality (0-100). factor 30 -> 60.
+    /// WebP / HEIC / AVIF quality (0-100). factor 30 -> 60 (normal); below 30
+    /// it rises to 95 at factor 0 so gentle settings really reach high quality,
+    /// above 30 it falls by 0.5 per step (factor 100 -> 25).
     pub fn conversion_quality(&self) -> i32 {
-        cq_clamp((75.0 - self.factor as f64 * 0.5).round() as i32, 20, 90)
+        let f = self.factor as f64;
+        let q = if f < 30.0 {
+            95.0 - f * (35.0 / 30.0)
+        } else {
+            75.0 - f * 0.5
+        };
+        cq_clamp(q.round() as i32, 20, 95)
     }
 
     /// JXLCoder quality (0-100). factor 30 -> 60.
@@ -192,7 +213,17 @@ impl CompressionQuality {
     ///
     /// `arm` toggles the VideoToolbox hardware path used on Apple Silicon for the
     /// `Fast` tier.
+    ///
+    /// Always forces 8-bit 4:2:0 (`yuv420p`): given a 10-bit source (iPhone HDR
+    /// video) libx264 would otherwise pick the High 10 profile, which QuickTime,
+    /// Safari and most phones cannot play.
     pub fn video_h264_args(&self, arm: bool) -> Vec<String> {
+        let mut args = self.video_h264_encoder_args(arm);
+        args.extend(["-pix_fmt".to_string(), "yuv420p".to_string()]);
+        args
+    }
+
+    fn video_h264_encoder_args(&self, arm: bool) -> Vec<String> {
         let s = |v: &str| v.to_string();
         match self.tier {
             CompressionTier::Lossless => {
@@ -292,6 +323,47 @@ mod tests {
             cq.gifsicle_args(),
             vec!["-O3", "--lossy=80", "--colors=202"]
         );
+    }
+
+    #[test]
+    fn conversion_quality_spans_the_range() {
+        assert_eq!(CompressionQuality::normal().conversion_quality(), 60);
+        assert_eq!(CompressionQuality::factor(5).conversion_quality(), 89);
+        assert_eq!(CompressionQuality::factor(100).conversion_quality(), 25);
+        let qs: Vec<i32> = (5..=100)
+            .map(|f| CompressionQuality::factor(f).conversion_quality())
+            .collect();
+        assert!(qs.windows(2).all(|w| w[0] >= w[1]), "monotonic");
+    }
+
+    #[test]
+    fn png_palette_and_quality_floor() {
+        assert_eq!(CompressionQuality::normal().png_palette_size(), 256);
+        assert_eq!(CompressionQuality::factor(100).png_palette_size(), 64);
+        let normal = CompressionQuality::normal().png_min_psnr();
+        let aggressive = CompressionQuality::aggressive().png_min_psnr();
+        assert!(
+            normal > aggressive,
+            "harder compression tolerates more loss"
+        );
+    }
+
+    #[test]
+    fn h264_always_8bit_420() {
+        for tier in [
+            CompressionTier::Lossless,
+            CompressionTier::Fast,
+            CompressionTier::Custom,
+        ] {
+            for arm in [false, true] {
+                let args = CompressionQuality::new(tier, 30).video_h264_args(arm);
+                let i = args
+                    .iter()
+                    .position(|a| a == "-pix_fmt")
+                    .expect("pix_fmt set");
+                assert_eq!(args[i + 1], "yuv420p");
+            }
+        }
     }
 
     #[test]

@@ -10,7 +10,7 @@ pub const ERROR_X: &str = "\u{274C}"; // ❌
 pub const WARN: &str = "\u{26A0}\u{FE0F}"; // ⚠️
 pub const ARROW: &str = "\u{2192}"; // →
 
-fn human_size(bytes: u64) -> String {
+pub fn human_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut size = bytes as f64;
     let mut unit = 0;
@@ -59,6 +59,8 @@ fn summarise_json(results: &[(PathBuf, Result<OptimisationResult, OptimiseError>
                 "saved_percent": (r.saved_percent() * 100.0).round() / 100.0,
                 "aggressive": r.aggressive,
                 "improved": r.improved(),
+                "cached": r.cached,
+                "ssimulacra2": r.score,
             }),
             Err(e) => serde_json::json!({
                 "source": path.display().to_string(),
@@ -74,6 +76,13 @@ fn summarise_json(results: &[(PathBuf, Result<OptimisationResult, OptimiseError>
 }
 
 /// Print a per-file summary plus aggregate savings.
+/// `  [SSIMULACRA2 87.3]` when a quality target was used.
+fn score_note(r: &OptimisationResult) -> String {
+    r.score
+        .map(|s| format!("  [SSIMULACRA2 {s:.1}]"))
+        .unwrap_or_default()
+}
+
 pub fn summarise(
     results: &[(PathBuf, Result<OptimisationResult, OptimiseError>)],
     mode: OutputMode,
@@ -87,34 +96,46 @@ pub fn summarise(
     let mut total_new = 0u64;
     let mut ok = 0usize;
     let mut failed = 0usize;
+    let mut skipped = 0usize;
 
     for (path, res) in results {
         match res {
             Ok(r) => {
                 total_old += r.old_size;
                 total_new += r.new_size;
-                ok += 1;
+                if r.cached {
+                    skipped += 1;
+                } else {
+                    ok += 1;
+                }
                 if quiet {
                     // no per-file lines in quiet mode
+                } else if r.cached {
+                    println!(
+                        "{WARN} {} already optimised with these settings — skipped (--force to redo)",
+                        path.display(),
+                    );
                 } else if r.improved() {
                     println!(
-                        "{CHECK} {} {ARROW} {}  ({} {ARROW} {}, -{:.0}%){}",
+                        "{CHECK} {} {ARROW} {}  ({} {ARROW} {}, -{:.0}%){}{}",
                         path.display(),
                         r.output.display(),
                         human_size(r.old_size),
                         human_size(r.new_size),
                         r.saved_percent(),
                         if r.aggressive { "  [aggressive]" } else { "" },
+                        score_note(r),
                     );
                 } else if r.output != r.source {
                     // A new file was produced (e.g. a format conversion) even
                     // though it isn't smaller — report it as done, not "optimal".
                     println!(
-                        "{CHECK} {} {ARROW} {}  ({} {ARROW} {})",
+                        "{CHECK} {} {ARROW} {}  ({} {ARROW} {}){}",
                         path.display(),
                         r.output.display(),
                         human_size(r.old_size),
                         human_size(r.new_size),
+                        score_note(r),
                     );
                 } else {
                     println!(
@@ -137,8 +158,13 @@ pub fn summarise(
     } else {
         0.0
     };
+    let skipped = if skipped > 0 {
+        format!(", {skipped} already optimised")
+    } else {
+        String::new()
+    };
     println!(
-        "\n{ok} optimised, {failed} failed — saved {} ({:.0}%)",
+        "\n{ok} optimised{skipped}, {failed} failed — saved {} ({:.0}%)",
         human_size(saved),
         pct
     );

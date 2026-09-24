@@ -93,7 +93,7 @@ pub fn spawn_crop(
 
 /// Decode an image and downscale it to a small preview for the result card.
 pub fn make_thumbnail(path: &std::path::Path) -> Option<egui::ColorImage> {
-    let img = image::open(path).ok()?;
+    let img = xpress_core::image::open_oriented(path).ok()?;
     let thumb = img.thumbnail(96, 96).to_rgba8();
     let (w, h) = thumb.dimensions();
     Some(egui::ColorImage::from_rgba_unmultiplied(
