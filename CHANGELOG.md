@@ -38,6 +38,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   PNG in pure Rust (no ffmpeg needed).
 
 ### Changed
+- **Licence:** PNG quantisation no longer uses GPL-3.0 `libimagequant`
+  (statically linked, which made the MIT binaries effectively GPL). Opaque PNGs
+  now use `quantette` (k-means in Oklab, dithered), PNGs with transparency use
+  `exoquant`; on our samples results are smaller for screenshots/icons and ~6 %
+  larger for photos, with no visible difference. A PSNR floor
+  derived from the compression value keeps an image lossless when a palette
+  would cost too much quality. MSRV is now Rust 1.90.
 - All outputs are written atomically (temp file + rename next to the
   destination, keeping permissions and, on macOS, Finder tags/xattrs), so a
   crash mid-write can't leave a truncated file.

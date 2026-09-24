@@ -10,7 +10,7 @@ exclude = ["tools/icon-gen"]
 [workspace.package]
 version = "0.4.8"
 edition = "2021"
-rust-version = "1.87"
+rust-version = "1.90"
 license = "MIT"
 authors = ["Knut W. Horne <https://kwhorne.com>"]
 repository = "https://github.com/kwhorne/xpress"

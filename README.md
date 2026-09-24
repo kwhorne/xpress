@@ -37,7 +37,7 @@ One tool, three ways to use it:
 - **Non-destructive by default**: originals are backed up and can be restored.
 
 Images **and PDFs** are optimised, resized, cropped and converted **entirely in
-pure Rust** (`imagequant` + `oxipng` + `image` + `lopdf`) — no external tools to
+pure Rust** (`quantette`/`exoquant` + `oxipng` + `image` + `lopdf`) — no external tools to
 install. Video and audio use `ffmpeg`, which the macOS app **bundles**, so a
 released `.app`/`.dmg` needs nothing installed. Everything is driven by one
 consistent, percentage-based compression model.

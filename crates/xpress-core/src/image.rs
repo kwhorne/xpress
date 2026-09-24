@@ -1,7 +1,7 @@
 //! Pure-Rust image optimisation and conversion.
 //!
-//! No external binaries are needed for raster images: PNG uses `imagequant`
-//! (lossy quantisation) + `oxipng` (lossless squeeze), JPEG/GIF/BMP/TIFF/AVIF go
+//! No external binaries are needed for raster images: PNG uses `quantette` /
+//! `exoquant` (lossy palette quantisation) + `oxipng` (lossless squeeze), JPEG/GIF/BMP/TIFF/AVIF go
 //! through the `image` crate and lossy WebP through `libwebp`. HEIC/HEIF (the
 //! iPhone photo format) is handled on macOS by the built-in `sips` tool — no
 //! install — so Apple photos convert both ways out of the box. JXL still uses the
@@ -349,8 +349,9 @@ pub fn optimise(
     finalise(path, &temp_out, old_size, cq, options)
 }
 
-/// PNG: quantise to a palette (quality from the compression value) then run a
-/// lossless oxipng pass.
+/// PNG: quantise to a palette sized from the compression value, then run a
+/// lossless oxipng pass. If the palette would cost too much quality (PSNR below
+/// the compression value's floor) the image is kept lossless instead.
 fn optimise_png(
     src: &Path,
     out: &Path,
@@ -359,68 +360,122 @@ fn optimise_png(
 ) -> Result<(), OptimiseError> {
     let (img, meta) = load(src)?;
     let meta = meta_for(meta, strip);
-    let img = img.to_rgba8();
-    let (w, h) = (img.width() as usize, img.height() as usize);
-    let pixels: Vec<imagequant::RGBA> = img
-        .pixels()
-        .map(|p| imagequant::RGBA {
-            r: p.0[0],
-            g: p.0[1],
-            b: p.0[2],
-            a: p.0[3],
-        })
-        .collect();
+    let rgba = img.to_rgba8();
 
-    // Map the compression factor to a pngquant-like quality ceiling + speed.
-    let qmax: u8 = cq
-        .pngquant_quality()
-        .rsplit('-')
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(90);
-    let qmin = qmax.saturating_sub(30);
-    let speed = cq.pngquant_speed().clamp(1, 10);
-
-    let png_bytes = (|| -> Result<Vec<u8>, OptimiseError> {
-        let mut liq = imagequant::new();
-        liq.set_speed(speed).map_err(other)?;
-        liq.set_quality(qmin, qmax).map_err(other)?;
-        let mut qimg = liq.new_image_borrowed(&pixels, w, h, 0.0).map_err(other)?;
-        let mut res = liq.quantize(&mut qimg).map_err(other)?;
-        res.set_dithering_level(1.0).map_err(other)?;
-        let (palette, indices) = res.remapped(&mut qimg).map_err(other)?;
-
-        let mut buf = Vec::new();
-        {
-            let mut info = png::Info::with_size(w as u32, h as u32);
-            info.icc_profile = meta.icc.clone().map(Into::into);
-            info.exif_metadata = meta.exif.clone().map(Into::into);
-            let mut enc = png::Encoder::with_info(&mut buf, info).map_err(other)?;
-            enc.set_color(png::ColorType::Indexed);
-            enc.set_depth(png::BitDepth::Eight);
-            enc.set_palette(
-                palette
-                    .iter()
-                    .flat_map(|c| [c.r, c.g, c.b])
-                    .collect::<Vec<u8>>(),
-            );
-            enc.set_trns(palette.iter().map(|c| c.a).collect::<Vec<u8>>());
-            let mut writer = enc.write_header().map_err(other)?;
-            writer.write_image_data(&indices).map_err(other)?;
+    let paletted = quantise(&img, &rgba, cq.png_palette_size())
+        .filter(|(palette, indices)| psnr(&rgba, palette, indices) >= cq.png_min_psnr())
+        .map(|(palette, indices)| write_indexed_png(&rgba, &palette, &indices, &meta))
+        .transpose()?;
+    let raw = match paletted {
+        Some(bytes) => bytes,
+        None => {
+            let mut buf = Vec::new();
+            let mut enc = image::codecs::png::PngEncoder::new(&mut buf);
+            apply_meta(&mut enc, &meta);
+            img.write_with_encoder(enc).map_err(other)?;
+            buf
         }
-        Ok(buf)
-    })();
-
-    // If quantisation fails (e.g. quality too strict), fall back to a lossless
-    // oxipng pass on the original.
-    let raw = match png_bytes {
-        Ok(b) => b,
-        Err(_) => std::fs::read(src)?,
     };
     let opts = oxipng::Options::from_preset(2);
     let optimised = oxipng::optimize_from_memory(&raw, &opts).unwrap_or(raw);
     std::fs::write(out, optimised)?;
     Ok(())
+}
+
+/// Reduce an image to at most `colors` palette entries, returning an RGBA
+/// palette and one index per pixel.
+///
+/// Opaque images use `quantette` (k-means in Oklab, Floyd–Steinberg dithered).
+/// Images with transparency use `exoquant`, which understands alpha; they are
+/// left undithered, since dithering soft alpha edges bloats the file.
+fn quantise(
+    img: &DynamicImage,
+    rgba: &image::RgbaImage,
+    colors: u16,
+) -> Option<(Vec<[u8; 4]>, Vec<u8>)> {
+    if rgba.pixels().all(|p| p.0[3] == 255) {
+        let rgb = img.to_rgb8();
+        let input = quantette::ImageRef::try_from(&rgb).ok()?;
+        let indexed = quantette::Pipeline::new()
+            .palette_size(quantette::PaletteSize::try_from_u16(colors)?)
+            .quantize_method(quantette::QuantizeMethod::kmeans())
+            .ditherer(quantette::dither::FloydSteinberg::new())
+            .input_image(input)
+            .output_srgb8_indexed_image();
+        let (palette, indices) = indexed.into_parts();
+        let palette = palette
+            .iter()
+            .map(|c| [c.red, c.green, c.blue, 255])
+            .collect();
+        Some((palette, indices))
+    } else {
+        let pixels: Vec<exoquant::Color> = rgba
+            .pixels()
+            .map(|p| exoquant::Color::new(p.0[0], p.0[1], p.0[2], p.0[3]))
+            .collect();
+        let (palette, indices) = exoquant::convert_to_indexed(
+            &pixels,
+            rgba.width() as usize,
+            colors as usize,
+            &exoquant::optimizer::KMeans,
+            &exoquant::ditherer::None,
+        );
+        let palette = palette.iter().map(|c| [c.r, c.g, c.b, c.a]).collect();
+        Some((palette, indices))
+    }
+}
+
+/// Peak signal-to-noise ratio (dB) of a paletted image against the original,
+/// measured on alpha-premultiplied RGBA so invisible colour differences under
+/// transparent pixels don't count.
+fn psnr(original: &image::RgbaImage, palette: &[[u8; 4]], indices: &[u8]) -> f64 {
+    let mut squared_error = 0f64;
+    for (src, &i) in original.pixels().zip(indices) {
+        let Some(q) = palette.get(i as usize) else {
+            return 0.0;
+        };
+        let (sa, qa) = (src.0[3] as f64 / 255.0, q[3] as f64 / 255.0);
+        for (&s, &p) in src.0[..3].iter().zip(&q[..3]) {
+            let d = s as f64 * sa - p as f64 * qa;
+            squared_error += d * d;
+        }
+        let d = src.0[3] as f64 - q[3] as f64;
+        squared_error += d * d;
+    }
+    let mse = squared_error / (indices.len().max(1) * 4) as f64;
+    if mse == 0.0 {
+        return f64::INFINITY;
+    }
+    10.0 * (255.0 * 255.0 / mse).log10()
+}
+
+/// Encode an 8-bit paletted PNG, embedding the ICC profile / EXIF.
+fn write_indexed_png(
+    rgba: &image::RgbaImage,
+    palette: &[[u8; 4]],
+    indices: &[u8],
+    meta: &Meta,
+) -> Result<Vec<u8>, OptimiseError> {
+    let mut buf = Vec::new();
+    let mut info = png::Info::with_size(rgba.width(), rgba.height());
+    info.icc_profile = meta.icc.clone().map(Into::into);
+    info.exif_metadata = meta.exif.clone().map(Into::into);
+    let mut enc = png::Encoder::with_info(&mut buf, info).map_err(other)?;
+    enc.set_color(png::ColorType::Indexed);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.set_palette(
+        palette
+            .iter()
+            .flat_map(|c| [c[0], c[1], c[2]])
+            .collect::<Vec<u8>>(),
+    );
+    if palette.iter().any(|c| c[3] != 255) {
+        enc.set_trns(palette.iter().map(|c| c[3]).collect::<Vec<u8>>());
+    }
+    let mut writer = enc.write_header().map_err(other)?;
+    writer.write_image_data(indices).map_err(other)?;
+    writer.finish().map_err(other)?;
+    Ok(buf)
 }
 
 /// JPEG: decode (upright) and re-encode at a quality derived from the

@@ -104,6 +104,19 @@ impl CompressionQuality {
         format!("0-{max}")
     }
 
+    /// Palette size for lossy PNG quantisation: the full 256 colours up to the
+    /// normal preset, falling linearly to 64 at factor 100.
+    pub fn png_palette_size(&self) -> u16 {
+        let f = self.factor.clamp(30, 100);
+        (256.0 - (f - 30) as f64 * (192.0 / 70.0)).round() as u16
+    }
+
+    /// Lowest acceptable PSNR (dB) for a quantised PNG; below it the image is
+    /// kept lossless. factor 5 -> 37 dB, 30 -> 34.5 dB, 100 -> 27.5 dB.
+    pub fn png_min_psnr(&self) -> f64 {
+        37.0 - (self.factor.clamp(5, 100) - 5) as f64 * 0.1
+    }
+
     /// pngquant --speed (1 = slowest/best, 11 = fastest).
     pub fn pngquant_speed(&self) -> i32 {
         match self.factor {
@@ -301,6 +314,18 @@ mod tests {
         assert_eq!(
             cq.gifsicle_args(),
             vec!["-O3", "--lossy=80", "--colors=202"]
+        );
+    }
+
+    #[test]
+    fn png_palette_and_quality_floor() {
+        assert_eq!(CompressionQuality::normal().png_palette_size(), 256);
+        assert_eq!(CompressionQuality::factor(100).png_palette_size(), 64);
+        let normal = CompressionQuality::normal().png_min_psnr();
+        let aggressive = CompressionQuality::aggressive().png_min_psnr();
+        assert!(
+            normal > aggressive,
+            "harder compression tolerates more loss"
         );
     }
 
