@@ -45,7 +45,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Optimising a `.mov` no longer replaces it with a *larger* `.mp4` (and deletes
   the original); video conversions back the source up before removing it.
 - H.264 output is always 8-bit 4:2:0, so iPhone HDR (10-bit) clips no longer
-  become High-10 files that QuickTime/Safari can't play.
+  become High-10 files that QuickTime/Safari can't play — and HDR sources (HLG
+  or PQ) are tone-mapped to SDR BT.709 (zscale + mobius) instead of coming out
+  grey and washed out. Falls back to a plain encode if ffmpeg lacks zscale;
+  HEVC/AV1/VP9 conversions keep HDR untouched.
 - AAC encoding falls back to ffmpeg's native `aac` encoder when `aac_at`
   (macOS AudioToolbox) is unavailable — e.g. on Linux.
 - `watch`: files are only processed once they stop changing (no more

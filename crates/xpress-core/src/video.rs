@@ -10,6 +10,69 @@ use crate::result::{
 };
 use crate::tools::{self, Tool};
 
+/// Tone-maps HDR (PQ / HLG, BT.2020) to SDR BT.709 in 8 bits. H.264 output is
+/// always 8-bit 4:2:0, and squeezing an iPhone HDR clip into that without
+/// tone-mapping leaves it grey and washed out (or wrongly tagged as HDR).
+///
+/// Mobius keeps tones up to the knee (`param`) linear, so normally exposed
+/// footage keeps its brightness, and rolls highlights off smoothly above it.
+pub const HDR_TO_SDR: &str = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,\
+     tonemap=tonemap=mobius:param=0.5:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
+
+/// Whether ffmpeg's stream banner (its `-i` output) shows an HDR video stream,
+/// i.e. a PQ (`smpte2084`) or HLG (`arib-std-b67`) transfer.
+pub fn describes_hdr(ffmpeg_stderr: &str) -> bool {
+    ffmpeg_stderr
+        .lines()
+        .any(|l| l.contains("Video:") && (l.contains("smpte2084") || l.contains("arib-std-b67")))
+}
+
+/// Probe `path` for an HDR video stream. Best-effort: false if unsure.
+pub fn is_hdr(path: &Path) -> bool {
+    // With no output file ffmpeg prints the stream info and exits non-zero.
+    let stderr = match tools::run(
+        Tool::Ffmpeg,
+        ["-hide_banner", "-i", &path.display().to_string()],
+    ) {
+        Err(tools::ToolError::Failed { stderr, .. }) => stderr,
+        Ok(out) => String::from_utf8_lossy(&out.stderr).into_owned(),
+        Err(_) => return false,
+    };
+    describes_hdr(&stderr)
+}
+
+/// Run an H.264 encode built by `build(filter, reencode_audio)`: tone-mapping
+/// HDR input first (falling back to plain if this ffmpeg lacks `zscale`), and
+/// copying the audio before re-encoding it.
+fn run_h264_encode(
+    path: &Path,
+    vf: Option<&str>,
+    build: impl Fn(Option<&str>, bool) -> Vec<String>,
+) -> Result<(), OptimiseError> {
+    let mut filters: Vec<Option<String>> = Vec::new();
+    if is_hdr(path) {
+        filters.push(Some(match vf {
+            Some(f) => format!("{f},{HDR_TO_SDR}"),
+            None => HDR_TO_SDR.to_string(),
+        }));
+    }
+    filters.push(vf.map(String::from));
+    let mut last = None;
+    for filter in &filters {
+        for reencode_audio in [false, true] {
+            match tools::run(Tool::Ffmpeg, build(filter.as_deref(), reencode_audio)) {
+                Ok(_) => return Ok(()),
+                // A timeout won't get better with another attempt.
+                Err(e @ tools::ToolError::Timeout { .. }) => return Err(e.into()),
+                Err(e) => last = Some(e),
+            }
+        }
+    }
+    Err(last
+        .map(Into::into)
+        .unwrap_or_else(|| OptimiseError::Other("ffmpeg failed".into())))
+}
+
 /// Optimise a video in place (or to `options.output`), re-encoding to H.264/mp4.
 pub fn optimise(
     path: &Path,
@@ -159,8 +222,11 @@ pub fn convert_codec(
         .path()
         .join(format!("{}.{ext}", crate::result::file_stem_lossy(path)));
 
-    let build = |reencode_audio: bool| -> Vec<String> {
+    let build = |vf: Option<&str>, reencode_audio: bool| -> Vec<String> {
         let mut args: Vec<String> = vec![s("-y"), s("-i"), path.display().to_string()];
+        if let Some(f) = vf {
+            args.extend([s("-vf"), f.to_string()]);
+        }
         args.extend(vcodec_args.clone());
         if webm {
             args.extend(
@@ -182,8 +248,11 @@ pub fn convert_codec(
         args
     };
 
-    if tools::run(Tool::Ffmpeg, build(false)).is_err() {
-        tools::run(Tool::Ffmpeg, build(true))?;
+    if codec == VideoCodec::H264 {
+        // 8-bit H.264: tone-map HDR sources. HEVC/AV1/VP9 keep 10-bit HDR as is.
+        run_h264_encode(path, None, build)?;
+    } else if tools::run(Tool::Ffmpeg, build(None, false)).is_err() {
+        tools::run(Tool::Ffmpeg, build(None, true))?;
     }
 
     // Converting in place replaces the source (backed up first, when enabled).
@@ -348,7 +417,7 @@ pub fn optimise_with_filter(
         .path()
         .join(crate::result::file_name_lossy(&path.with_extension("mp4")));
 
-    let build = |reencode_audio: bool| -> Vec<String> {
+    let build = |vf: Option<&str>, reencode_audio: bool| -> Vec<String> {
         // ffmpeg -y -i <in> [-vf <filter>] <encoderArgs> [-c:a copy -map ...] -movflags +faststart <out>
         let mut args: Vec<String> = vec!["-y".into(), "-i".into(), path.display().to_string()];
         if let Some(f) = vf {
@@ -363,10 +432,7 @@ pub fn optimise_with_filter(
         args
     };
 
-    // Try the audio-copy variant; on failure, retry re-encoding audio.
-    if tools::run(Tool::Ffmpeg, build(false)).is_err() {
-        tools::run(Tool::Ffmpeg, build(true))?;
-    }
+    run_h264_encode(path, vf, build)?;
 
     // A plain optimise must never replace a video with a bigger one — including
     // a `.mov` that would become a larger `.mp4` (e.g. an iPhone HEVC clip
@@ -387,4 +453,22 @@ pub fn optimise_with_filter(
             replace_source: true,
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_hdr_transfers() {
+        let hlg = "  Stream #0:0[0x1]: Video: hevc (Main 10) (hvc1 / 0x31637668), \
+                   yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67, progressive), 640x360";
+        let pq = "  Stream #0:0: Video: hevc (Main 10), yuv420p10le(tv, bt2020nc/bt2020/smpte2084)";
+        let sdr = "  Stream #0:0: Video: h264 (High), yuv420p(tv, bt709, progressive)";
+        let audio_only = "  Stream #0:1: Audio: aac, 48000 Hz, stereo (arib-std-b67 in a tag)";
+        assert!(describes_hdr(hlg));
+        assert!(describes_hdr(pq));
+        assert!(!describes_hdr(sdr));
+        assert!(!describes_hdr(audio_only));
+    }
 }

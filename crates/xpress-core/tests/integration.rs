@@ -311,6 +311,67 @@ fn pipeline_with_content_change_is_kept_even_if_larger() {
     assert!(r.backup.is_some(), "original backed up before replacing");
 }
 
+fn ffmpeg_log(input: &std::path::Path) -> String {
+    let mut log = input.as_os_str().to_owned();
+    log.push(".ffmpeg-log");
+    std::fs::read_to_string(log).unwrap_or_default()
+}
+
+#[test]
+fn hdr_video_is_tone_mapped_for_h264() {
+    common::install_stubs();
+    let dir = tmpdir("video-hdr");
+    let f = dir.join("iphone-hdr.mov");
+    common::write_dummy(&f, 8000);
+    video::optimise(&f, &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    let encode = log
+        .lines()
+        .find(|l| l.contains("-vcodec"))
+        .expect("an encode ran");
+    assert!(encode.contains("tonemap=tonemap=mobius"), "{encode}");
+    assert!(encode.contains("-pix_fmt yuv420p"));
+}
+
+#[test]
+fn sdr_video_is_not_tone_mapped() {
+    common::install_stubs();
+    let dir = tmpdir("video-sdr");
+    let f = dir.join("clip.mov");
+    common::write_dummy(&f, 8000);
+    video::optimise(&f, &opts()).unwrap();
+    assert!(!ffmpeg_log(&f).contains("tonemap"));
+}
+
+#[test]
+fn hdr_crop_chains_the_crop_before_tone_mapping() {
+    common::install_stubs();
+    let dir = tmpdir("video-hdr-crop");
+    let f = dir.join("hdr.mp4");
+    common::write_dummy(&f, 8000);
+    crop::crop_file(&f, &CropSpec::size(640, 0), &opts()).unwrap();
+    let log = ffmpeg_log(&f);
+    let encode = log.lines().find(|l| l.contains("-vcodec")).unwrap();
+    assert!(encode.contains("scale=640:-2,zscale=t=linear"), "{encode}");
+}
+
+#[test]
+fn hevc_conversion_keeps_hdr() {
+    common::install_stubs();
+    let dir = tmpdir("video-hdr-hevc");
+    let f = dir.join("hdr.mov");
+    common::write_dummy(&f, 8000);
+    let o = OptimiseOptions {
+        output: Some(dir.join("out.mp4")),
+        ..opts()
+    };
+    video::convert_codec(&f, video::VideoCodec::Hevc, &o, false).unwrap();
+    assert!(
+        !ffmpeg_log(&f).contains("tonemap"),
+        "10-bit HEVC can carry HDR"
+    );
+}
+
 #[test]
 fn downscale_image_by_factor() {
     common::install_stubs();

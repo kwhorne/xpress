@@ -64,6 +64,17 @@ done
             r#"args=("$@"); inp=""; out="${args[${#args[@]}-1]}"
 for a in "$@"; do [[ "$a" == "aac_at" ]] && { echo "Unknown encoder 'aac_at'" >&2; exit 1; }; done
 for ((i=0;i<${#args[@]};i++)); do [[ "${args[$i]}" == "-i" ]] && inp="${args[$((i+1))]}"; done
+# Log every invocation next to the input, so tests can inspect the arguments.
+[[ -n "$inp" ]] && printf '%s\n' "$*" >> "$inp.ffmpeg-log"
+# Like ffmpeg: with no output file, print the stream info and fail. Inputs
+# named `*hdr*` report an HLG (HDR) video stream.
+if [[ "$out" == "$inp" ]]; then
+  case "$(basename "$inp")" in
+    *hdr*) echo "  Stream #0:0: Video: hevc (Main 10), yuv420p10le(tv, bt2020nc/bt2020/arib-std-b67)" >&2 ;;
+    *) echo "  Stream #0:0: Video: h264 (High), yuv420p(tv, bt709)" >&2 ;;
+  esac
+  exit 1
+fi
 case "$(basename "$inp")" in
   *grow*) cat "$inp" "$inp" > "$out" ;;
   *) sz=$(wc -c < "$inp"); head -c $((sz/2 + 1)) "$inp" > "$out" ;;
