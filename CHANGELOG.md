@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-04
+
 ### Added
 - **Apple Intelligence** in the clipboard history: summarise, proofread, make
   shorter / professional / friendly, or translate a clip to English with the
@@ -431,7 +433,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/kwhorne/xpress/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/kwhorne/xpress/compare/v0.5.4...v0.6.0
 [0.5.4]: https://github.com/kwhorne/xpress/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/kwhorne/xpress/compare/v0.5.2...v0.5.3
