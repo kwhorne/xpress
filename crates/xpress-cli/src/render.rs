@@ -167,6 +167,7 @@ pub fn doctor() {
             "gs / ghostscript (pdf extract-pages, optional)",
             Tool::Ghostscript,
         ),
+        ("gifsicle (animated GIFs, optional)", Tool::Gifsicle),
         ("gifski (video->gif, optional)", Tool::Gifski),
         ("heif-enc (heic convert, optional)", Tool::HeifEnc),
         ("cjxl (jxl convert, optional)", Tool::Cjxl),

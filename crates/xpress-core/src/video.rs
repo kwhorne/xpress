@@ -377,7 +377,14 @@ pub fn convert_codec(
     let webm = codec == VideoCodec::Vp9;
 
     let vcodec_args: Vec<String> = match codec {
-        VideoCodec::H264 => cq.video_h264_args(arm && hw),
+        // `--hw` means Apple's hardware encoder; the default (Custom) tier
+        // would otherwise always pick libx264.
+        VideoCodec::H264 if arm && hw => crate::compression::CompressionQuality::new(
+            crate::compression::CompressionTier::Fast,
+            cq.factor,
+        )
+        .video_h264_args(true),
+        VideoCodec::H264 => cq.video_h264_args(false),
         VideoCodec::Hevc => {
             if arm && hw {
                 vec![s("-vcodec"), s("hevc_videotoolbox"), s("-tag:v"), s("hvc1")]

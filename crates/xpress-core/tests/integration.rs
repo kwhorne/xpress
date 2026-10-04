@@ -575,6 +575,40 @@ fn share_for_github_converts_webp_to_jpeg_alongside() {
 }
 
 #[test]
+fn output_into_a_folder_that_does_not_exist_yet() {
+    let dir = tmpdir("out-mkdir");
+    let f = dir.join("photo.png");
+    common::write_png(&f);
+    let out = dir.join("optimised/nested/photo.png");
+    let o = OptimiseOptions {
+        output: Some(out.clone()),
+        allow_larger: true,
+        ..opts()
+    };
+    image::optimise(&f, &o).unwrap();
+    assert!(out.exists());
+}
+
+#[test]
+fn hw_flag_uses_videotoolbox_for_h264_on_apple_silicon() {
+    common::install_stubs();
+    let dir = tmpdir("video-hw");
+    let f = dir.join("clip.mov");
+    common::write_dummy(&f, 8000);
+    let o = OptimiseOptions {
+        output: Some(dir.join("out.mp4")),
+        ..opts()
+    };
+    video::convert_codec(&f, video::VideoCodec::H264, &o, true).unwrap();
+    let log = ffmpeg_log(&f);
+    if cfg!(target_arch = "aarch64") {
+        assert!(log.contains("h264_videotoolbox"), "{log}");
+    } else {
+        assert!(!log.contains("videotoolbox"));
+    }
+}
+
+#[test]
 fn downscale_image_by_factor() {
     common::install_stubs();
     let dir = tmpdir("scale");

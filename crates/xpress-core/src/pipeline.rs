@@ -174,12 +174,16 @@ fn parse_step(s: &str) -> Result<Step, String> {
             Ok(Step::LowerBitrate { kbps })
         }
         "targetSize" | "target_size" => {
-            let raw = get("bytes")
-                .or_else(|| get("kb"))
-                .ok_or("targetSize requires bytes: or kb:")?;
-            Ok(Step::TargetSize {
-                bytes: parse_size(&raw)?,
-            })
+            let bytes = match (get("bytes"), get("kb")) {
+                (Some(raw), _) => parse_size(&raw)?,
+                // `kb: 300` means 300 kB; an explicit unit (`kb: 1.5mb`) wins.
+                (None, Some(raw)) if raw.trim().chars().all(|c| c.is_ascii_digit() || c == '.') => {
+                    parse_size(&format!("{raw}kb"))?
+                }
+                (None, Some(raw)) => parse_size(&raw)?,
+                (None, None) => return Err("targetSize requires bytes: or kb:".into()),
+            };
+            Ok(Step::TargetSize { bytes })
         }
         "adaptive" => Ok(Step::Adaptive),
         "normalize" | "normalise" => {
@@ -602,6 +606,18 @@ mod tests {
         let steps = parse(dsl).unwrap();
         let back = to_dsl(&steps);
         assert_eq!(parse(&back).unwrap(), steps);
+    }
+
+    #[test]
+    fn target_size_units() {
+        let bytes = |dsl: &str| match parse(dsl).unwrap()[0] {
+            Step::TargetSize { bytes } => bytes,
+            _ => unreachable!(),
+        };
+        assert_eq!(bytes("targetSize(bytes: 500kb)"), 500_000);
+        assert_eq!(bytes("targetSize(bytes: 250000)"), 250_000);
+        assert_eq!(bytes("targetSize(kb: 300)"), 300_000, "kb: is kilobytes");
+        assert_eq!(bytes("targetSize(kb: 1.5mb)"), 1_500_000);
     }
 
     #[test]
