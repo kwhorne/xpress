@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-10-04
+
 ### Added
 - **Ignore apps** for the clipboard history: nothing copied in them is
   recorded. Add them in Preferences (from the apps you've copied from, or any
@@ -459,7 +461,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/kwhorne/xpress/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/kwhorne/xpress/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/kwhorne/xpress/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/kwhorne/xpress/compare/v0.6.0...v0.7.0
