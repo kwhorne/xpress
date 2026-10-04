@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -26,9 +26,37 @@ pub struct CaptureFlags {
     pub ocr: AtomicBool,
     /// 0 = keep until the size limit.
     pub keep_days: AtomicU32,
+    /// Add everything copied to one multi-clip.
+    pub collecting: AtomicBool,
+    /// The multi-clip being collected into (0 = start a new one).
+    pub collection: AtomicI64,
+    /// The pasteboard change xpress made itself (not to be recorded).
+    pub own_change: AtomicIsize,
 }
 
 impl CaptureFlags {
+    /// Remember that the clipboard now holds what xpress put there.
+    pub fn mark_own_change(&self) {
+        self.own_change
+            .store(pasteboard::change_count(), Ordering::Relaxed);
+    }
+
+    /// Record a clip (and while collecting, add it to the collection).
+    pub fn record(&self, history: &Mutex<History>, clip: NewClip) -> bool {
+        let Some(id) = record(history, clip, self.ocr.load(Ordering::Relaxed)) else {
+            return false;
+        };
+        if self.collecting.load(Ordering::Relaxed) {
+            let current = self.collection.load(Ordering::Relaxed);
+            let into = (current != 0).then_some(current);
+            match history.lock().unwrap().append_to(into, id) {
+                Ok(multi) => self.collection.store(multi, Ordering::Relaxed),
+                Err(e) => eprintln!("xpress: could not collect clip: {e}"),
+            }
+        }
+        true
+    }
+
     pub fn retention(&self) -> Retention {
         let days = self.keep_days.load(Ordering::Relaxed);
         Retention {
@@ -56,7 +84,7 @@ pub fn clip_from_snapshot(
         NewClip::files(&snap.files)
     } else {
         match (text, snap.image_png) {
-            (Some(t), Some(png)) if is_lone_link(&t) => NewClip::image_png(png),
+            (Some(t), Some(png)) if is_link(&t) => NewClip::image_png(png),
             (Some(t), _) => NewClip::text(t),
             (None, Some(png)) => NewClip::image_png(png),
             (None, None) => return None,
@@ -65,7 +93,7 @@ pub fn clip_from_snapshot(
     Some(clip.from_app(app, bundle))
 }
 
-fn is_lone_link(text: &str) -> bool {
+pub fn is_link(text: &str) -> bool {
     xpress_core::history::classify_text(text) == xpress_core::history::ClipKind::Link
 }
 
@@ -135,14 +163,14 @@ fn new_screenshots(dir: &Path, since: SystemTime, seen: &mut HashSet<PathBuf>) -
 }
 
 /// Add a clip; for a new image, recognise its text (outside the lock).
-/// Returns whether anything changed.
-pub fn record(history: &Mutex<History>, clip: NewClip, ocr: bool) -> bool {
+/// Returns the clip's id.
+pub fn record(history: &Mutex<History>, clip: NewClip, ocr: bool) -> Option<i64> {
     let is_image = clip.kind.is_image();
     let added = match history.lock().unwrap().add(clip) {
         Ok(added) => added,
         Err(e) => {
             eprintln!("xpress: could not record clip: {e}");
-            return false;
+            return None;
         }
     };
     if added.new && is_image && ocr && xpress_core::ocr::available() {
@@ -159,7 +187,7 @@ pub fn record(history: &Mutex<History>, clip: NewClip, ocr: bool) -> bool {
             }
         }
     }
-    true
+    Some(added.id)
 }
 
 /// Start recording. `changed` is called after each change to the history.
@@ -186,14 +214,16 @@ pub fn start(
                     last = count;
                     continue;
                 }
-                let ocr = flags.ocr.load(Ordering::Relaxed);
                 let mut dirty = false;
 
                 if count != last {
                     last = count;
+                    let own = count == flags.own_change.load(Ordering::Relaxed);
                     let (app, bundle) = pasteboard::frontmost_app();
-                    if let Some(clip) = clip_from_snapshot(pasteboard::read(), app, bundle) {
-                        dirty |= record(&history, clip, ocr);
+                    if let (false, Some(clip)) =
+                        (own, clip_from_snapshot(pasteboard::read(), app, bundle))
+                    {
+                        dirty |= flags.record(&history, clip);
                     }
                 }
 
@@ -202,7 +232,7 @@ pub fn start(
                 {
                     for path in new_screenshots(&shots_dir, since, &mut seen) {
                         if let Ok(clip) = NewClip::screenshot(&path) {
-                            dirty |= record(&history, clip, ocr);
+                            dirty |= flags.record(&history, clip);
                         }
                     }
                 }
@@ -332,6 +362,28 @@ mod tests {
     }
 
     #[test]
+    fn collecting_puts_every_copy_in_one_multi_clip() {
+        let dir = tempfile::tempdir().unwrap();
+        let history = Mutex::new(History::open(dir.path()).unwrap());
+        let flags = CaptureFlags::default();
+        assert!(flags.record(&history, NewClip::text("before")));
+        assert_eq!(flags.collection.load(Ordering::Relaxed), 0);
+
+        flags.collecting.store(true, Ordering::Relaxed);
+        flags.record(&history, NewClip::text("one"));
+        flags.record(&history, NewClip::text("two"));
+        let multi = flags.collection.load(Ordering::Relaxed);
+        let h = history.lock().unwrap();
+        let items: Vec<String> = h
+            .items(multi)
+            .unwrap()
+            .into_iter()
+            .map(|c| c.text)
+            .collect();
+        assert_eq!(items, ["one", "two"]);
+    }
+
+    #[test]
     #[cfg(target_os = "macos")]
     fn finds_only_new_settled_screenshots() {
         let dir = tempfile::tempdir().unwrap();
@@ -379,7 +431,7 @@ mod tests {
         let fixture =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../xpress-core/tests/fixtures/ocr.png");
         let png = std::fs::read(fixture).unwrap();
-        assert!(record(&history, NewClip::image_png(png.clone()), true));
+        assert!(record(&history, NewClip::image_png(png.clone()), true).is_some());
         let h = history.lock().unwrap();
         let clips = h.search(&Default::default()).unwrap();
         assert_eq!(clips.len(), 1);

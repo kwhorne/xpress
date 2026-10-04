@@ -77,7 +77,9 @@ working file, and place the final artifact with the same `finish` rules (see
   `pasteboard.rs` (NSPasteboard: read/write, private-content markers, front
   app), `capture.rs` (a background thread polling the pasteboard's change
   count and the screenshot folder, recording into `history` and running OCR)
-  and `history_ui.rs` (the view). UI tests drive it headlessly with
+  and `history_ui.rs` (the view: filters, categories, multi-select,
+  multi-clips); `autopaste.rs` presses ⌘V in the previous app (Accessibility
+  permission, CoreGraphics events). UI tests drive it headlessly with
   `egui_kittest`; pasteboard tests use a private pasteboard, never the user's
   clipboard.
 

@@ -6,6 +6,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod autopaste;
 mod capture;
 mod history_ui;
 mod pasteboard;

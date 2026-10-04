@@ -16,6 +16,7 @@ xpress has no Dock icon — look for the **✕** in the menu bar. Its menu has:
 | Open xpress | ⌘⇧X | Bring the window to the front |
 | Optimise clipboard | ⌘⇧O | Optimise the image you copied, and put the smaller one back on the clipboard |
 | Clipboard history | ⌃⌘V | Search what you copied and your screenshots, and copy it back ([History](history.md)) |
+| Collect clips | | Add everything you copy to one multi-clip, to paste together ([multi-clips](history.md#several-clips-at-once-multi-clips)) |
 | Check for updates | | Look for a new version now |
 | Quit xpress | | Quit (closing the window only hides it) |
 
@@ -71,8 +72,9 @@ Finder.
 ## History
 
 Everything you copied and every screenshot you took — once you turn it on —
-with search (including the words inside images), filters by kind and app, and
-pinning. ⌃⌘V opens it from any app. See
+with search (including the words inside images), filters by kind, app and your
+own categories, pinning, multi-clips to paste several things at once, and
+optionally pasting straight into the app you were using. ⌃⌘V opens it from any app. See
 **[Clipboard and screenshot history](history.md)**.
 
 ## Crop image…
@@ -97,7 +99,7 @@ For crops to an exact size or aspect ratio, or batches, use
 | Aggressive by default | off | Start with the aggressive preset. |
 | Float on top | off | Keep the window above other windows. |
 | Default pipeline | `crop(longEdge: 2000) -> convert(to: webp)` | Used when *Pipeline* is switched on. |
-| Clipboard history | off | Record what you copy and your screenshots — with *Include screenshots*, *Find text in images*, *Keep history* and *Clear…*. See [History](history.md#settings). |
+| Clipboard history | off | Record what you copy and your screenshots — with *Include screenshots*, *Find text in images*, *Paste directly*, *Keep history* and *Clear…*. See [History](history.md#settings). |
 
 Settings — these and the compression slider, *Aggressive*, *Convert to* and
 *Pipeline* on the Optimise screen — are saved automatically and restored the

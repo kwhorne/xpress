@@ -33,6 +33,8 @@ pub struct Settings {
     pub history_ocr: bool,
     /// Forget unpinned clips after this many days (0 = keep).
     pub history_days: u32,
+    /// Paste a chosen clip into the previous app (needs Accessibility).
+    pub paste_directly: bool,
 }
 
 impl Default for Settings {
@@ -60,6 +62,7 @@ impl Settings {
             history_screenshots: true,
             history_ocr: true,
             history_days: 30,
+            paste_directly: false,
         }
     }
 

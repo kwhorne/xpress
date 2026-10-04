@@ -77,7 +77,8 @@ metadata at all.
 The app's [clipboard history](history.md) is **off until you turn it on**,
 keeps everything on your Mac (`history/` in the config folder), never records
 content that password managers mark as private, and ignores copies made in
-password managers. Text recognition in images runs on the Mac too. Delete single
+password managers. Text recognition in images runs on the Mac too. *Paste directly* uses the
+Accessibility permission only to press ⌘V in the app you return to. Delete single
 clips with right-click → *Delete*, or everything unpinned with *Clear…* in
 Preferences.
 
