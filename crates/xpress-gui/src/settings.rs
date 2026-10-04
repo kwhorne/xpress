@@ -37,6 +37,10 @@ pub struct Settings {
     pub paste_directly: bool,
     /// Sync the history between Macs through iCloud Drive.
     pub history_sync: bool,
+    /// Global shortcuts (`global_hotkey` strings; empty = off).
+    pub shortcut_clipboard: String,
+    pub shortcut_show: String,
+    pub shortcut_history: String,
 }
 
 impl Default for Settings {
@@ -66,6 +70,11 @@ impl Settings {
             history_days: 30,
             paste_directly: false,
             history_sync: false,
+            shortcut_clipboard: crate::shortcuts::Action::Clipboard
+                .default_shortcut()
+                .into(),
+            shortcut_show: crate::shortcuts::Action::Show.default_shortcut().into(),
+            shortcut_history: crate::shortcuts::Action::History.default_shortcut().into(),
         }
     }
 
