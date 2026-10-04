@@ -17,6 +17,7 @@ Every command prints help with `xpress <command> --help`. The guides explain the
 | [`check`](#check) | CI guard for oversized/unoptimised media | [CI](ci.md) |
 | [`pipeline`](#pipeline) | Run, save and attach pipelines | [Pipelines](pipelines.md) |
 | [`watch`](#watch) | Optimise new files and clipboard images automatically | [Watching](daemon.md) |
+| [`history`](#history) | Search and copy from the app's clipboard history | [History](history.md#from-the-terminal-and-other-apps) |
 | [`crop-pdf`, `uncrop-pdf`, `extract-pages`](#pdf-commands) | PDF tools | [PDFs](pdf.md) |
 | [`restore`, `clean-backups`](#backups) | Bring back or delete `.orig` backups | [Optimising](optimising.md#backups-and-restore) |
 | [`strip-exif`](#strip-exif) | Remove metadata without re-encoding | [Privacy](sharing-and-privacy.md) |
@@ -183,6 +184,30 @@ xpress watch [OPTIONS] [FOLDERS]...
 
 Without folders, the saved automations are used. Runs until Ctrl-C. See
 [Watching](daemon.md).
+
+## history
+
+```text
+xpress history [WORDS]... [OPTIONS]        # search (the default)
+xpress history show <ID> [--text]           # print a clip
+xpress history copy <ID>                    # put it on the clipboard (macOS)
+xpress history pin <ID> | unpin <ID>
+xpress history delete <ID>...
+xpress history categories [--json]
+```
+
+| Option (search) | Description |
+|--------|-------------|
+| `--kind <kind>` | `text`, `link`, `code`, `color`, `image`, `screenshot`, `files`, `multi` |
+| `--app <name>` | Only clips copied in this app |
+| `--category <name>` | Only clips in this category |
+| `--pinned` | Only pinned clips |
+| `-n, --limit <n>` | How many (default 20) |
+| `--json` | Machine-readable: `id`, `kind`, `title`, `text`, `ocr`, `paths`, `image`, `app`, `created`, `lastUsed`, `pinned`, `categories` |
+
+Uses the [desktop app's history](history.md) (turn it on in the app first).
+`show` prints text and file paths; for an image, its path (`--text`: the words
+found in it). Changes sync to your other Macs when the app syncs.
 
 ## PDF commands
 
