@@ -1571,7 +1571,7 @@ fn can_self_update(info: &xpress_core::update::UpdateInfo) -> bool {
 fn perform_self_update(url: &str, status: &Arc<Mutex<Option<String>>>) -> Result<(), String> {
     let old_app = app_bundle_path().ok_or("not running from an .app bundle")?;
 
-    let bytes = xpress_core::update::download(url)?;
+    let bytes = xpress_core::update::download_verified(url)?;
     *status.lock().unwrap() = Some("Installing update…".into());
 
     let tmp = std::env::temp_dir().join(format!("xpress-update-{}", std::process::id()));

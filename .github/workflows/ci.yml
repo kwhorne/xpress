@@ -58,6 +58,11 @@ jobs:
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
+    # The action reports through a check run, which pushes to main need
+    # permission for.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
       - uses: rustsec/audit-check@v2

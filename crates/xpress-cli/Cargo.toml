@@ -16,7 +16,9 @@ anyhow.workspace = true
 clap.workspace = true
 clap_complete = "4"
 clap_mangen = "0.2"
-self_update = { version = "1", default-features = false, features = ["github", "ureq", "rustls", "archive-tar", "compression-tar-gz", "progress-bar"] }
+flate2 = "1"
+self-replace = "1"
+tar = "0.4"
 serde_json.workspace = true
 tempfile.workspace = true
 rayon.workspace = true

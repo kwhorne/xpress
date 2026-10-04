@@ -12,6 +12,7 @@ mod progress;
 mod render;
 mod watch;
 
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
@@ -614,32 +615,65 @@ fn run_update(check_only: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Download the matching release asset and replace this binary in place.
-    let result = self_update::backends::github::Update::configure()
-        .repo_owner("kwhorne")
-        .repo_name("xpress")
-        .bin_name("xpress")
-        .current_version(current)
-        .bin_path_in_archive("xpress-v{{ version }}-{{ target }}/{{ bin }}")
-        // The release also has a -app.zip and a .dmg for the same target;
-        // without this the first match (alphabetically) could be one of them.
-        .asset_identifier(".tar.gz")
-        .show_download_progress(true)
-        .no_confirm(false)
-        .build()
-        .and_then(|u| u.update());
+    let url = info.cli_download_url.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "no release download for this platform; get it from {}",
+            info.url
+        )
+    })?;
+    if std::io::stdin().is_terminal() && !confirm(&format!("Install v{}?", info.latest))? {
+        return Ok(());
+    }
 
-    match result {
-        Ok(status) => {
-            println!("{} updated to v{}", render::CHECK, status.version());
+    match install_release(&url, &info.latest) {
+        Ok(()) => {
+            println!("{} updated to v{}", render::CHECK, info.latest);
             Ok(())
         }
         Err(e) => {
-            eprintln!("{} automatic update failed: {e}", render::WARN);
+            eprintln!("{} automatic update failed: {e:#}", render::WARN);
             eprintln!("    download it manually from {}", info.url);
             Ok(())
         }
     }
+}
+
+/// Ask a yes/no question on the terminal; Enter means yes.
+fn confirm(question: &str) -> Result<bool> {
+    use std::io::Write;
+    print!("{question} [Y/n] ");
+    std::io::stdout().flush()?;
+    let mut answer = String::new();
+    std::io::stdin().read_line(&mut answer)?;
+    Ok(matches!(answer.trim(), "" | "y" | "Y" | "yes" | "Yes"))
+}
+
+/// Download the release tarball (checked against its `.sha256`), take the
+/// `xpress` binary out of it and replace the running executable with it.
+fn install_release(url: &str, version: &str) -> Result<()> {
+    let target = xpress_core::update::cli_target()
+        .ok_or_else(|| anyhow::anyhow!("no release build for this platform"))?;
+    println!("    downloading {url}");
+    let archive = xpress_core::update::download_verified(url).map_err(anyhow::Error::msg)?;
+
+    let inner = PathBuf::from(format!("xpress-v{version}-{target}")).join("xpress");
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive.as_slice()));
+    let staging = tempfile::tempdir()?;
+    let new_exe = staging.path().join("xpress");
+    let mut found = false;
+    for entry in tar.entries()? {
+        let mut entry = entry?;
+        if entry.path()? == inner {
+            entry.unpack(&new_exe)?;
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        anyhow::bail!("{} not found in the release archive", inner.display());
+    }
+    self_replace::self_replace(&new_exe)?;
+    Ok(())
 }
 
 fn run_bundle() -> Result<()> {
