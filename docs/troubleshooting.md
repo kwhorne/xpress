@@ -95,9 +95,8 @@ thumbnail disappears.
 **Paste directly doesn't paste.**
 xpress needs the Accessibility permission: System Settings → Privacy & Security
 → Accessibility → switch on *xpress* (remove and re-add it if it's listed but
-still doesn't work). xpress presses the key where *V* is on a QWERTY keyboard; with
-a layout that moves V (plain Dvorak), use a “⌘ QWERTY” variant of it, or paste
-yourself with ⌘V.
+still doesn't work). xpress presses the key that gives ⌘V in your current
+keyboard layout (Dvorak, AZERTY and “⌘ QWERTY” layouts included).
 
 **Only the first part of a multi-clip is pasted.**
 Some apps take only one kind of content. Plain text fields get all the text;
