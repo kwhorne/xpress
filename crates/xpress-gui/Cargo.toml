@@ -15,7 +15,7 @@ xpress-core = { path = "../xpress-core" }
 anyhow.workspace = true
 eframe = "0.36"
 egui = "0.36"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 global-hotkey = "0.6"
 arboard = "3"
 rfd = "0.15"
@@ -31,3 +31,5 @@ tempfile.workspace = true
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSResponder"] }
 objc2-foundation = "0.3"
+# Recognising screenshots by their Finder metadata.
+xattr = "1"

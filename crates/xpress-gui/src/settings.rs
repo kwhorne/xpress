@@ -25,6 +25,14 @@ pub struct Settings {
     pub always_on_top: bool,
     pub pipeline: String,
     pub use_pipeline: bool,
+    /// Record clipboard history (off until turned on).
+    pub history_enabled: bool,
+    /// Also record new screenshots.
+    pub history_screenshots: bool,
+    /// Recognise the text in recorded images.
+    pub history_ocr: bool,
+    /// Forget unpinned clips after this many days (0 = keep).
+    pub history_days: u32,
 }
 
 impl Default for Settings {
@@ -48,6 +56,10 @@ impl Settings {
             always_on_top: false,
             pipeline: "crop(longEdge: 2000) -> convert(to: webp)".into(),
             use_pipeline: false,
+            history_enabled: false,
+            history_screenshots: true,
+            history_ocr: true,
+            history_days: 30,
         }
     }
 
