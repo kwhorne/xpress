@@ -22,7 +22,7 @@ xpress has no Dock icon — look for the **✕** in the menu bar. Its menu has:
 
 The shortcuts work **from any app**: copy a screenshot, press **⌘⇧O**, and
 paste the optimised version; or press **⌃⌘V** to find something you copied
-earlier.
+earlier. Change or turn them off in **Preferences → Shortcuts**.
 
 ## Optimise
 
@@ -99,6 +99,7 @@ For crops to an exact size or aspect ratio, or batches, use
 | Aggressive by default | off | Start with the aggressive preset. |
 | Float on top | off | Keep the window above other windows. |
 | Default pipeline | `crop(longEdge: 2000) -> convert(to: webp)` | Used when *Pipeline* is switched on. |
+| Shortcuts | ⇧⌘O, ⇧⌘X, ⌃⌘V | Click one and press the new keys (with ⌘, ⌃ or ⌥); ⌫ turns it off, esc cancels, *Reset* brings the default back. The menu-bar menu shows the current ones. |
 | Clipboard history | off | Record what you copy and your screenshots — with *Include screenshots*, *Find text in images*, *Paste directly*, *Sync with iCloud*, *Keep history* and *Clear…*. See [History](history.md#settings). |
 
 Settings — these and the compression slider, *Aggressive*, *Convert to* and

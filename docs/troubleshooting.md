@@ -82,8 +82,9 @@ xpress lives in the menu bar (✕ icon), not the Dock. Click it or press ⌘⇧X
 Closing the window only hides it.
 
 **The hotkeys don't work.**
-Another app may already use ⌘⇧O, ⌘⇧X or ⌃⌘V. Quit the other app or use the
-menu-bar menu.
+Another app may already use ⌘⇧O, ⌘⇧X or ⌃⌘V — Preferences → Shortcuts says so
+when one couldn't be set up. Pick different keys there, or use the menu-bar
+menu.
 
 **The clipboard history doesn't record anything.**
 Turn it on under *History* or in Preferences — it's off by default. Only what

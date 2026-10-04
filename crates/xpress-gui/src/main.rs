@@ -11,6 +11,7 @@ mod capture;
 mod history_ui;
 mod pasteboard;
 mod settings;
+mod shortcuts;
 mod work;
 
 use eframe::egui;

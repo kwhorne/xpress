@@ -25,8 +25,9 @@ screenshots aren't imported.
 
 ## Finding and pasting
 
-Press **⌃⌘V** in any app (or choose *Clipboard history* from the ✕ menu). The
-history opens with the cursor in the search field:
+Press **⌃⌘V** in any app (or choose *Clipboard history* from the ✕ menu; the
+shortcut can be changed in Preferences → Shortcuts). The history opens with the
+cursor in the search field:
 
 1. **Type** a few letters — words match by prefix and in any order, so
    `inv 47` finds “Invoice 4711”. Accents don't matter (`cafe` finds “café”).

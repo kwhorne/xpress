@@ -9,10 +9,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use egui::{Align, Align2, Color32, FontId, Layout, Pos2, Rect, RichText, Sense, Vec2};
-use global_hotkey::{
-    hotkey::{Code, HotKey, Modifiers},
-    GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
-};
+use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
 use xpress_core::compression::{CompressionQuality, CompressionTier};
 use xpress_core::filetype::MediaKind;
 use xpress_core::image::ImageFormat;
@@ -24,6 +21,7 @@ use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 use crate::capture::{CaptureFlags, SyncStatus};
 use crate::history_ui::{AiState, AiView, HistoryAction, HistoryPanel};
 use crate::settings::Settings;
+use crate::shortcuts::{self, Action};
 use crate::work::{self, Msg};
 use xpress_core::history::{ClipKind, History};
 use xpress_core::intelligence::Status as AiStatus;
@@ -148,10 +146,17 @@ pub struct XpressApp {
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
 
-    _hotkey_manager: Option<GlobalHotKeyManager>,
-    clipboard_hotkey: Option<HotKey>,
-    show_hotkey: Option<HotKey>,
-    history_hotkey: Option<HotKey>,
+    hotkey_manager: Option<GlobalHotKeyManager>,
+    /// The shortcuts as set (stored strings, "" = off), by [`Action`].
+    shortcuts: [String; 3],
+    /// What's registered with the system right now.
+    registered: [Option<HotKey>; 3],
+    /// Why a shortcut couldn't be used.
+    shortcut_errors: [Option<String>; 3],
+    /// Waiting for the keys of a new shortcut.
+    recording: Option<Action>,
+    /// Menu-bar items that show their shortcut.
+    tray_items: Option<[MenuItem; 3]>,
 
     crop: Option<CropState>,
 
@@ -204,16 +209,20 @@ impl XpressApp {
         if integrations {
             spawn_update_check(ctx.clone(), update_info.clone(), update_checking.clone());
         }
-        let (tray, [open_id, clip_id, history_id, collect_id, update_id, quit_id], collect_item) =
-            if integrations {
-                build_tray()
-            } else {
-                (None, Default::default(), None)
-            };
-        let (manager, [clip_hk, show_hk, history_hk]) = if integrations {
-            register_hotkeys()
+        let (
+            tray,
+            [open_id, clip_id, history_id, collect_id, update_id, quit_id],
+            collect_item,
+            tray_items,
+        ) = if integrations {
+            build_tray()
         } else {
-            (None, [None, None, None])
+            (None, Default::default(), None, None)
+        };
+        let manager = if integrations {
+            GlobalHotKeyManager::new().ok()
+        } else {
+            None
         };
 
         let history = history_dir.and_then(|dir| match History::open(&dir) {
@@ -300,10 +309,12 @@ impl XpressApp {
             in_flight: 0,
             tx,
             rx,
-            _hotkey_manager: manager,
-            clipboard_hotkey: clip_hk,
-            show_hotkey: show_hk,
-            history_hotkey: history_hk,
+            hotkey_manager: manager,
+            shortcuts: Action::ALL.map(|a| a.default_shortcut().to_string()),
+            registered: [None, None, None],
+            shortcut_errors: [None, None, None],
+            recording: None,
+            tray_items,
             crop: None,
             update_info,
             update_checking,
@@ -322,6 +333,7 @@ impl XpressApp {
         };
         app.apply_settings(&settings);
         app.sync_capture();
+        app.apply_shortcuts();
         if app.always_on_top {
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
                 egui::WindowLevel::AlwaysOnTop,
@@ -349,6 +361,9 @@ impl XpressApp {
             history_days: self.history_days,
             paste_directly: self.paste_directly,
             history_sync: self.history_sync,
+            shortcut_clipboard: self.shortcuts[Action::Clipboard.index()].clone(),
+            shortcut_show: self.shortcuts[Action::Show.index()].clone(),
+            shortcut_history: self.shortcuts[Action::History.index()].clone(),
         }
     }
 
@@ -373,6 +388,191 @@ impl XpressApp {
         self.history_days = s.history_days;
         self.paste_directly = s.paste_directly;
         self.history_sync = s.history_sync;
+        self.shortcuts = [
+            s.shortcut_clipboard.clone(),
+            s.shortcut_show.clone(),
+            s.shortcut_history.clone(),
+        ];
+    }
+
+    /// Register the shortcuts as set (none while recording a new one, so its
+    /// keys reach the app), and show them in the menu-bar menu.
+    fn apply_shortcuts(&mut self) {
+        if let Some(manager) = &self.hotkey_manager {
+            let current: Vec<HotKey> = self.registered.iter().flatten().copied().collect();
+            let _ = manager.unregister_all(&current);
+        }
+        self.registered = [None, None, None];
+        for action in Action::ALL {
+            let i = action.index();
+            self.shortcut_errors[i] = None;
+            let Some(hotkey) = shortcuts::parse(&self.shortcuts[i]) else {
+                continue;
+            };
+            if self.recording.is_some() {
+                continue;
+            }
+            match &self.hotkey_manager {
+                Some(manager) => match manager.register(hotkey) {
+                    Ok(()) => self.registered[i] = Some(hotkey),
+                    Err(_) => {
+                        self.shortcut_errors[i] = Some(format!(
+                            "{} couldn't be set up — another app may be using it.",
+                            shortcuts::display(&hotkey)
+                        ))
+                    }
+                },
+                // Tests: no system shortcuts, but keep track of them.
+                None => self.registered[i] = Some(hotkey),
+            }
+        }
+        if let Some(items) = &self.tray_items {
+            for (item, action) in items.iter().zip(Action::ALL) {
+                item.set_text(match shortcuts::parse(&self.shortcuts[action.index()]) {
+                    Some(hk) => format!("{}\t{}", action.label(), shortcuts::display(&hk)),
+                    None => action.label().to_string(),
+                });
+            }
+        }
+    }
+
+    /// The drop zone's second line, with the shortcuts that are on.
+    fn drop_hint(&self) -> String {
+        let mut hint = "images · video · PDF · audio".to_string();
+        let keys: Vec<String> = [(Action::Clipboard, "clipboard"), (Action::Show, "show")]
+            .into_iter()
+            .filter_map(|(a, what)| self.shortcut_label(a).map(|k| format!("{k} {what}")))
+            .collect();
+        if !keys.is_empty() {
+            hint.push_str("      ");
+            hint.push_str(&keys.join("  ·  "));
+        }
+        hint
+    }
+
+    /// The shortcut for `action` as shown to the user, or None when off.
+    fn shortcut_label(&self, action: Action) -> Option<String> {
+        shortcuts::parse(&self.shortcuts[action.index()]).map(|h| shortcuts::display(&h))
+    }
+
+    /// Take the keys of a new shortcut while recording one.
+    fn record_shortcut(&mut self, ui: &egui::Ui) {
+        let Some(action) = self.recording else { return };
+        let pressed = ui.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Key {
+                    key,
+                    physical_key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => Some((physical_key.unwrap_or(*key), *modifiers)),
+                _ => None,
+            })
+        });
+        let Some((key, mods)) = pressed else { return };
+        let i = action.index();
+        let plain = !(mods.mac_cmd || mods.ctrl || mods.alt || mods.command);
+        if key == egui::Key::Escape && plain {
+            self.recording = None;
+        } else if matches!(key, egui::Key::Backspace | egui::Key::Delete) && plain {
+            self.shortcuts[i].clear();
+            self.recording = None;
+        } else {
+            match shortcuts::from_key(key, mods) {
+                Ok(hotkey) => {
+                    let taken = Action::ALL.into_iter().find(|other| {
+                        *other != action
+                            && shortcuts::parse(&self.shortcuts[other.index()]) == Some(hotkey)
+                    });
+                    match taken {
+                        Some(other) => {
+                            self.shortcut_errors[i] =
+                                Some(format!("Already used for “{}”.", other.label()));
+                            return;
+                        }
+                        None => {
+                            self.shortcuts[i] = shortcuts::store(&hotkey);
+                            self.recording = None;
+                        }
+                    }
+                }
+                Err(refused) => {
+                    self.shortcut_errors[i] = Some(refused.message().to_string());
+                    return;
+                }
+            }
+        }
+        self.apply_shortcuts();
+    }
+
+    fn shortcut_settings(&mut self, ui: &mut egui::Ui) {
+        self.record_shortcut(ui);
+        card(ui, |ui| {
+            ui.label(RichText::new("Shortcuts").strong());
+            ui.label(
+                RichText::new("Work in every app. Click one to change it.")
+                    .weak()
+                    .small(),
+            );
+            ui.add_space(6.0);
+            for action in Action::ALL {
+                let i = action.index();
+                let desc = match action {
+                    Action::Clipboard => "Optimise the image you copied",
+                    Action::Show => "Bring the window to the front",
+                    Action::History => "Search what you copied and paste it again",
+                };
+                let mut start = false;
+                let mut reset = false;
+                setting_row(ui, action.label(), desc, |ui| {
+                    let recording = self.recording == Some(action);
+                    let label = if recording {
+                        "Press keys…".to_string()
+                    } else {
+                        shortcuts::display_str(&self.shortcuts[i])
+                    };
+                    if ui
+                        .add(
+                            egui::Button::selectable(recording, label)
+                                .min_size(egui::vec2(96.0, 0.0)),
+                        )
+                        .on_hover_text("Click, then press the new shortcut")
+                        .clicked()
+                    {
+                        start = true;
+                    }
+                    if self.shortcuts[i] != action.default_shortcut()
+                        && ui.small_button("Reset").clicked()
+                    {
+                        reset = true;
+                    }
+                });
+                if self.recording == Some(action) {
+                    ui.label(
+                        RichText::new("Press the new shortcut · ⌫ turns it off · esc cancels")
+                            .weak()
+                            .small(),
+                    );
+                }
+                if let Some(error) = &self.shortcut_errors[i] {
+                    ui.label(RichText::new(error).small().color(ERR_RED));
+                }
+                if start {
+                    self.recording = Some(action);
+                    self.shortcut_errors[i] = None;
+                    self.apply_shortcuts();
+                }
+                if reset {
+                    self.shortcuts[i] = action.default_shortcut().to_string();
+                    self.recording = None;
+                    self.apply_shortcuts();
+                }
+                if action != Action::History {
+                    ui.separator();
+                }
+            }
+        });
     }
 
     /// Tell the recording thread what the settings say.
@@ -875,13 +1075,17 @@ impl eframe::App for XpressApp {
             if ev.state != HotKeyState::Pressed {
                 continue;
             }
-            if self.clipboard_hotkey.map(|h| h.id()) == Some(ev.id) {
-                Self::show_window(ctx);
-                self.optimise_clipboard(ctx);
-            } else if self.show_hotkey.map(|h| h.id()) == Some(ev.id) {
-                Self::show_window(ctx);
-            } else if self.history_hotkey.map(|h| h.id()) == Some(ev.id) {
-                self.open_history(ctx);
+            let action = Action::ALL
+                .into_iter()
+                .find(|a| self.registered[a.index()].map(|h| h.id()) == Some(ev.id));
+            match action {
+                Some(Action::Clipboard) => {
+                    Self::show_window(ctx);
+                    self.optimise_clipboard(ctx);
+                }
+                Some(Action::Show) => Self::show_window(ctx),
+                Some(Action::History) => self.open_history(ctx),
+                None => {}
             }
         }
 
@@ -1089,10 +1293,11 @@ impl XpressApp {
             FontId::proportional(18.0),
             ui.visuals().text_color(),
         );
+        let hint = self.drop_hint();
         ui.painter().text(
             rect.center() + egui::vec2(0.0, 14.0),
             Align2::CENTER_CENTER,
-            "images · video · PDF · audio      ⌘⇧O clipboard  ·  ⌘⇧X show",
+            hint,
             FontId::proportional(12.0),
             ui.visuals().weak_text_color(),
         );
@@ -1224,7 +1429,10 @@ impl XpressApp {
             setting_row(
                 ui,
                 "Clipboard history",
-                "Keep what you copy, searchable under History (⌃⌘V)",
+                &match self.shortcut_label(Action::History) {
+                    Some(k) => format!("Keep what you copy, searchable under History ({k})"),
+                    None => "Keep what you copy, searchable under History".to_string(),
+                },
                 |ui| {
                     toggle(ui, &mut self.history_enabled);
                 },
@@ -1444,6 +1652,9 @@ impl XpressApp {
 
         ui.add_space(12.0);
         self.history_settings(ui);
+
+        ui.add_space(12.0);
+        self.shortcut_settings(ui);
 
         ui.add_space(12.0);
         card(ui, |ui| {
@@ -1714,11 +1925,18 @@ impl XpressApp {
 
 /// The menu-bar (status bar) icon and its menu; returns the menu item ids
 /// (open, clipboard, update, quit).
-fn build_tray() -> (Option<TrayIcon>, [String; 6], Option<CheckMenuItem>) {
+#[allow(clippy::type_complexity)]
+fn build_tray() -> (
+    Option<TrayIcon>,
+    [String; 6],
+    Option<CheckMenuItem>,
+    Option<[MenuItem; 3]>,
+) {
     let menu = Menu::new();
-    let open_item = MenuItem::new("Open xpress\t⌘⇧X", true, None);
-    let clip_item = MenuItem::new("Optimise clipboard\t⌘⇧O", true, None);
-    let history_item = MenuItem::new("Clipboard history\t⌃⌘V", true, None);
+    // Their shortcuts are added by `apply_shortcuts`.
+    let open_item = MenuItem::new("Open xpress", true, None);
+    let clip_item = MenuItem::new("Optimise clipboard", true, None);
+    let history_item = MenuItem::new("Clipboard history", true, None);
     let collect_item = CheckMenuItem::new("Collect clips", true, false, None);
     let update_item = MenuItem::new("Check for updates", true, None);
     let quit_item = MenuItem::new("Quit xpress", true, None);
@@ -1753,25 +1971,9 @@ fn build_tray() -> (Option<TrayIcon>, [String; 6], Option<CheckMenuItem>) {
         tray,
         [open_id, clip_id, history_id, collect_id, update_id, quit_id],
         Some(collect_item),
+        // In `Action` order.
+        Some([clip_item, open_item, history_item]),
     )
-}
-
-/// Register the global hotkeys: ⌘⇧O optimises the clipboard, ⌘⇧X shows the
-/// window, ⌃⌘V opens the history. (⌘X alone is the system “cut” shortcut, and
-/// ⌘⇧V is “Paste and Match Style” in many apps, so we leave those alone.)
-fn register_hotkeys() -> (Option<GlobalHotKeyManager>, [Option<HotKey>; 3]) {
-    match GlobalHotKeyManager::new() {
-        Ok(m) => {
-            let keys = [
-                HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyO),
-                HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyX),
-                HotKey::new(Some(Modifiers::SUPER | Modifiers::CONTROL), Code::KeyV),
-            ];
-            let registered = keys.map(|k| m.register(k).ok().map(|_| k));
-            (Some(m), registered)
-        }
-        Err(_) => (None, [None, None, None]),
-    }
 }
 
 /// egui's bundled fonts lack symbols we show (⇧ in hotkey hints, → in result
@@ -2897,6 +3099,110 @@ mod tests {
         );
     }
 
+    fn preferences(dir: &Path) -> Harness<'static, XpressApp> {
+        let mut h = harness_with_settings(&dir.join("gui.json"));
+        h.state_mut().tab = Tab::Settings;
+        h.set_size(egui::vec2(960.0, 2200.0));
+        h.run();
+        h
+    }
+
+    fn cmd_alt() -> egui::Modifiers {
+        egui::Modifiers {
+            alt: true,
+            mac_cmd: true,
+            command: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn shortcuts_can_be_changed_turned_off_and_reset() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut h = preferences(dir.path());
+            assert!(h.query_by_label("Shortcuts").is_some());
+            assert!(
+                h.query_by_label_contains("⇧⌘O clipboard").is_none(),
+                "not on Optimise"
+            );
+
+            // Record ⌥⌘H for the history.
+            h.get_by_label("⌃⌘V").click();
+            h.run();
+            assert_eq!(h.state().recording, Some(Action::History));
+            assert!(h.query_by_label("Press keys…").is_some());
+            assert!(
+                h.state().registered.iter().all(Option::is_none),
+                "paused while recording"
+            );
+            h.key_press_modifiers(cmd_alt(), egui::Key::H);
+            h.run();
+            h.run();
+            assert_eq!(h.state().recording, None);
+            assert_eq!(
+                h.state().shortcuts[Action::History.index()],
+                "alt+super+KeyH"
+            );
+            assert!(h.query_by_label("⌥⌘H").is_some());
+            assert!(h.state().registered.iter().all(Option::is_some), "back on");
+
+            // A plain key is refused; the same keys as another shortcut too.
+            h.get_by_label("⇧⌘X").click();
+            h.run();
+            h.key_press(egui::Key::K);
+            h.run();
+            assert!(h.query_by_label("Use ⌘, ⌃ or ⌥ with the key.").is_some());
+            assert_eq!(h.state().recording, Some(Action::Show));
+            h.key_press_modifiers(cmd_alt(), egui::Key::H);
+            h.run();
+            assert!(h
+                .query_by_label("Already used for “Clipboard history”.")
+                .is_some());
+            // ⌫ turns it off.
+            h.key_press(egui::Key::Backspace);
+            h.run();
+            h.run();
+            assert_eq!(h.state().shortcuts[Action::Show.index()], "");
+            assert_eq!(h.state().registered[Action::Show.index()], None);
+            assert!(h.query_by_label("Off").is_some());
+
+            // Esc cancels a recording.
+            h.get_by_label("⇧⌘O").click();
+            h.run();
+            h.key_press(egui::Key::Escape);
+            h.run();
+            assert_eq!(h.state().recording, None);
+            assert_eq!(
+                h.state().shortcuts[Action::Clipboard.index()],
+                Action::Clipboard.default_shortcut()
+            );
+            h.state_mut().persist_settings(true);
+        }
+
+        // Remembered; Reset brings the default back.
+        let mut h = preferences(dir.path());
+        assert_eq!(
+            h.state().shortcuts[Action::History.index()],
+            "alt+super+KeyH"
+        );
+        assert_eq!(h.state().shortcuts[Action::Show.index()], "");
+        assert_eq!(
+            h.state().drop_hint(),
+            "images · video · PDF · audio      ⇧⌘O clipboard",
+            "the drop zone shows the shortcuts that are on"
+        );
+        let resets = h.query_all_by_label("Reset").count();
+        assert_eq!(resets, 2);
+        h.query_all_by_label("Reset").next().unwrap().click();
+        h.run();
+        h.run();
+        assert_eq!(
+            h.state().shortcuts[Action::Show.index()],
+            Action::Show.default_shortcut()
+        );
+    }
+
     #[test]
     fn history_settings_are_remembered_and_clear_asks_twice() {
         let dir = tempfile::tempdir().unwrap();
@@ -2909,7 +3215,8 @@ mod tests {
             h.state_mut().history_days = 7;
             h.state_mut().paste_directly = true;
             h.run();
-            assert!(h.query_by_label("Clipboard history").is_some());
+            // The setting, and its shortcut.
+            assert_eq!(h.query_all_by_label("Clipboard history").count(), 2);
             h.get_by_label("Clear…").click();
             h.run();
             assert_eq!(

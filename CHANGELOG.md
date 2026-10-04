@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Shortcuts can be changed** in Preferences → Shortcuts (or turned off):
+  click, press the new keys; conflicts and shortcuts another app holds are
+  reported. The menu-bar menu and the drop zone show the current ones.
+
 ## [0.7.1] - 2026-10-04
 
 ### Fixed
