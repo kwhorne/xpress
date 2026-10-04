@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.4] - 2026-10-04
+
 ### Added
 - **The desktop app remembers its settings** between launches — compression,
   *Aggressive*, *Convert to*, the pipeline and all Preferences — in `gui.json`
@@ -394,7 +396,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.5.4...HEAD
+[0.5.4]: https://github.com/kwhorne/xpress/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/kwhorne/xpress/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/kwhorne/xpress/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/kwhorne/xpress/compare/v0.5.0...v0.5.1
