@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-04
+
 ### Fixed
 - *Paste directly* presses the key that gives ⌘V in the current keyboard
   layout; with plain Dvorak it pressed the wrong key.
@@ -440,7 +442,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/kwhorne/xpress/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/kwhorne/xpress/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/kwhorne/xpress/compare/v0.5.4...v0.6.0
 [0.5.4]: https://github.com/kwhorne/xpress/compare/v0.5.3...v0.5.4
