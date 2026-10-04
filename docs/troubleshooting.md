@@ -82,8 +82,19 @@ xpress lives in the menu bar (✕ icon), not the Dock. Click it or press ⌘⇧X
 Closing the window only hides it.
 
 **The hotkeys don't work.**
-Another app may already use ⌘⇧O or ⌘⇧X. Quit the other app or use the menu-bar
-menu.
+Another app may already use ⌘⇧O, ⌘⇧X or ⌃⌘V. Quit the other app or use the
+menu-bar menu.
+
+**The clipboard history doesn't record anything.**
+Turn it on under *History* or in Preferences — it's off by default. Only what
+you copy afterwards is recorded, and never content a password manager marks as
+private. Screenshots are picked up from the folder macOS saves them to (set in
+the Screenshot app's *Options*); it can take a few seconds after the floating
+thumbnail disappears.
+
+**A screenshot isn't found by its text.**
+Text recognition needs *Find text in images* on, runs once when the image is
+recorded, and reads printed text best; tiny or handwritten text may be missed.
 
 **My Preferences were reset.**
 Versions before 0.5.4 didn't save app settings between launches. Later versions

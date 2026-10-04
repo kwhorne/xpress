@@ -6,6 +6,17 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Clipboard and screenshot history** in the desktop app: everything you copy
+  (text, links, code, colours, images, files) and every new screenshot, in a
+  searchable list with previews — filter by kind or source app, pin clips, and
+  copy one back with ⌃⌘V → type → ⏎ (xpress steps aside so you can ⌘V).
+  Words **inside images** are searchable through on-device text recognition
+  (Apple Vision). Off until turned on; content password managers mark as
+  private, and copies made in password managers, are never recorded. Kept for
+  a chosen time (default a month, pinned clips forever, at most 2 GB) in a
+  local SQLite database. See [docs/history.md](docs/history.md).
+
 ## [0.5.4] - 2026-10-04
 
 ### Added

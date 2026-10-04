@@ -18,7 +18,8 @@ One tool, three ways to use it:
 - **Background daemon** (`xpress watch`) — automatically optimise new files in
   watched folders, or images you copy to the clipboard.
 - **Desktop app** (`xpress-gui`) — drag files in, see the savings, crop
-  interactively, and optimise the clipboard with a global hotkey.
+  interactively, optimise the clipboard with a global hotkey, and keep a
+  searchable **clipboard and screenshot history** (⌃⌘V).
 
 ## What it does
 
@@ -43,6 +44,10 @@ One tool, three ways to use it:
 - **PDF tools**: non-destructive crop/uncrop and rendering pages to images.
 - **Pipelines**: chain steps like `crop(width: 1600) -> convert(to: webp)`, save
   them by name, and attach them to folders for hands-off automation.
+- **Clipboard and screenshot history** (app): everything you copy and every
+  screenshot, searchable — including the words inside images (on-device text
+  recognition) — filtered by kind and app, one keystroke from pasting again.
+  Off until you turn it on; passwords are never recorded.
 - **Non-destructive by default**: originals are backed up and can be restored.
 
 Images **and PDFs** are optimised, resized, cropped and converted **entirely in
@@ -59,6 +64,7 @@ xpress is free and open source under the [MIT License](LICENSE).
 The **[user guide](docs/README.md)** covers everything:
 [getting started](docs/getting-started.md) ·
 [the desktop app](docs/gui.md) ·
+[clipboard history](docs/history.md) ·
 [optimising](docs/optimising.md) ·
 [converting formats](docs/converting.md) ·
 [resizing & cropping](docs/resizing-and-cropping.md) ·

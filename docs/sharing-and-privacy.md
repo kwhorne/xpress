@@ -72,6 +72,15 @@ converts it — including location. Converting to AVIF can't keep the colour
 profile (the pixels are converted to sRGB instead), and GIF and BMP can't store
 metadata at all.
 
+## Clipboard history
+
+The app's [clipboard history](history.md) is **off until you turn it on**,
+keeps everything on your Mac (`history/` in the config folder), never records
+content that password managers mark as private, and ignores copies made in
+password managers. Text recognition in images runs on the Mac too. Delete single
+clips with right-click → *Delete*, or everything unpinned with *Clear…* in
+Preferences.
+
 ## Copy large, paste small
 
 To share screenshots quickly: copy an image, press **⌘⇧O** (app running), then

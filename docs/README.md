@@ -13,6 +13,7 @@ New here? Start with **[Getting started](getting-started.md)**.
 | [Getting started](getting-started.md) | Install, your first optimisation, what happens to your files |
 | [Installation](installation.md) | Every way to install, update and uninstall; extra tools |
 | [The desktop app](gui.md) | Every screen, button and setting of the macOS app |
+| [Clipboard and screenshot history](history.md) | Find anything you copied or captured — also by the text in images — and paste it again |
 | [Optimising](optimising.md) | Compression levels, quality targets, size budgets, backups, skipping work already done |
 | [Converting formats](converting.md) | PNG ↔ JPEG ↔ WebP ↔ AVIF ↔ HEIC ↔ GIF ↔ TIFF ↔ BMP, and which to choose |
 | [Resizing and cropping](resizing-and-cropping.md) | Downscale, crop to a size or ratio, smart crop |

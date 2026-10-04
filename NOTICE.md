@@ -33,6 +33,8 @@ so the binaries themselves can be distributed under MIT:
 | qcms                 | ICC -> sRGB (AVIF)         | MIT                |
 | ssimulacra2          | `--quality` metric         | BSD-2-Clause       |
 | xattr                | "already optimised" marks  | MIT OR Apache-2.0  |
+| rusqlite / SQLite    | clipboard history          | MIT / public domain |
+| objc2 crates         | macOS APIs (AppKit, Vision) | MIT OR Apache-2.0 OR Zlib |
 
 JPEG encoding: this software is based in part on the work of the Independent
 JPEG Group (via mozjpeg / libjpeg-turbo).
