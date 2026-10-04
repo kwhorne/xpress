@@ -86,8 +86,14 @@ Another app may already use ⌘⇧O or ⌘⇧X. Quit the other app or use the me
 menu.
 
 **My Preferences were reset.**
-App settings currently last until you quit; they aren't saved between launches
-yet.
+Versions before 0.5.4 didn't save app settings between launches. Later versions
+keep them in `gui.json` in the config folder (see
+[Configuration](configuration.md#desktop-app-settings-guijson)); if that file
+is unreadable, the app starts from the defaults again.
+
+**Dropped images are converted instead of optimised.**
+*Convert to* on the Optimise screen is remembered between launches. Set it back
+to *Keep format*.
 
 **Update & Restart failed.**
 Download the latest `.dmg` from the

@@ -21,6 +21,7 @@ use xpress_core::result::OptimiseOptions;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
+use crate::settings::Settings;
 use crate::work::{self, Msg};
 
 // Palette matching elyra-conductor (Tokyo Night).
@@ -37,6 +38,8 @@ const OK_GREEN: Color32 = Color32::from_rgb(0x9e, 0xce, 0x6a);
 const ERR_RED: Color32 = Color32::from_rgb(0xf7, 0x76, 0x8e);
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+/// Changed settings are written once they've been left alone this long.
+const SAVE_DELAY: Duration = Duration::from_millis(500);
 
 /// Perceptual quality targets offered in Preferences (SSIMULACRA2 scores).
 const QUALITY_TARGETS: [(&str, Option<f64>); 5] = [
@@ -46,6 +49,8 @@ const QUALITY_TARGETS: [(&str, Option<f64>); 5] = [
     ("Medium", Some(70.0)),
     ("Low", Some(50.0)),
 ];
+/// How each entry of [`QUALITY_TARGETS`] is stored in the settings file.
+const QUALITY_KEYS: [&str; 5] = ["off", "visually-lossless", "high", "medium", "low"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -89,6 +94,12 @@ pub struct XpressApp {
     pipeline_dsl: String,
     use_pipeline: bool,
 
+    /// Where settings are remembered (none in tests).
+    settings_path: Option<PathBuf>,
+    /// The settings as last written, and when they started to differ.
+    saved_settings: Settings,
+    settings_changed: Option<Instant>,
+
     cards: Vec<Card>,
     in_flight: usize,
 
@@ -124,6 +135,11 @@ impl XpressApp {
     /// icon, global hotkeys and the background update check — which tests
     /// leave out (they need the main thread and the network).
     fn build(ctx: &egui::Context, integrations: bool) -> Self {
+        let settings_path = if integrations { Settings::path() } else { None };
+        Self::build_with(ctx, integrations, settings_path)
+    }
+
+    fn build_with(ctx: &egui::Context, integrations: bool, settings_path: Option<PathBuf>) -> Self {
         install_style(ctx);
         let (tx, rx) = channel();
 
@@ -144,7 +160,14 @@ impl XpressApp {
             (None, None, None)
         };
 
-        Self {
+        let settings = match &settings_path {
+            Some(path) => Settings::load(path, || {
+                Settings::from_config(&xpress_core::config::Config::load())
+            }),
+            None => Settings::default(),
+        };
+
+        let mut app = Self {
             tab: Tab::Optimise,
             factor: xpress_core::compression::COMPRESSION_FACTOR_NORMAL,
             aggressive: false,
@@ -155,8 +178,11 @@ impl XpressApp {
             convert_to: None,
             skip_optimised: true,
             always_on_top: false,
-            pipeline_dsl: "crop(longEdge: 2000) -> convert(to: webp)".to_string(),
+            pipeline_dsl: String::new(),
             use_pipeline: false,
+            settings_path,
+            saved_settings: settings.clone(),
+            settings_changed: None,
             cards: Vec::new(),
             in_flight: 0,
             tx,
@@ -176,6 +202,67 @@ impl XpressApp {
             tray_clip_id: clip_id,
             tray_update_id: update_id,
             tray_quit_id: quit_id,
+        };
+        app.apply_settings(&settings);
+        if app.always_on_top {
+            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
+                egui::WindowLevel::AlwaysOnTop,
+            ));
+        }
+        app
+    }
+
+    fn settings(&self) -> Settings {
+        Settings {
+            compression: self.factor,
+            aggressive: self.aggressive,
+            backup: self.backup,
+            strip_metadata: self.strip_metadata,
+            strip_location: self.strip_location,
+            quality_target: QUALITY_KEYS[self.quality_target].to_string(),
+            convert_to: self.convert_to.map(|f| f.extension().to_string()),
+            skip_optimised: self.skip_optimised,
+            always_on_top: self.always_on_top,
+            pipeline: self.pipeline_dsl.clone(),
+            use_pipeline: self.use_pipeline,
+        }
+    }
+
+    fn apply_settings(&mut self, s: &Settings) {
+        self.factor = s.compression.clamp(5, 100);
+        self.aggressive = s.aggressive;
+        self.backup = s.backup;
+        self.strip_metadata = s.strip_metadata;
+        self.strip_location = s.strip_location;
+        self.quality_target = QUALITY_KEYS
+            .iter()
+            .position(|k| *k == s.quality_target)
+            .unwrap_or(0);
+        self.convert_to = s.convert_to.as_deref().and_then(ImageFormat::from_str);
+        self.skip_optimised = s.skip_optimised;
+        self.always_on_top = s.always_on_top;
+        self.pipeline_dsl = s.pipeline.clone();
+        self.use_pipeline = s.use_pipeline;
+    }
+
+    /// Write the settings once they've changed and settled (or now, with
+    /// `force`, e.g. before quitting).
+    fn persist_settings(&mut self, force: bool) {
+        let Some(path) = self.settings_path.clone() else {
+            return;
+        };
+        let current = self.settings();
+        if current == self.saved_settings {
+            self.settings_changed = None;
+            return;
+        }
+        let since = *self.settings_changed.get_or_insert_with(Instant::now);
+        if force || since.elapsed() >= SAVE_DELAY {
+            if let Err(e) = current.save(&path) {
+                eprintln!("xpress: could not save settings to {}: {e}", path.display());
+            }
+            self.saved_settings = current;
+            self.settings_changed = None;
         }
     }
 
@@ -422,6 +509,7 @@ impl eframe::App for XpressApp {
                 self.tab = Tab::About;
                 self.check_for_updates(ctx);
             } else if id == self.tray_quit_id {
+                self.persist_settings(true);
                 std::process::exit(0);
             }
         }
@@ -445,6 +533,7 @@ impl eframe::App for XpressApp {
         }
 
         self.drain_results();
+        self.persist_settings(false);
 
         if self.last_update_check.elapsed() >= UPDATE_INTERVAL
             && !self.update_checking.load(Ordering::Relaxed)
@@ -738,7 +827,12 @@ impl XpressApp {
 
     fn settings_view(&mut self, ui: &mut egui::Ui) {
         ui.heading("Preferences");
-        ui.label(RichText::new("Defaults applied to every optimisation.").weak());
+        ui.label(
+            RichText::new(
+                "Defaults applied to every optimisation. Changes are saved automatically.",
+            )
+            .weak(),
+        );
         ui.add_space(16.0);
 
         card(ui, |ui| {
@@ -1735,6 +1829,71 @@ mod tests {
         h.get_by_label("Optimise").click();
         h.run();
         assert_eq!(h.state().tab, Tab::Optimise);
+    }
+
+    fn harness_with_settings(path: &Path) -> Harness<'static, XpressApp> {
+        let app = XpressApp::build_with(&egui::Context::default(), false, Some(path.into()));
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(960.0, 692.0))
+            .build_ui_state(|ui, app: &mut XpressApp| app.draw(ui), app);
+        h.run();
+        h
+    }
+
+    #[test]
+    fn settings_are_remembered_between_launches() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gui.json");
+        {
+            let mut h = harness_with_settings(&path);
+            let app = h.state_mut();
+            app.factor = 70;
+            app.backup = false;
+            app.strip_location = true;
+            app.quality_target = 2;
+            app.convert_to = Some(ImageFormat::Jpeg);
+            app.pipeline_dsl = "convert(to: avif)".into();
+            app.use_pipeline = true;
+            app.persist_settings(true);
+        }
+        let h = harness_with_settings(&path);
+        let app = h.state();
+        assert_eq!(app.factor, 70);
+        assert!(!app.backup);
+        assert!(app.strip_location);
+        assert_eq!(app.quality(), Some(80.0));
+        assert_eq!(app.convert_to, Some(ImageFormat::Jpeg));
+        assert_eq!(app.pipeline_dsl, "convert(to: avif)");
+        assert!(app.use_pipeline);
+        assert!(
+            h.query_by_label_contains("saved as JPEG").is_some(),
+            "the Convert to picker shows the remembered format"
+        );
+    }
+
+    #[test]
+    fn settings_are_written_once_they_settle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gui.json");
+        let mut h = harness_with_settings(&path);
+        let app = h.state_mut();
+        app.persist_settings(false);
+        assert!(!path.exists(), "nothing changed, nothing written");
+
+        app.factor = 55;
+        app.persist_settings(false);
+        assert!(!path.exists(), "waits for the slider to settle");
+
+        app.settings_changed = Instant::now().checked_sub(SAVE_DELAY);
+        app.persist_settings(false);
+        let saved = Settings::load(&path, Settings::default);
+        assert_eq!(saved.compression, 55);
+        assert!(app.settings_changed.is_none());
+    }
+
+    #[test]
+    fn tests_do_not_touch_the_real_settings() {
+        assert!(harness().state().settings_path.is_none());
     }
 
     #[test]

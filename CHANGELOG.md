@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **The desktop app remembers its settings** between launches — compression,
+  *Aggressive*, *Convert to*, the pipeline and all Preferences — in `gui.json`
+  next to `config.json`, saved automatically. The first launch starts from
+  `config.json`.
+
 ## [0.5.3] - 2026-10-04
 
 ### Fixed

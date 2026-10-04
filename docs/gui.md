@@ -89,8 +89,10 @@ For crops to an exact size or aspect ratio, or batches, use
 | Float on top | off | Keep the window above other windows. |
 | Default pipeline | `crop(longEdge: 2000) -> convert(to: webp)` | Used when *Pipeline* is switched on. |
 
-> **Note:** settings currently apply until you quit the app; they are not yet
-> saved between launches.
+Settings — these and the compression slider, *Aggressive*, *Convert to* and
+*Pipeline* on the Optimise screen — are saved automatically and restored the
+next time you open xpress. The first launch starts from the command line's
+defaults; see [Configuration](configuration.md#desktop-app-settings-guijson).
 
 ## About and updates
 
