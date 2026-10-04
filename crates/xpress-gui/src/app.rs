@@ -23,7 +23,7 @@ use crate::history_ui::{AiState, AiView, HistoryAction, HistoryPanel};
 use crate::settings::Settings;
 use crate::shortcuts::{self, Action};
 use crate::work::{self, Msg};
-use xpress_core::history::{ClipKind, History};
+use xpress_core::history::History;
 use xpress_core::intelligence::Status as AiStatus;
 
 // Palette matching elyra-conductor (Tokyo Night).
@@ -629,7 +629,9 @@ impl XpressApp {
                 }
             }
             HistoryAction::CopyText(text) => {
-                if self.integrations && crate::pasteboard::write_text(&text) {
+                if self.integrations
+                    && crate::pasteboard::write(&[crate::pasteboard::Part::Text(text)])
+                {
                     self.capture.mark_own_change();
                 }
             }
@@ -733,18 +735,12 @@ impl XpressApp {
         hide: bool,
         ctx: &egui::Context,
     ) {
-        let (clip, items) = {
-            let h = history.lock().unwrap();
-            let clip = h.get(id).ok().flatten();
-            let items = clip
-                .as_ref()
-                .filter(|c| c.kind == ClipKind::Multi)
-                .map(|c| h.items(c.id).unwrap_or_default());
-            (clip, items)
-        };
-        let Some(clip) = clip else { return };
+        let parts = history.lock().unwrap().parts(id).unwrap_or_default();
+        if parts.is_empty() {
+            return;
+        }
         if self.integrations {
-            if !put_on_clipboard(&clip, items.as_deref()) {
+            if !crate::pasteboard::write(&parts) {
                 return;
             }
             self.capture.mark_own_change();
@@ -2409,49 +2405,6 @@ fn category_error(e: &dyn std::fmt::Display, name: &str) -> String {
     }
 }
 
-/// Put a history clip back on the clipboard (a multi-clip: all its items).
-fn put_on_clipboard(
-    clip: &xpress_core::history::Clip,
-    items: Option<&[xpress_core::history::Clip]>,
-) -> bool {
-    use crate::pasteboard::{self, Part};
-    if let Some(items) = items {
-        let parts: Vec<Part> = items
-            .iter()
-            .flat_map(|item| match item.kind {
-                ClipKind::Files => item.paths().into_iter().map(Part::File).collect(),
-                ClipKind::Image | ClipKind::Screenshot => item
-                    .image
-                    .as_ref()
-                    .and_then(|p| std::fs::read(p).ok())
-                    .and_then(|bytes| pasteboard::normalise_png(&bytes))
-                    .map(Part::Png)
-                    .into_iter()
-                    .collect(),
-                ClipKind::Multi => Vec::new(),
-                _ => vec![Part::Text(item.text.clone())],
-            })
-            .collect();
-        return pasteboard::write_parts(&parts);
-    }
-    match clip.kind {
-        ClipKind::Files => pasteboard::write_files(&clip.paths()),
-        ClipKind::Image | ClipKind::Screenshot => clip
-            .image
-            .as_ref()
-            .and_then(|p| std::fs::read(p).ok())
-            .and_then(|bytes| {
-                if bytes.starts_with(b"\x89PNG") {
-                    Some(bytes)
-                } else {
-                    pasteboard::normalise_png(&bytes)
-                }
-            })
-            .is_some_and(|png| pasteboard::write_png(&png)),
-        _ => pasteboard::write_text(&clip.text),
-    }
-}
-
 /// Build a 32×32 RGBA menu-bar icon: the colourful "x" on a transparent field.
 fn tray_icon_image() -> Option<(Vec<u8>, u32, u32)> {
     let size = 32usize;
@@ -2894,7 +2847,10 @@ mod tests {
         let multi = h.state().last_copied.unwrap();
         assert!(!all.contains(&multi), "a new multi-clip");
         let first = &h.state().history_panel.results[0];
-        assert_eq!((first.id, first.kind), (multi, ClipKind::Multi));
+        assert_eq!(
+            (first.id, first.kind),
+            (multi, xpress_core::history::ClipKind::Multi)
+        );
         assert!(h.state().history_panel.marked.is_empty());
         assert!(h
             .query_by_label("#7aa2f7  ·  Invoice 4711 is paid")

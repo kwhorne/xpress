@@ -39,111 +39,7 @@ pub const IGNORED_APPS: [&str; 7] = [
     "com.dashlane.dashlanephonefinal",
 ];
 
-/// One piece of a multi-clip.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Part {
-    Text(String),
-    Png(Vec<u8>),
-    File(PathBuf),
-}
-
-/// How several parts go onto the clipboard together.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Composed {
-    /// All parts are files: put them on as files (Finder pastes them all).
-    pub files: Vec<PathBuf>,
-    /// Every text part (and file path), for plain-text fields.
-    pub text: String,
-    /// Text and images in order, for rich editors (Mail, Notes, Pages, docs
-    /// in the browser).
-    pub html: Option<String>,
-    /// The first image, for apps that only take a picture.
-    pub png: Option<Vec<u8>>,
-}
-
-pub fn compose(parts: &[Part]) -> Composed {
-    if !parts.is_empty() && parts.iter().all(|p| matches!(p, Part::File(_))) {
-        return Composed {
-            files: parts
-                .iter()
-                .filter_map(|p| match p {
-                    Part::File(f) => Some(f.clone()),
-                    _ => None,
-                })
-                .collect(),
-            ..Default::default()
-        };
-    }
-    let texts: Vec<String> = parts
-        .iter()
-        .filter_map(|p| match p {
-            Part::Text(t) => Some(t.trim_end().to_string()),
-            Part::File(f) => Some(f.display().to_string()),
-            Part::Png(_) => None,
-        })
-        .collect();
-    let separator = if texts.iter().any(|t| t.contains('\n')) {
-        "\n\n"
-    } else {
-        "\n"
-    };
-    let png = parts.iter().find_map(|p| match p {
-        Part::Png(png) => Some(png.clone()),
-        _ => None,
-    });
-    let html = (parts.len() > 1 || png.is_some()).then(|| {
-        parts
-            .iter()
-            .map(|p| match p {
-                Part::Text(t) => {
-                    let t = t.trim();
-                    if crate::capture::is_link(t) {
-                        format!("<p><a href=\"{0}\">{0}</a></p>", html_escape(t))
-                    } else {
-                        format!("<p>{}</p>", html_escape(t).replace('\n', "<br>"))
-                    }
-                }
-                Part::File(f) => format!("<p>{}</p>", html_escape(&f.display().to_string())),
-                Part::Png(png) => {
-                    format!("<p><img src=\"data:image/png;base64,{}\"></p>", base64(png))
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    });
-    Composed {
-        files: Vec::new(),
-        text: texts.join(separator),
-        html,
-        png,
-    }
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
-fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let n = chunk
-            .iter()
-            .enumerate()
-            .fold(0u32, |n, (i, b)| n | (*b as u32) << (16 - 8 * i));
-        for i in 0..4 {
-            if i <= chunk.len() {
-                out.push(ALPHABET[(n >> (18 - 6 * i) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
+pub use xpress_core::clipboard::Part;
 
 /// Decode any image the `image` crate reads and re-encode it as PNG.
 pub fn normalise_png(bytes: &[u8]) -> Option<Vec<u8>> {
@@ -159,13 +55,11 @@ pub fn normalise_png(bytes: &[u8]) -> Option<Vec<u8>> {
 mod imp {
     use super::*;
     use objc2::rc::Retained;
-    use objc2::runtime::ProtocolObject;
     use objc2_app_kit::{
-        NSPasteboard, NSPasteboardItem, NSPasteboardTypeFileURL, NSPasteboardTypeHTML,
-        NSPasteboardTypePNG, NSPasteboardTypeString, NSPasteboardTypeTIFF, NSPasteboardWriting,
-        NSWorkspace,
+        NSPasteboard, NSPasteboardTypeFileURL, NSPasteboardTypePNG, NSPasteboardTypeString,
+        NSPasteboardTypeTIFF, NSWorkspace,
     };
-    use objc2_foundation::{NSArray, NSData, NSString, NSURL};
+    use objc2_foundation::NSURL;
 
     fn general() -> Retained<NSPasteboard> {
         NSPasteboard::generalPasteboard()
@@ -180,43 +74,8 @@ mod imp {
         read_from(&general())
     }
 
-    pub fn write_text(text: &str) -> bool {
-        write_text_to(&general(), text)
-    }
-
-    pub fn write_png(png: &[u8]) -> bool {
-        write_png_to(&general(), png)
-    }
-
-    pub fn write_files(paths: &[PathBuf]) -> bool {
-        write_files_to(&general(), paths)
-    }
-
-    pub fn write_parts(parts: &[Part]) -> bool {
-        write_parts_to(&general(), parts)
-    }
-
-    fn write_parts_to(pb: &NSPasteboard, parts: &[Part]) -> bool {
-        let composed = compose(parts);
-        if !composed.files.is_empty() {
-            return write_files_to(pb, &composed.files);
-        }
-        pb.clearContents();
-        let mut ok = false;
-        if !composed.text.is_empty() {
-            ok |= pb.setString_forType(&NSString::from_str(&composed.text), unsafe {
-                NSPasteboardTypeString
-            });
-        }
-        if let Some(html) = &composed.html {
-            ok |= pb.setString_forType(&NSString::from_str(html), unsafe { NSPasteboardTypeHTML });
-        }
-        if let Some(png) = &composed.png {
-            ok |= pb.setData_forType(Some(&NSData::with_bytes(png)), unsafe {
-                NSPasteboardTypePNG
-            });
-        }
-        ok
+    pub fn write(parts: &[Part]) -> bool {
+        xpress_core::clipboard::write(parts)
     }
 
     fn read_from(pb: &NSPasteboard) -> Snapshot {
@@ -275,37 +134,13 @@ mod imp {
         )
     }
 
-    fn write_text_to(pb: &NSPasteboard, text: &str) -> bool {
-        pb.clearContents();
-        pb.setString_forType(&NSString::from_str(text), unsafe { NSPasteboardTypeString })
-    }
-
-    fn write_png_to(pb: &NSPasteboard, png: &[u8]) -> bool {
-        pb.clearContents();
-        pb.setData_forType(Some(&NSData::with_bytes(png)), unsafe {
-            NSPasteboardTypePNG
-        })
-    }
-
-    fn write_files_to(pb: &NSPasteboard, paths: &[PathBuf]) -> bool {
-        let items: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = paths
-            .iter()
-            .filter_map(|p| {
-                let url = NSURL::fileURLWithPath(&NSString::from_str(&p.to_string_lossy()));
-                let link = url.absoluteString()?;
-                let item = NSPasteboardItem::new();
-                item.setString_forType(&link, unsafe { NSPasteboardTypeFileURL })
-                    .then(|| ProtocolObject::from_retained(item))
-            })
-            .collect();
-        pb.clearContents();
-        !items.is_empty() && pb.writeObjects(&NSArray::from_retained_slice(&items))
-    }
-
     /// Against a private pasteboard, so the tests never touch your clipboard.
     #[cfg(test)]
     mod tests {
         use super::*;
+        use objc2_app_kit::NSPasteboardTypeHTML;
+        use objc2_foundation::NSString;
+        use xpress_core::clipboard::write_to;
 
         struct Private(Retained<NSPasteboard>);
         impl Drop for Private {
@@ -322,7 +157,7 @@ mod imp {
         fn text_round_trip_and_change_count() {
             let pb = private();
             let before = pb.0.changeCount();
-            assert!(write_text_to(&pb.0, "héllo ✓"));
+            assert!(write_to(&pb.0, &[Part::Text("héllo ✓".into())]));
             assert!(pb.0.changeCount() > before);
             let snap = read_from(&pb.0);
             assert_eq!(snap.text.as_deref(), Some("héllo ✓"));
@@ -339,12 +174,12 @@ mod imp {
                     image::ImageFormat::Png,
                 )
                 .unwrap();
-            assert!(write_png_to(&pb.0, &jpeg));
+            assert!(write_to(&pb.0, &[Part::Png(jpeg)]));
             let png = read_from(&pb.0).image_png.unwrap();
             let img = image::load_from_memory(&png).unwrap();
             assert_eq!((img.width(), img.height()), (8, 6));
             // Reading the same picture again gives the same bytes (one clip).
-            assert!(write_png_to(&pb.0, &png));
+            assert!(write_to(&pb.0, &[Part::Png(png.clone())]));
             assert_eq!(read_from(&pb.0).image_png.unwrap(), png);
         }
 
@@ -356,7 +191,10 @@ mod imp {
             let b = dir.path().join("b.txt");
             std::fs::write(&a, b"x").unwrap();
             std::fs::write(&b, b"y").unwrap();
-            assert!(write_files_to(&pb.0, &[a.clone(), b.clone()]));
+            assert!(write_to(
+                &pb.0,
+                &[Part::File(a.clone()), Part::File(b.clone())]
+            ));
             let files = read_from(&pb.0).files;
             let canon = |p: &PathBuf| std::fs::canonicalize(p).unwrap();
             assert_eq!(
@@ -372,7 +210,7 @@ mod imp {
             image::RgbImage::from_pixel(2, 2, image::Rgb([1, 2, 3]))
                 .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
                 .unwrap();
-            assert!(write_parts_to(
+            assert!(write_to(
                 &pb.0,
                 &[
                     Part::Text("Hello".into()),
@@ -437,14 +275,28 @@ mod imp {
         (None, None)
     }
 
-    pub fn write_text(text: &str) -> bool {
-        arboard::Clipboard::new()
-            .and_then(|mut c| c.set_text(text.to_string()))
-            .is_ok()
-    }
-
-    pub fn write_png(png: &[u8]) -> bool {
-        let Ok(img) = image::load_from_memory(png) else {
+    /// Text only here (images as text would be wrong; files have no path form).
+    pub fn write(parts: &[Part]) -> bool {
+        let composed = xpress_core::clipboard::compose(parts);
+        let text = if composed.files.is_empty() {
+            composed.text
+        } else {
+            composed
+                .files
+                .iter()
+                .map(|f| f.display().to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        if !text.is_empty() {
+            return arboard::Clipboard::new()
+                .and_then(|mut c| c.set_text(text))
+                .is_ok();
+        }
+        let Some(png) = composed.png else {
+            return false;
+        };
+        let Ok(img) = image::load_from_memory(&png) else {
             return false;
         };
         let rgba = img.to_rgba8();
@@ -457,65 +309,6 @@ mod imp {
             .and_then(|mut c| c.set_image(data))
             .is_ok()
     }
-
-    pub fn write_files(_paths: &[PathBuf]) -> bool {
-        false
-    }
-
-    pub fn write_parts(parts: &[Part]) -> bool {
-        let composed = compose(parts);
-        let text = if composed.files.is_empty() {
-            composed.text
-        } else {
-            composed
-                .files
-                .iter()
-                .map(|f| f.display().to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        !text.is_empty() && write_text(&text)
-    }
 }
 
-pub use imp::{change_count, frontmost_app, read, write_files, write_parts, write_png, write_text};
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn composing_parts() {
-        let files = compose(&[Part::File("/a.pdf".into()), Part::File("/b.txt".into())]);
-        assert_eq!(files.files.len(), 2);
-        assert!(files.text.is_empty() && files.html.is_none());
-
-        let lines = compose(&[Part::Text("one".into()), Part::Text("two".into())]);
-        assert_eq!(lines.text, "one\ntwo");
-        assert_eq!(lines.html.as_deref(), Some("<p>one</p>\n<p>two</p>"));
-
-        let blocks = compose(&[
-            Part::Text("a\nb".into()),
-            Part::Text("<c & d>".into()),
-            Part::File("/x y.txt".into()),
-        ]);
-        assert_eq!(blocks.text, "a\nb\n\n<c & d>\n\n/x y.txt");
-        let html = blocks.html.unwrap();
-        assert!(html.contains("<p>a<br>b</p>"));
-        assert!(html.contains("&lt;c &amp; d&gt;"));
-
-        let single = compose(&[Part::Text("just this".into())]);
-        assert_eq!(single.text, "just this");
-        assert!(single.html.is_none());
-    }
-
-    #[test]
-    fn base64_matches_the_standard() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"f"), "Zg==");
-        assert_eq!(base64(b"fo"), "Zm8=");
-        assert_eq!(base64(b"foo"), "Zm9v");
-        assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-        assert_eq!(base64(&[0xff, 0xfe, 0x00]), "//4A");
-    }
-}
+pub use imp::{change_count, frontmost_app, read, write};

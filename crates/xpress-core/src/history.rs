@@ -197,12 +197,65 @@ pub struct Clip {
 }
 
 impl Clip {
+    /// One line to show for it: the first line of text, the words found in
+    /// an image (in quotes), or the files' names.
+    pub fn title(&self) -> String {
+        match self.kind {
+            ClipKind::Files => {
+                let names: Vec<String> = self
+                    .paths()
+                    .iter()
+                    .map(|p| {
+                        p.file_name()
+                            .map(|n| n.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| p.display().to_string())
+                    })
+                    .collect();
+                first_line(&names.join(", "), 140)
+            }
+            ClipKind::Image | ClipKind::Screenshot if !self.ocr.is_empty() => {
+                format!("“{}”", first_line(&self.ocr, 140))
+            }
+            ClipKind::Screenshot if !self.text.is_empty() => first_line(&self.text, 140),
+            ClipKind::Image | ClipKind::Screenshot => "Image".into(),
+            ClipKind::Multi if self.text.is_empty() => "Multi-clip".into(),
+            _ => first_line(&self.text, 140),
+        }
+    }
+
     /// The files of a [`ClipKind::Files`] clip.
     pub fn paths(&self) -> Vec<PathBuf> {
         if self.kind != ClipKind::Files {
             return Vec::new();
         }
         self.text.lines().map(PathBuf::from).collect()
+    }
+}
+
+/// The first non-empty line, at most `max` characters (then "…").
+pub fn first_line(s: &str, max: usize) -> String {
+    let line = s
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    let mut out: String = line.chars().take(max).collect();
+    if line.chars().count() > max {
+        out.push('…');
+    }
+    out
+}
+
+/// "just now", "5 min ago", "3 h ago", "yesterday", "4 days ago".
+pub fn ago(now_ms: i64, then_ms: i64) -> String {
+    let secs = (now_ms - then_ms).max(0) / 1000;
+    match secs {
+        0..60 => "just now".into(),
+        60..3600 => format!("{} min ago", secs / 60),
+        3600..86_400 => format!("{} h ago", secs / 3600),
+        86_400..172_800 => "yesterday".into(),
+        _ if secs < 60 * 86_400 => format!("{} days ago", secs / 86_400),
+        _ => format!("{} months ago", secs / (30 * 86_400)),
     }
 }
 
@@ -292,7 +345,53 @@ pub struct History {
 impl History {
     /// The default history folder: `history/` next to `config.json`.
     pub fn default_dir() -> Option<PathBuf> {
+        if let Some(dir) = std::env::var_os("XPRESS_HISTORY_DIR").filter(|d| !d.is_empty()) {
+            return Some(PathBuf::from(dir));
+        }
         crate::config::Config::path().and_then(|p| p.parent().map(|d| d.join("history")))
+    }
+
+    /// What copying a clip puts on the clipboard: its text, image or files —
+    /// for a multi-clip, all of its items.
+    pub fn parts(&self, id: i64) -> rusqlite::Result<Vec<crate::clipboard::Part>> {
+        use crate::clipboard::Part;
+        let Some(clip) = self.get(id)? else {
+            return Ok(Vec::new());
+        };
+        let clips = if clip.kind == ClipKind::Multi {
+            self.items(id)?
+        } else {
+            vec![clip]
+        };
+        Ok(clips
+            .into_iter()
+            .flat_map(|c| match c.kind {
+                ClipKind::Files => c.paths().into_iter().map(Part::File).collect(),
+                ClipKind::Image | ClipKind::Screenshot => c
+                    .image
+                    .as_ref()
+                    .and_then(|p| std::fs::read(p).ok())
+                    .and_then(|bytes| {
+                        if bytes.starts_with(b"\x89PNG") {
+                            Some(bytes)
+                        } else {
+                            let img = image::load_from_memory(&bytes).ok()?;
+                            let mut png = Vec::new();
+                            img.write_to(
+                                &mut std::io::Cursor::new(&mut png),
+                                image::ImageFormat::Png,
+                            )
+                            .ok()?;
+                            Some(png)
+                        }
+                    })
+                    .map(Part::Png)
+                    .into_iter()
+                    .collect(),
+                ClipKind::Multi => Vec::new(),
+                _ => vec![Part::Text(c.text)],
+            })
+            .collect())
     }
 
     /// Open (creating if needed) the history in `dir`.
@@ -1722,6 +1821,64 @@ mod tests {
         assert!(rule(None, Some(ClipKind::Link), Some("GITHUB kwhorne")).matches(&clip));
         assert!(!rule(Some("Safari"), Some(ClipKind::Text), None).matches(&clip));
         assert!(!rule(None, None, Some("gitlab")).matches(&clip));
+    }
+
+    #[test]
+    fn what_copying_a_clip_puts_on_the_clipboard() {
+        use crate::clipboard::Part;
+        let (_d, h) = history();
+        let text = h.add(NewClip::text("hello")).unwrap().id;
+        let img = h.add(NewClip::image_png(png(4, 4, 1))).unwrap().id;
+        let files = h.add(NewClip::files(&["/a.txt".into()])).unwrap().id;
+        assert_eq!(h.parts(text).unwrap(), [Part::Text("hello".into())]);
+        assert!(matches!(h.parts(img).unwrap()[..], [Part::Png(_)]));
+        assert_eq!(h.parts(files).unwrap(), [Part::File("/a.txt".into())]);
+        let multi = h.combine(&[files, text]).unwrap();
+        assert_eq!(
+            h.parts(multi).unwrap(),
+            [Part::File("/a.txt".into()), Part::Text("hello".into())]
+        );
+        assert!(h.parts(9999).unwrap().is_empty());
+    }
+
+    #[test]
+    fn titles_and_times() {
+        let mut clip = h_clip(ClipKind::Text, "\n  first line \nsecond");
+        assert_eq!(clip.title(), "first line");
+        clip = h_clip(ClipKind::Files, "/a/report.pdf\n/b/photo.jpg");
+        assert_eq!(clip.title(), "report.pdf, photo.jpg");
+        clip = h_clip(ClipKind::Image, "");
+        assert_eq!(clip.title(), "Image");
+        clip.ocr = "Invoice 4711\npaid".into();
+        assert_eq!(clip.title(), "“Invoice 4711”");
+        assert!(h_clip(ClipKind::Text, &"x".repeat(500))
+            .title()
+            .ends_with('…'));
+        let min = 60_000;
+        assert_eq!(ago(10 * min, 10 * min), "just now");
+        assert_eq!(ago(10 * min, 5 * min), "5 min ago");
+        assert_eq!(ago(200 * min, 20 * min), "3 h ago");
+        assert_eq!(ago(2000 * min, 20 * min), "yesterday");
+        assert_eq!(ago(10_000 * min, 20 * min), "6 days ago");
+        assert_eq!(ago(200_000 * min, 0), "4 months ago");
+    }
+
+    fn h_clip(kind: ClipKind, text: &str) -> Clip {
+        Clip {
+            id: 1,
+            kind,
+            text: text.into(),
+            ocr: String::new(),
+            image: None,
+            thumb: None,
+            bytes: 0,
+            source_app: None,
+            source_bundle: None,
+            created: 0,
+            last_used: 0,
+            pinned: false,
+            categories: Vec::new(),
+        }
     }
 
     #[test]
