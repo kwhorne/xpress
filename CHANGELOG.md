@@ -7,6 +7,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`xpress history`**: search the app's clipboard history from the terminal
+  (by words, kind, app, category, pinned; `--json` for scripts, Raycast, Alfred
+  and Shortcuts), print a clip (`show`), put it back on the clipboard (`copy`),
+  pin, unpin and delete. `XPRESS_HISTORY_DIR` points both at another folder.
 - **Shortcuts can be changed** in Preferences → Shortcuts (or turned off):
   click, press the new keys; conflicts and shortcuts another app holds are
   reported. The menu-bar menu and the drop zone show the current ones.

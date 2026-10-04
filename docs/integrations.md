@@ -62,6 +62,13 @@ Swap `myuploader` for `scp`, `rclone`, `aws s3 cp`, a curl call, etc. Because
 `runScript` runs after the optimisation steps, the uploaded file is the
 optimised one.
 
+## Clipboard history in Raycast, Alfred and scripts
+
+`xpress history` searches the app's clipboard history from the command line
+(`--json` for scripts) and `xpress history copy <id>` puts a clip back on the
+clipboard — see [From the terminal and other apps](history.md#from-the-terminal-and-other-apps)
+for a Raycast script command and an fzf picker.
+
 ## Continuous integration
 
 Guard a repository against oversized or unoptimised media with

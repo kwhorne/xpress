@@ -59,6 +59,7 @@ them with the `pipeline` commands rather than editing by hand — see
 |----------|--------|
 | `XPRESS_BIN_DIR` | A folder to look in first for external tools (ffmpeg, gifsicle, …). Point it at `/Applications/xpress.app/Contents/Resources/bin` to let the command line use the app's ffmpeg. |
 | `XDG_CONFIG_HOME`, `XDG_DATA_HOME` | Linux: where config and tools folders live. |
+| `XPRESS_HISTORY_DIR` | Use another folder for the clipboard history (`xpress history`, the app). |
 
 ## Where xpress puts things
 

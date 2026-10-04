@@ -1161,42 +1161,11 @@ fn category_label(ui: &egui::Ui, category: &Category, count: Option<usize>) -> L
     job
 }
 
-fn first_line(s: &str, max: usize) -> String {
-    let line = s
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or("");
-    let mut out: String = line.chars().take(max).collect();
-    if line.chars().count() > max {
-        out.push('…');
-    }
-    out
-}
+use xpress_core::history::first_line;
 
 /// The main line of a row.
 pub fn title(clip: &Clip) -> String {
-    match clip.kind {
-        ClipKind::Files => {
-            let names: Vec<String> = clip
-                .paths()
-                .iter()
-                .map(|p| {
-                    p.file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| p.display().to_string())
-                })
-                .collect();
-            first_line(&names.join(", "), 140)
-        }
-        ClipKind::Image | ClipKind::Screenshot if !clip.ocr.is_empty() => {
-            format!("“{}”", first_line(&clip.ocr, 140))
-        }
-        ClipKind::Screenshot if !clip.text.is_empty() => first_line(&clip.text, 140),
-        ClipKind::Image | ClipKind::Screenshot => "Image".into(),
-        ClipKind::Multi if clip.text.is_empty() => "Multi-clip".into(),
-        _ => first_line(&clip.text, 140),
-    }
+    clip.title()
 }
 
 /// A multi-clip's main line: its items, short.
@@ -1244,33 +1213,11 @@ pub fn subtitle(clip: &Clip, now_ms: i64) -> String {
     parts.join("  ·  ")
 }
 
-/// "just now", "5 min ago", "3 h ago", "yesterday", "4 days ago".
-pub fn ago(now_ms: i64, then_ms: i64) -> String {
-    let secs = (now_ms - then_ms).max(0) / 1000;
-    match secs {
-        0..60 => "just now".into(),
-        60..3600 => format!("{} min ago", secs / 60),
-        3600..86_400 => format!("{} h ago", secs / 3600),
-        86_400..172_800 => "yesterday".into(),
-        _ if secs < 60 * 86_400 => format!("{} days ago", secs / 86_400),
-        _ => format!("{} months ago", secs / (30 * 86_400)),
-    }
-}
+pub use xpress_core::history::ago;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn relative_times() {
-        let min = 60_000;
-        assert_eq!(ago(10 * min, 10 * min), "just now");
-        assert_eq!(ago(10 * min, 5 * min), "5 min ago");
-        assert_eq!(ago(200 * min, 20 * min), "3 h ago");
-        assert_eq!(ago(2000 * min, 20 * min), "yesterday");
-        assert_eq!(ago(10_000 * min, 20 * min), "6 days ago");
-        assert_eq!(ago(200_000 * min, 0), "4 months ago");
-    }
 
     fn clip(kind: ClipKind, text: &str) -> Clip {
         Clip {

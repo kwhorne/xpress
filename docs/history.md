@@ -186,6 +186,42 @@ are end-to-end encrypted; otherwise Apple's standard iCloud protection applies.
 Passwords and other private clipboard content are never recorded, so never
 synced.
 
+## From the terminal and other apps
+
+`xpress history` reads the same history, so you can search it from the
+terminal, scripts, Raycast, Alfred or Shortcuts:
+
+```sh
+xpress history                      # the 20 most recent clips, with their ids
+xpress history invoice 4711         # search
+xpress history --kind link --app Safari -n 50
+xpress history show 42              # print clip 42
+xpress history copy 42              # put it on the clipboard, ready to ⌘V
+xpress history --json               # for scripts
+```
+
+Pick with [fzf](https://github.com/junegunn/fzf) and copy:
+
+```sh
+xpress history -n 500 | fzf | awk '{print $1}' | xargs xpress history copy
+```
+
+A **Raycast** script command that copies the newest match:
+
+```bash
+#!/bin/bash
+# @raycast.schemaVersion 1
+# @raycast.title Copy from xpress history
+# @raycast.mode silent
+# @raycast.argument1 { "type": "text", "placeholder": "search" }
+id=$(xpress history "$1" -n 1 | awk '{print $1}')
+[ -n "$id" ] && xpress history copy "$id"
+```
+
+In **Shortcuts**, a *Run Shell Script* action with `xpress history "$1" -n 1
+--json` returns the match as JSON to use in later steps. All commands are listed
+in the [command-line reference](cli.md#history).
+
 ## What's recorded, and what isn't
 
 xpress decides what a copy is, in this order:

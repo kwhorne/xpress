@@ -49,8 +49,8 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # copyfile(3): keep Finder tags / xattrs when atomically replacing a file.
 libc = "0.2"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSString"] }
-objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSPasteboardItem"] }
 # Text recognition in images (Apple Vision).
 objc2-vision = { version = "0.3", default-features = false, features = ["std", "VNRequest", "VNRecognizeTextRequest", "VNRequestHandler", "VNObservation", "VNTypes"] }
 

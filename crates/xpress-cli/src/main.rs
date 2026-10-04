@@ -8,6 +8,7 @@
 //!   xpress doctor
 
 mod check;
+mod history;
 mod progress;
 mod render;
 mod watch;
@@ -61,6 +62,8 @@ enum Command {
     Pipeline(PipelineCmd),
     /// Watch folders (and/or the clipboard) and optimise automatically.
     Watch(WatchArgs),
+    /// Search and use the desktop app's clipboard history (`xpress history invoice`).
+    History(history::HistoryArgs),
     /// Crop PDFs to an aspect ratio non-destructively (sets the page CropBox).
     CropPdf(CropPdfArgs),
     /// Revert a non-destructive PDF crop (removes the CropBox).
@@ -537,6 +540,7 @@ fn run() -> Result<()> {
         Command::Convert(args) => run_convert(args),
         Command::Crop(args) => run_crop(args),
         Command::Pipeline(cmd) => run_pipeline(cmd),
+        Command::History(args) => history::run(args),
         Command::Watch(args) => {
             let options = args.common.to_options();
             watch::run(
