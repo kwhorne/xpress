@@ -56,14 +56,22 @@ xpress is free and open source under the [MIT License](LICENSE).
 
 ## Documentation
 
-Full docs live in [`docs/`](docs/README.md):
-[installation](docs/installation.md) ·
-[CLI reference](docs/cli.md) ·
-[pipeline DSL](docs/pipelines.md) ·
-[daemon & automations](docs/daemon.md) ·
-[desktop GUI](docs/gui.md) ·
-[architecture](docs/architecture.md) ·
-[contributing](docs/contributing.md).
+The **[user guide](docs/README.md)** covers everything:
+[getting started](docs/getting-started.md) ·
+[the desktop app](docs/gui.md) ·
+[optimising](docs/optimising.md) ·
+[converting formats](docs/converting.md) ·
+[resizing & cropping](docs/resizing-and-cropping.md) ·
+[video & audio](docs/video-and-audio.md) ·
+[PDFs](docs/pdf.md) ·
+[web images](docs/web-images.md) ·
+[sharing & privacy](docs/sharing-and-privacy.md) ·
+[pipelines](docs/pipelines.md) ·
+[watching folders](docs/daemon.md) ·
+[CI](docs/ci.md) ·
+[troubleshooting](docs/troubleshooting.md).
+Reference: [CLI](docs/cli.md) · [formats](docs/formats.md) ·
+[configuration](docs/configuration.md).
 See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## Architecture
@@ -151,58 +159,38 @@ before redistributing xpress together with them.
 ## Usage
 
 ```sh
-# Optimise anything (auto-detects type)
-xpress optimise photo.png screencast.mov document.pdf
-
-# A whole folder, recursively, with the aggressive preset
+# Optimise anything (auto-detects the type); originals are backed up
+xpress optimise photo.jpg screencast.mov document.pdf
 xpress optimise -r --aggressive ~/Screenshots
 
-# Fine-grained compression (5 = best quality .. 100 = smallest)
-xpress optimise --compression 64 photo.jpg
+# Say how it should look, or how big it may be
+xpress optimise --quality high photo.jpg          # smallest file that still looks "high"
+xpress optimise --max-size 8mb demo.mov           # fit a size
+xpress optimise --for discord --strip-location clip.mov
 
-# Restrict to one media kind, downsample PDFs to 144 dpi
-xpress optimise --kind pdf --pdf-dpi 144 *.pdf
+# Convert formats (the original is kept)
+xpress convert --to jpeg screenshot.png
+xpress convert --to png IMG_0042.HEIC
+xpress convert --to webp -r public/img
 
-# Convert audio
-xpress convert --to mp3 --bitrate 192 recording.wav
+# Resize and crop
+xpress downscale -f 0.5 photo.jpg
+xpress crop --size 1200x630 --smart-crop banner.png
 
-# Crop to a size, an aspect ratio, or a long edge
-xpress crop --size 1200x630 banner.png
-xpress crop --size 16:9 --smart-crop photo.jpg
-xpress crop --size 1920 --long-edge shot.png
+# Responsive web images and a <picture> snippet
+xpress web hero.jpg
 
-# Pipelines: chain steps with `->`
-xpress pipeline run 'crop(width: 1600) -> convert(to: webp) -> downscale(factor: 0.5)' photo.png
-xpress pipeline add web 'crop(width: 1600) -> convert(to: webp)'
-xpress pipeline run web *.png
-xpress pipeline list
+# Pipelines, folder watching, and a CI guard
+xpress pipeline run 'crop(longEdge: 2000) -> convert(to: webp)' *.png
+xpress pipeline attach ~/Screenshots 'convert(to: webp)' --type image && xpress watch
+xpress check -r --max-size 500kb public/
 
-# Watch folders (and the clipboard) and optimise automatically
-xpress pipeline attach ~/Screenshots 'crop(longEdge: 2000) -> convert(to: webp)' --type image
-xpress watch                     # uses the saved automations
-xpress watch --clipboard ~/Inbox # watch a folder + the clipboard
-
-# Strip metadata
-xpress strip-exif *.jpg
+# Undo
+xpress restore -r ~/Screenshots
 ```
 
-### Pipeline DSL
-
-Steps are joined with `->` and run left-to-right, each feeding the next:
-
-| Step | Example |
-|------|---------|
-| `optimise` | `optimise` |
-| `downscale(factor:)` | `downscale(factor: 0.5)` or `downscale(factor: 50%)` |
-| `crop(width:, height:, longEdge:, ratio:, smart:)` | `crop(width: 1600)`, `crop(ratio: 16:9)` |
-| `convert(to:)` | `convert(to: webp)` (image) / `convert(to: mp3)` (audio) |
-| `stripExif` | `stripExif` |
-| `removeAudio` | `removeAudio` (video) |
-| `changeSpeed(factor:)` | `changeSpeed(factor: 2.0)` |
-| `capFps(fps:)` | `capFps(fps: 30)` |
-| `lowerBitrate(kbps:)` | `lowerBitrate(kbps: 128)` (audio) |
-
-Originals are backed up next to the file as `.<name>.orig` unless `--no-backup`.
+Every command and option is in the [CLI reference](docs/cli.md); the
+[pipeline steps](docs/pipelines.md) are documented separately.
 
 ## Development
 

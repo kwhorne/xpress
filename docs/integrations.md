@@ -62,6 +62,11 @@ Swap `myuploader` for `scp`, `rclone`, `aws s3 cp`, a curl call, etc. Because
 `runScript` runs after the optimisation steps, the uploaded file is the
 optimised one.
 
+## Continuous integration
+
+Guard a repository against oversized or unoptimised media with
+[`xpress check` and the GitHub Action](ci.md).
+
 ## Drag-and-drop out of the GUI
 
 The desktop app shows **Reveal** and **Copy** on each result card. Native

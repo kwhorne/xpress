@@ -207,6 +207,9 @@ pub fn place_file(staged: &Path, dest: &Path) -> std::io::Result<()> {
         Some(p) if !p.as_os_str().is_empty() => p,
         _ => Path::new("."),
     };
+    // An output folder (e.g. from a `-o '%P/optimised/%f.%e'` template) may
+    // not exist yet.
+    fs::create_dir_all(dir)?;
     let mut tmp = tempfile::Builder::new()
         .prefix(".xpress-")
         .suffix(".tmp")

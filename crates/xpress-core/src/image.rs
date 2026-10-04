@@ -587,6 +587,15 @@ pub fn optimise(
             )?
         }
         "gif" | "bmp" | "tiff" | "tif" => reencode(path, &temp_out, strip)?,
+        "avif" => {
+            let (img, meta) = load(path)?;
+            write_avif(
+                &img,
+                &temp_out,
+                cq.conversion_quality().clamp(1, 100) as u8,
+                &meta,
+            )?
+        }
         "heic" | "heif" => {
             #[cfg(target_os = "macos")]
             {

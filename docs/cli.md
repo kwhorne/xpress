@@ -1,340 +1,245 @@
-# CLI reference
+# Command-line reference
 
-```
-xpress <COMMAND>
+```text
+xpress <COMMAND> [OPTIONS] <FILES OR FOLDERS>...
 ```
 
-| Command | Purpose |
-|---------|---------|
-| `optimise` | Optimise images, videos, audio and PDFs |
-| `downscale` | Downscale + optimise images/videos by a factor |
-| `convert` | Convert images or audio to another format |
-| `crop` | Crop/resize images or videos to a size or ratio |
-| `pipeline` | Run, save and manage pipelines |
-| `watch` | Watch folders / clipboard and optimise automatically |
-| `strip-exif` | Delete EXIF metadata from images |
-| `crop-pdf` | Crop PDFs to an aspect ratio (non-destructive) |
-| `uncrop-pdf` | Revert a non-destructive PDF crop |
-| `extract-pages` | Render PDF pages to images |
-| `restore` | Restore originals from `.orig` backups |
-| `clean-backups` | Delete `.orig` backups |
-| `bundle` | Extract embedded binaries to the bundle dir |
-| `doctor` | Report which external tools are available |
-| `completions` | Print a shell completion script |
-| `man` | Print a man page (roff) |
+Every command prints help with `xpress <command> --help`. The guides explain the
+*why*; this page lists every command and option.
+
+| Command | Purpose | Guide |
+|---------|---------|-------|
+| [`optimise`](#optimise) | Make files smaller in the same format | [Optimising](optimising.md) |
+| [`convert`](#convert) | Change format (image, audio, video) | [Converting](converting.md) |
+| [`downscale`](#downscale) | Shrink images and videos by a factor | [Resizing](resizing-and-cropping.md) |
+| [`crop`](#crop) | Crop/resize to a size, ratio or long edge | [Resizing](resizing-and-cropping.md) |
+| [`web`](#web) | Responsive image sets + `<picture>` snippet | [Web images](web-images.md) |
+| [`check`](#check) | CI guard for oversized/unoptimised media | [CI](ci.md) |
+| [`pipeline`](#pipeline) | Run, save and attach pipelines | [Pipelines](pipelines.md) |
+| [`watch`](#watch) | Optimise new files and clipboard images automatically | [Watching](daemon.md) |
+| [`crop-pdf`, `uncrop-pdf`, `extract-pages`](#pdf-commands) | PDF tools | [PDFs](pdf.md) |
+| [`restore`, `clean-backups`](#backups) | Bring back or delete `.orig` backups | [Optimising](optimising.md#backups-and-restore) |
+| [`strip-exif`](#strip-exif) | Remove metadata without re-encoding | [Privacy](sharing-and-privacy.md) |
+| [`config`, `doctor`, `bundle`](#information) | Settings, tools, embedded tools | [Configuration](configuration.md) |
+| [`update`](#update) | Update xpress itself | [Installation](installation.md#updating) |
+| `completions <shell>`, `man` | Shell completions; man page | [Installation](installation.md#shell-completions-and-man-page) |
+
+Files, folders and globs can be mixed. Folders are read one level deep; add
+`-r` to include subfolders. Sizes use decimal units (`500kb` = 500,000 bytes,
+`1.5mb`, or plain bytes).
 
 ## Common options
 
-Most commands accept these shared options:
+Accepted by `optimise`, `convert`, `downscale`, `crop`, `pipeline run` and
+`watch`:
 
 | Option | Description |
 |--------|-------------|
-| `-r, --recursive` | Recurse into folders |
-| `--compression <5..100>` | How hard to compress: 5 = best quality, 100 = smallest. Default 30 |
-| `-a, --aggressive` | Use the aggressive preset (factor 64) |
-| `--strip-metadata` | Strip non-essential metadata (EXIF/XMP; the colour profile stays) |
-| `--strip-location` | Remove only where it was taken — GPS in EXIF, location in XMP and video metadata — keeping camera, date, orientation and colour profile |
-| `--no-preserve-dates` | Don't preserve original timestamps |
-| `--no-backup` | Don't write a `.<name>.orig` backup |
-| `--allow-larger` | Keep the result even if it is larger than the input |
-| `-o, --output <PATH>` | Output file (single input) or directory (multiple inputs) |
-| `-j, --jobs <N>` | Max files processed in parallel (default: number of CPUs) |
-| `--timeout <SECS>` | Kill any single tool running longer than this (0 = no limit) |
-| `--force` | Re-process files already marked as optimised (see below) |
-
-While a batch runs in a terminal, a live spinner shows `[done/total]` and elapsed
-time; it is suppressed under `--quiet`/`--json` or when output is piped.
-
-Originals are backed up next to the file as `.<name>.orig` unless `--no-backup`.
-Compression is a single percentage that each encoder maps to its native quality
-knob (JPEG quality, PNG palette size and quality floor, libx264 CRF/preset,
-audio bitrate).
-
-**Already-optimised files are skipped.** After `optimise`, each file gets an
-extended attribute (`com.xpress.optimised`, or `user.xpress.optimised` on Linux)
-recording the settings and a CRC32 of its content. Re-running over the same
-folder skips files whose content is unchanged and that were optimised at least
-as hard — instantly, and without re-encoding (which would only add generation
-loss). Editing a file, asking for more compression, `--strip-metadata` or a
-lower `--pdf-dpi` makes it run again; `--force` always does. On filesystems
-without extended attributes nothing is cached.
+| `-r, --recursive` | Include subfolders |
+| `--compression <5..100>` | The [compression dial](optimising.md#the-compression-dial): 5 = best quality, 100 = smallest. Default 30 |
+| `-a, --aggressive` | The aggressive preset (64) |
+| `--strip-metadata` | Remove EXIF and XMP (images) and all metadata (video); the colour profile stays |
+| `--strip-location` | Remove only GPS/location; keep the rest |
+| `--no-backup` | Don't keep `.<name>.orig` backups |
+| `--no-preserve-dates` | Don't keep the original modification date |
+| `--allow-larger` | Write the result even if it's bigger |
+| `-o, --output <path>` | Output file (one input), folder (several), or [name template](optimising.md#output-options); originals untouched |
+| `--force` | Re-process files [already optimised](optimising.md#skipping-files-already-optimised) with these settings |
+| `--json` | Machine-readable results |
+| `-q, --quiet` | Only errors and the summary |
+| `-j, --jobs <n>` | Files in parallel (default: number of CPU cores) |
+| `--timeout <secs>` | Stop any single external tool after this long (0 = no limit) |
 
 ## optimise
 
-```sh
+```text
 xpress optimise [OPTIONS] <ITEMS>...
 ```
 
-Auto-detects each file's type. Extra options:
+| Option | Description |
+|--------|-------------|
+| `--kind <image\|video\|pdf\|audio>` | Only this kind of file |
+| `--quality <target>` | Images: smallest file that still meets `visually-lossless`, `high`, `medium`, `low` or a score 1–100 ([quality targets](optimising.md#quality-targets)) |
+| `--max-size <size>` | Fit each file under a size ([budgets](optimising.md#size-budgets)) |
+| `--for <discord\|github\|email>` | Fit a destination's limits and formats ([sharing](sharing-and-privacy.md)) |
+| `--adaptive` | Images: also try JPEG/PNG and keep the smallest |
+| `--pdf-dpi <36..600>` | PDFs: downsample embedded photos to this DPI ([PDFs](pdf.md)) |
 
-- `--kind image|video|pdf|audio` — restrict to one media kind.
-- `--pdf-dpi <36..600>` — downsample embedded JPEG images to at most this DPI at the size they are drawn on the page (omit to keep their resolution). Only images whose colours can be re-encoded exactly (RGB/Gray/ICC) are touched; CMYK and other colour spaces are left as they are.
-- `--max-size <size>` — compress to fit a budget (`500kb`, `1.5mb`, `250000`;
-  decimal units). Video and lossy audio compute the bitrate the budget allows
-  from the duration and encode straight to it — two-pass H.264 for video,
-  downscaled (keeping aspect, never below 240 lines) when the bits are too thin
-  for the frame size — then correct if the result lands off; results typically
-  land at 85–97% of the budget. Images/PDFs step up the compression until they
-  fit. A file that can't get under the budget is reported with a warning.
-- `--adaptive` — for images, try multiple formats and keep the smallest.
-- `--for discord|github|email` — make files fit where they're going: converts
-  formats the destination can't show (a new file next to the original) and
-  compresses to its size limit (video and audio by computed bitrate).
-
-  | Target | Limit used | Published limit (checked Sept 2026) | Formats |
-  |--------|-----------|--------------------------------------|---------|
-  | `discord` | 19 MB | 20 MB per file, free accounts | kept |
-  | `github` | 9.5 MB images/video, 24 MB other | 10 MB images, GIFs and video (free plans), 25 MB other | images → JPEG/PNG (GitHub shows only PNG/GIF/JPEG/SVG) |
-  | `email` | 14 MB | Gmail 25 MB, Outlook 20 MB per message — before base64's ~⅓ overhead | HEIC/AVIF/JXL → JPEG/PNG |
-- `--quality <target>` — for images, the smallest file that still *looks* this
-  good instead of a fixed compression factor. Targets are SSIMULACRA2 scores:
-  `visually-lossless` (90), `high` (80), `medium` (70), `low` (50) or a number
-  1–100. xpress binary-searches the compression and reports the achieved score
-  (`[SSIMULACRA2 80.8]`; `"ssimulacra2"` in `--json`). Other media in the same
-  run use the normal optimiser. Never grows a file.
+`--quality`, `--max-size`, `--for` and `--adaptive` can't be combined.
 
 ```sh
-xpress optimise photo.png clip.mov doc.pdf
-xpress optimise -r --aggressive ~/Screenshots
-xpress optimise --kind pdf --pdf-dpi 144 *.pdf
-xpress optimise --max-size 500kb hero.jpg
-xpress optimise --adaptive screenshot.png
-```
-
-### Output templates
-
-When `--output` contains `%` tokens, it is treated as a filename template:
-`%f` (stem), `%e` (extension), `%P` (parent dir), `%y%m%d`/`%H%M%S` (date/time),
-`%i` (auto-increment), `%r` (random), `%%` (literal `%`).
-
-```sh
-xpress optimise -o '~/out/%f-%i.%e' *.png
-xpress convert --to webp -o '%f@web.webp' *.png
-```
-
-## downscale
-
-```sh
-xpress downscale [OPTIONS] -f <FACTOR> <ITEMS>...
-```
-
-- `-f, --factor <0.05..1.0>` — scale factor (default `0.5`).
-
-Images are scaled in pure Rust (animated GIFs are refused rather than
-flattened), videos via an `ffmpeg` `scale=` filter folded into the re-encode.
-
-```sh
-xpress downscale -f 0.5 photo.png
-xpress downscale -f 0.75 recording.mov
+xpress optimise -r ~/Screenshots
+xpress optimise --quality high -r ~/Export
+xpress optimise --max-size 10mb demo.mov
+xpress optimise --for email --strip-location IMG_0042.HEIC
 ```
 
 ## convert
 
-```sh
-xpress convert [OPTIONS] -t <FORMAT> <ITEMS>...
+```text
+xpress convert --to <FORMAT> [OPTIONS] <ITEMS>...
 ```
 
-- `-t, --to` — image (`png|jpeg|webp|avif|heic|gif|tiff|bmp|jxl`), audio
-  (`aac|mp3|opus|wav|flac|aiff`), or video (`mp4|hevc|av1|webm|gif`). Any
-  image xpress can read converts to any of these — PNG, JPEG, WebP, GIF, BMP,
-  TIFF, HEIC and AVIF in (HEIC on macOS; AVIF via `sips` on macOS, `ffmpeg`
-  elsewhere). With `--to gif`, videos become animated GIFs and images still GIFs.
-- `--palette` — PNG output: reduce to a palette (smaller, lossy). By default a
-  conversion to PNG is lossless.
-- `--bitrate <kbps>` — explicit audio bitrate.
-- `--hw` — use a hardware (VideoToolbox) encoder for video on Apple Silicon.
-- `--quality <target>` — for `jpeg`, `png` and `webp`: the smallest output that
-  still scores the target against the original (see `optimise --quality`).
-  WebP falls back to lossless when lossy can't reach the target, unless that
-  would be larger than the source.
+| Option | Description |
+|--------|-------------|
+| `-t, --to <format>` | Images: `png`, `jpeg`/`jpg`, `webp`, `avif`, `heic`, `gif`, `tiff`/`tif`, `bmp`, `jxl`. Audio: `aac`, `mp3`, `opus`, `wav`, `flac`, `aiff`. Video: `mp4`, `hevc`, `av1`, `webm`, `gif` |
+| `--quality <target>` | JPEG/PNG/WebP: smallest output that meets the target |
+| `--palette` | PNG: palette-reduced (smaller, lossy) instead of lossless |
+| `--bitrate <kbit/s>` | Audio bitrate |
+| `--hw` | Video: Apple silicon hardware encoder for H.264/HEVC |
+
+The result is written next to the source, which is kept. With `--to gif`,
+videos become animated GIFs and images still GIFs.
 
 ```sh
-xpress convert --to webp --quality high photos/      # smallest WebP that looks "high"
-xpress optimise --quality visually-lossless shot.png
+xpress convert --to jpeg *.png
+xpress convert --to webp --quality high -r public/img
+xpress convert --to mp3 --bitrate 128 interview.wav
+xpress convert --to hevc --hw clip.mov
 ```
 
-**iPhone photos (HEIC/HEIF)** convert both ways on macOS — the built-in `sips`
-is used automatically, so no extra tools are needed to read an Apple photo or to
-write one.
+## downscale
 
-```sh
-xpress convert --to webp screenshot.png
-xpress convert --to jpeg IMG_0421.HEIC     # read an iPhone photo
-xpress convert --to heic screenshot.png    # write the iPhone format
-xpress convert --to mp3 --bitrate 192 recording.wav
-xpress convert --to gif screencast.mov
-xpress convert --to hevc --hw clip.mov     # iPhone video codec
+```text
+xpress downscale [-f <FACTOR>] [OPTIONS] <ITEMS>...
 ```
+
+| Option | Description |
+|--------|-------------|
+| `-f, --factor <0.05..1.0>` | Scale factor (default 0.5) |
+
+Images and videos only.
 
 ## crop
 
-```sh
-xpress crop [OPTIONS] -s <SIZE> <ITEMS>...
+```text
+xpress crop --size <SIZE> [OPTIONS] <ITEMS>...
 ```
 
-- `-s, --size` — `1200x630`, `1200x0`, `0x720`, aspect ratio `16:9`, or a single number.
-- `-l, --long-edge` — treat a single number as the longer edge (keeps aspect, no crop).
-- `--smart-crop` — for images, crop around the most salient region (detail, saturated colour, skin tones) instead of the centre. Pure Rust; videos are always cropped centred.
-
-```sh
-xpress crop --size 1200x630 banner.png
-xpress crop --size 16:9 --smart-crop photo.jpg
-xpress crop --size 1920 --long-edge shot.png
-```
-
-## pipeline
-
-See [Pipeline DSL](pipelines.md).
-
-```sh
-xpress pipeline run '<dsl|name>' <ITEMS>...
-xpress pipeline add <name> '<dsl>'
-xpress pipeline list
-xpress pipeline show <name>
-xpress pipeline delete <name>
-xpress pipeline attach <folder|clipboard> <pipeline> --type <all|image|video|audio|pdf>
-xpress pipeline detach <folder|clipboard>
-```
-
-## watch
-
-See [Daemon & automations](daemon.md).
-
-```sh
-xpress watch [OPTIONS] [FOLDERS]...
-```
-
-- `--clipboard` — also watch the clipboard for copied images.
-- `-p, --pipeline` — pipeline (name or inline DSL) for the watched folders (default: `optimise`).
-
-## strip-exif
-
-```sh
-xpress strip-exif [-r] <ITEMS>...
-```
-
-Removes metadata from images in place (needs `exiftool`).
-
-## crop-pdf / uncrop-pdf / extract-pages
-
-```sh
-xpress crop-pdf --ratio 16:9 slides.pdf          # sets the page CropBox
-xpress crop-pdf --ratio 1.91:1 --suffix "-cropped" doc.pdf
-xpress uncrop-pdf slides.pdf                      # removes the CropBox
-xpress extract-pages --format png --dpi 150 doc.pdf
-```
-
-Cropping is non-destructive (it only sets/removes the `/CropBox`), so
-`uncrop-pdf` fully reverts it. `extract-pages` renders via ghostscript.
-
-## restore / clean-backups
-
-```sh
-xpress restore [-r] <files|folders>        # move .orig backups back into place
-xpress clean-backups [-r] <files|folders>  # delete .orig backups
-```
-
-## config
-
-```sh
-xpress config   # show the config file path and current defaults
-```
-
-Defaults are read from a JSON config file (`~/Library/Application Support/xpress/config.json`,
-or the XDG/`APPDATA` equivalent). Command-line flags override the config; the
-config overrides the built-in defaults. Recognised keys:
-
-```json
-{
-  "compression": 30,
-  "aggressive": false,
-  "backup": true,
-  "strip_metadata": false,
-  "preserve_dates": true
-}
-```
-
-## update
-
-```sh
-xpress update --check   # report whether a newer release exists
-xpress update           # download the latest release and replace the binary
-```
-
-Checks GitHub Releases for `kwhorne/xpress`. The desktop app also shows an
-“Update available” banner when a newer version is published.
+| Option | Description |
+|--------|-------------|
+| `-s, --size <size>` | `1200x630` (cover-crop to exactly that), `1600x0` / `0x720` (one side, keep aspect), `16:9` (largest area of that ratio), `2000` (square) |
+| `-l, --long-edge` | With a single number: make the longer side that size, no crop |
+| `--smart-crop` | Images: keep the most salient region instead of the centre |
 
 ## web
 
-```sh
+```text
 xpress web [OPTIONS] <IMAGES>...
 ```
 
-Responsive images in one step: each image becomes several widths in modern
-formats plus a fallback, and a ready-to-paste `<picture>` element (printed and
-saved as `<name>.html`).
-
-- `--widths 640,1024,1600,2048` — widths to generate; never upscales.
-- `--formats avif,webp` — modern formats, in order of preference. The fallback
-  is JPEG, or PNG for images with transparency.
-- `--quality high` — how good JPEG/PNG/WebP variants must look (see
-  `optimise --quality`); AVIF uses the compression factor.
-- `--sizes "(max-width: 900px) 100vw, 900px"` — the `sizes` attribute.
-- `--alt "…"` — alt text. `-o <dir>` — output directory (default `<name>-web/`).
-
-```html
-<picture>
-  <source type="image/avif" srcset="hero-640.avif 640w, hero-1024.avif 1024w" sizes="100vw">
-  <source type="image/webp" srcset="hero-640.webp 640w, hero-1024.webp 1024w" sizes="100vw">
-  <img src="hero-1024.jpg" srcset="hero-640.jpg 640w, hero-1024.jpg 1024w" sizes="100vw"
-       width="1024" height="576" alt="" loading="lazy" decoding="async">
-</picture>
-```
-
-`width`/`height` are set so the page doesn't shift while images load.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--widths <list>` | `640,1024,1600,2048` | Widths to generate (never upscaled) |
+| `--formats <list>` | `avif,webp` | Modern formats before the JPEG/PNG fallback |
+| `--quality <target>` | `high` | Perceptual target for JPEG/PNG/WebP variants |
+| `--sizes <value>` | `100vw` | The `sizes` attribute |
+| `--alt <text>` | empty | The `alt` text |
+| `-o, --output <dir>` | `<name>-web/` | Output folder |
 
 ## check
 
-```sh
+```text
 xpress check [OPTIONS] <ITEMS>...
 ```
 
-A read-only guard for CI: exits with status 1 when a media file is over a size
-limit or still unoptimised. Files are never modified — each one is optimised to
-a temporary file just to measure what it could shrink to.
+Read-only; exits 1 if any file needs work.
 
-- `--max-size <size>` — fail for any file larger than this (`500kb`, `2mb`).
-- `--min-savings <pct>` — fail for files optimising would shrink by at least
-  this much (default `10`).
-- `--quality <target>` — images: how good an optimised file must still look
-  (default `visually-lossless`). Re-encoding a lossy JPEG always "saves"
-  something by discarding more detail, so images are judged by how much smaller
-  they could be *without a visible change* — an already-optimised JPEG passes.
-- `--exclude <dir>` — skip directories with this name (repeatable).
-- `-r`, `--kind`, `--json`, `-q`, `-j` as for `optimise`.
+| Option | Default | Description |
+|--------|---------|-------------|
+| `-r, --recursive` | | Include subfolders |
+| `--max-size <size>` | | Fail for files larger than this |
+| `--min-savings <pct>` | `10` | Fail when optimising would save at least this |
+| `--quality <target>` | `visually-lossless` | Images: how good an optimised file must still look |
+| `--compression <5..100>` | config | Video/audio/PDF measuring level |
+| `--exclude <name>` | | Skip directories with this name (repeatable) |
+| `--kind`, `--json`, `-q`, `-j` | | As for `optimise` |
 
-```sh
-xpress check -r --max-size 500kb --exclude node_modules public/
+## pipeline
+
+```text
+xpress pipeline run [OPTIONS] <PIPELINE> <ITEMS>...   # name or inline DSL; common options apply
+xpress pipeline add <NAME> <DSL>                       # save
+xpress pipeline list                                   # saved pipelines + automations
+xpress pipeline show <NAME>
+xpress pipeline delete <NAME>
+xpress pipeline attach [--type <all|image|video|audio|pdf>] <SOURCE> <PIPELINE>   # folder or "clipboard"
+xpress pipeline detach <SOURCE>
 ```
 
-### GitHub Action
+Steps and syntax: [Pipelines](pipelines.md).
 
-```yaml
-- uses: actions/checkout@v4
-- uses: kwhorne/xpress@v0.5.0
-  with:
-    paths: public assets
-    max-size: 500kb        # optional
-    # min-savings: 10  quality: visually-lossless  exclude: node_modules .git
+## watch
+
+```text
+xpress watch [OPTIONS] [FOLDERS]...
 ```
 
-Runs on `ubuntu-latest` and `macos-latest` (it downloads the matching release
-binary). A pull request that adds a 4 MB hero image or an unoptimised
-screenshot then fails with the file, its size and what it could be.
+| Option | Description |
+|--------|-------------|
+| `--clipboard` | Also optimise images copied to the clipboard |
+| `-p, --pipeline <pipeline>` | Pipeline for the given folders (default `optimise`) |
+| `-r, --recursive` | Watch subfolders too |
 
-## doctor / bundle
+Without folders, the saved automations are used. Runs until Ctrl-C. See
+[Watching](daemon.md).
 
-```sh
-xpress doctor   # list each tool and whether it was found
-xpress bundle   # extract embedded binaries (requires the embed-tools build)
+## PDF commands
+
+```text
+xpress crop-pdf --ratio <W:H> [--suffix <text>] [-r] <ITEMS>...
+xpress uncrop-pdf [-r] <ITEMS>...
+xpress extract-pages [--format png|jpeg] [--dpi <n>] [-o <dir>] [-r] <ITEMS>...
 ```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--ratio` | | Aspect ratio, e.g. `16:9` or `1.91:1` |
+| `--suffix` | in place | Write `<name><suffix>.pdf` instead of changing the original |
+| `--format` | `png` | Page image format |
+| `--dpi` | `150` | Page image resolution |
+| `-o, --out` | next to the PDF | Folder for page images |
+
+`extract-pages` needs Ghostscript.
+
+## Backups
+
+```text
+xpress restore [-r] <ITEMS>...        # put .<name>.orig backups back
+xpress clean-backups [-r] <ITEMS>...  # delete them
+```
+
+Give either the files or the folders that contain the backups.
+
+## strip-exif
+
+```text
+xpress strip-exif [-r] <ITEMS>...
+```
+
+Removes metadata from images in place without re-encoding (keeps orientation
+and colour profile). Needs `exiftool`. Alternative without extra tools:
+`xpress optimise --strip-metadata`.
+
+## Information
+
+| Command | Shows |
+|---------|-------|
+| `xpress config` | The config file path and the defaults in effect ([Configuration](configuration.md)) |
+| `xpress doctor` | Which external tools were found |
+| `xpress bundle` | Extracts tools embedded in builds made with `--features embed-tools` |
+
+## update
+
+```text
+xpress update [--check]
+```
+
+Downloads and installs the latest release in place; `--check` only reports.
+
+## Exit status
+
+`0` on success. `1` when the command itself fails (bad options, nothing to
+process), and for `check` when any file needs work. When a single file in a
+batch fails, it's reported and the run continues; this doesn't change the exit
+status — use `--json` to detect per-file failures in scripts.

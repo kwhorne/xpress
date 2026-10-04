@@ -38,6 +38,21 @@ fn resolve_steps(store: &Store, spec: &str) -> Result<Vec<Step>> {
     pipeline::parse(&dsl).map_err(|e| anyhow::anyhow!("invalid pipeline '{spec}': {e}"))
 }
 
+/// The steps for clipboard images: `--pipeline` wins; otherwise the pipeline
+/// attached to "clipboard" (`xpress pipeline attach clipboard …`); otherwise
+/// none (plain optimise).
+fn clipboard_steps(store: &Store, cli_pipeline: Option<&str>) -> Result<Vec<Step>> {
+    let attached = store
+        .automations
+        .iter()
+        .find(|a| a.source == "clipboard")
+        .map(|a| a.pipeline.as_str());
+    match cli_pipeline.or(attached) {
+        Some(spec) => resolve_steps(store, spec),
+        None => Ok(Vec::new()),
+    }
+}
+
 fn type_matches(file_type: &str, kind: MediaKind) -> bool {
     match file_type {
         "all" | "" => true,
@@ -127,10 +142,7 @@ pub fn run(
     if clipboard_enabled {
         let opts = options.clone();
         let running = running.clone();
-        let steps = cli_pipeline
-            .as_deref()
-            .and_then(|s| resolve_steps(&store, s).ok())
-            .unwrap_or_default();
+        let steps = clipboard_steps(&store, cli_pipeline.as_deref())?;
         std::thread::spawn(move || clipboard_loop(running, opts, steps));
         println!("{} watching clipboard for images", render::CHECK);
     }
@@ -456,6 +468,24 @@ mod tests {
         std::thread::sleep(Duration::from_millis(250));
         assert_eq!(take_settled(&mut pending, settle), vec![f]);
         assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn clipboard_uses_the_attached_pipeline() {
+        let mut store = Store::default();
+        assert!(
+            clipboard_steps(&store, None).unwrap().is_empty(),
+            "plain optimise"
+        );
+        store.automations.push(xpress_core::store::Automation {
+            source: "clipboard".into(),
+            file_type: "image".into(),
+            pipeline: "convert(to: webp)".into(),
+        });
+        let steps = clipboard_steps(&store, None).unwrap();
+        assert!(matches!(&steps[..], [Step::Convert { to }] if to == "webp"));
+        let cli = clipboard_steps(&store, Some("optimise")).unwrap();
+        assert!(matches!(&cli[..], [Step::Optimise]), "--pipeline wins");
     }
 
     #[test]

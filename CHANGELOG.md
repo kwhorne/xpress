@@ -6,6 +6,24 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Complete user guide** in [`docs/`](docs/README.md): getting started,
+  optimising, converting, resizing and cropping, video and audio, PDFs, web
+  images, sharing and privacy, CI, formats, configuration and troubleshooting,
+  plus a full command-line reference. New app screenshot.
+
+### Fixed
+- `-o` with an output template now creates missing folders instead of failing.
+- `convert --to mp4 --hw` uses the hardware H.264 encoder on Apple silicon (it
+  was ignored for H.264).
+- AVIF files can now be optimised (re-encoded with the compression dial); they
+  were reported as unsupported.
+- `targetSize(kb: 300)` in pipelines means 300 KB (it was read as 300 bytes).
+- `xpress watch --clipboard` uses the pipeline attached to `clipboard` when no
+  `--pipeline` is given.
+- `xpress doctor` lists gifsicle; `--adaptive` and `--max-size` are rejected
+  together; clearer help for `downscale --factor` and `convert`.
+
 ## [0.5.1] - 2026-10-04
 
 ### Added

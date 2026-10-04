@@ -738,4 +738,17 @@ fn reads_avif() {
     let decoded = image::open(&r.output).unwrap();
     assert_eq!((decoded.width(), decoded.height()), (64, 64));
     assert_eq!(ximage::oriented_dimensions(&avif), Some((64, 64)));
+
+    // …and optimised in place (a gentle-factor source shrinks at the default).
+    let gentle = OptimiseOptions {
+        compression: xpress_core::compression::CompressionQuality::factor(5),
+        output: Some(dir.join("gentle.avif")),
+        ..opts()
+    };
+    let big = ximage::convert(&f, ImageFormat::Avif, &gentle)
+        .unwrap()
+        .output;
+    let r = ximage::optimise(&big, &opts()).unwrap();
+    assert!(r.improved(), "{} -> {}", r.old_size, r.new_size);
+    assert_eq!(&std::fs::read(&big).unwrap()[4..12], b"ftypavif");
 }

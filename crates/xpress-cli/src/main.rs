@@ -49,9 +49,9 @@ enum Command {
     /// Optimise images, videos, audio files and PDFs.
     #[command(alias = "optimize")]
     Optimise(OptimiseArgs),
-    /// Downscale and optimise images and videos by a factor (0.1–1.0).
+    /// Downscale and optimise images and videos by a factor (0.05–1.0).
     Downscale(DownscaleArgs),
-    /// Convert images or audio files to another format.
+    /// Convert images, audio or video to another format (the source is kept).
     Convert(ConvertArgs),
     /// Crop and optimise images or videos to a size or aspect ratio.
     Crop(CropArgs),
@@ -208,7 +208,7 @@ struct OptimiseArgs {
     #[arg(long, value_parser = parse_size)]
     max_size: Option<u64>,
     /// For images: try multiple formats and keep the smallest.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "max_size")]
     adaptive: bool,
     /// For images: the smallest file that still looks this good, measured with
     /// SSIMULACRA2 — visually-lossless (90), high (80), medium (70), low (50)
@@ -229,7 +229,7 @@ struct OptimiseArgs {
 struct DownscaleArgs {
     #[command(flatten)]
     common: CommonOpts,
-    /// Scale factor 0.1–1.0 (e.g. 0.5 = half resolution).
+    /// Scale factor 0.05–1.0 (e.g. 0.5 = half resolution).
     #[arg(short, long, default_value_t = 0.5)]
     factor: f64,
     #[arg(required = true)]
