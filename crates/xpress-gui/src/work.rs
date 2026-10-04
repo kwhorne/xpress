@@ -18,6 +18,8 @@ pub struct Done {
 
 pub enum Msg {
     Done(Box<Done>),
+    /// The clipboard history changed (something was copied or captured).
+    HistoryChanged,
 }
 
 /// Optimise a single file on a background thread. With a `quality` target,

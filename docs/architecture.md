@@ -29,6 +29,8 @@ Both binaries are thin: everything testable lives in `xpress-core`.
 | `share` | `--for` presets: destination limits and format conversions. |
 | `privacy` | GPS removal from EXIF and location fields from XMP. |
 | `web` | Responsive image sets and the `<picture>` markup. |
+| `history` | Clipboard/screenshot history: SQLite + FTS5 search, kind detection (text/link/code/colour), image storage and previews, retention. |
+| `ocr` | Text in images via Apple Vision (macOS). |
 | `scale`, `crop` | Downscale and size/ratio/long-edge/rect crops (images in-process, video via ffmpeg filters). |
 | `effects` | Watermark overlay (ffmpeg). |
 | `pipeline` | Parse and run the step DSL. |
@@ -71,7 +73,13 @@ working file, and place the final artifact with the same `finish` rules (see
 - **`xpress-gui`**: an eframe app. `logic()` handles the tray, global hotkeys
   and finished jobs even while the window is hidden; `ui()` draws. Work runs on
   background threads (`work.rs`) that call `xpress-core` and send results back
-  over a channel. UI tests drive it headlessly with `egui_kittest`.
+  over a channel. `settings.rs` persists `gui.json`. The clipboard history is
+  `pasteboard.rs` (NSPasteboard: read/write, private-content markers, front
+  app), `capture.rs` (a background thread polling the pasteboard's change
+  count and the screenshot folder, recording into `history` and running OCR)
+  and `history_ui.rs` (the view). UI tests drive it headlessly with
+  `egui_kittest`; pasteboard tests use a private pasteboard, never the user's
+  clipboard.
 
 ## Design choices
 

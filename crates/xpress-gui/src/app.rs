@@ -21,21 +21,24 @@ use xpress_core::result::OptimiseOptions;
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
+use crate::capture::CaptureFlags;
+use crate::history_ui::{HistoryAction, HistoryPanel};
 use crate::settings::Settings;
 use crate::work::{self, Msg};
+use xpress_core::history::{ClipKind, History};
 
 // Palette matching elyra-conductor (Tokyo Night).
 const BG: Color32 = Color32::from_rgb(0x16, 0x16, 0x1e);
 const BG2: Color32 = Color32::from_rgb(0x1a, 0x1b, 0x26);
-const BG3: Color32 = Color32::from_rgb(0x1f, 0x20, 0x30);
+pub(crate) const BG3: Color32 = Color32::from_rgb(0x1f, 0x20, 0x30);
 const PANEL: Color32 = Color32::from_rgb(0x1e, 0x1f, 0x2b);
-const BORDER: Color32 = Color32::from_rgb(0x2a, 0x2b, 0x3c);
+pub(crate) const BORDER: Color32 = Color32::from_rgb(0x2a, 0x2b, 0x3c);
 const TEXT: Color32 = Color32::from_rgb(0xc0, 0xca, 0xf5);
 const TEXT_DIM: Color32 = Color32::from_rgb(0x78, 0x7c, 0x99);
 const ACCENT: Color32 = Color32::from_rgb(0x7a, 0xa2, 0xf7);
-const ACCENT2: Color32 = Color32::from_rgb(0x2f, 0x36, 0x50);
+pub(crate) const ACCENT2: Color32 = Color32::from_rgb(0x2f, 0x36, 0x50);
 const OK_GREEN: Color32 = Color32::from_rgb(0x9e, 0xce, 0x6a);
-const ERR_RED: Color32 = Color32::from_rgb(0xf7, 0x76, 0x8e);
+pub(crate) const ERR_RED: Color32 = Color32::from_rgb(0xf7, 0x76, 0x8e);
 
 const UPDATE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 /// Changed settings are written once they've been left alone this long.
@@ -49,12 +52,22 @@ const QUALITY_TARGETS: [(&str, Option<f64>); 5] = [
     ("Medium", Some(70.0)),
     ("Low", Some(50.0)),
 ];
+/// "Keep history" choices in Preferences (days; 0 = until the size limit).
+const HISTORY_DAYS: [(u32, &str); 6] = [
+    (1, "1 day"),
+    (7, "1 week"),
+    (30, "1 month"),
+    (90, "3 months"),
+    (365, "1 year"),
+    (0, "Forever"),
+];
 /// How each entry of [`QUALITY_TARGETS`] is stored in the settings file.
 const QUALITY_KEYS: [&str; 5] = ["off", "visually-lossless", "high", "medium", "low"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Optimise,
+    History,
     Settings,
     About,
 }
@@ -94,6 +107,21 @@ pub struct XpressApp {
     pipeline_dsl: String,
     use_pipeline: bool,
 
+    /// Clipboard history.
+    history: Option<Arc<Mutex<History>>>,
+    history_panel: HistoryPanel,
+    capture: Arc<CaptureFlags>,
+    history_enabled: bool,
+    history_screenshots: bool,
+    history_ocr: bool,
+    history_days: u32,
+    /// "Clear history" asks once more before deleting.
+    confirm_clear: bool,
+    /// The clip last put on the clipboard (tests read this).
+    last_copied: Option<i64>,
+    /// Platform side (tray, hotkeys, clipboard, recording) is set up.
+    integrations: bool,
+
     /// Where settings are remembered (none in tests).
     settings_path: Option<PathBuf>,
     /// The settings as last written, and when they started to differ.
@@ -109,6 +137,7 @@ pub struct XpressApp {
     _hotkey_manager: Option<GlobalHotKeyManager>,
     clipboard_hotkey: Option<HotKey>,
     show_hotkey: Option<HotKey>,
+    history_hotkey: Option<HotKey>,
 
     crop: Option<CropState>,
 
@@ -122,6 +151,7 @@ pub struct XpressApp {
     _tray: Option<TrayIcon>,
     tray_open_id: String,
     tray_clip_id: String,
+    tray_history_id: String,
     tray_update_id: String,
     tray_quit_id: String,
 }
@@ -135,11 +165,20 @@ impl XpressApp {
     /// icon, global hotkeys and the background update check — which tests
     /// leave out (they need the main thread and the network).
     fn build(ctx: &egui::Context, integrations: bool) -> Self {
-        let settings_path = if integrations { Settings::path() } else { None };
-        Self::build_with(ctx, integrations, settings_path)
+        let (settings_path, history_dir) = if integrations {
+            (Settings::path(), History::default_dir())
+        } else {
+            (None, None)
+        };
+        Self::build_with(ctx, integrations, settings_path, history_dir)
     }
 
-    fn build_with(ctx: &egui::Context, integrations: bool, settings_path: Option<PathBuf>) -> Self {
+    fn build_with(
+        ctx: &egui::Context,
+        integrations: bool,
+        settings_path: Option<PathBuf>,
+        history_dir: Option<PathBuf>,
+    ) -> Self {
         install_style(ctx);
         let (tx, rx) = channel();
 
@@ -149,16 +188,35 @@ impl XpressApp {
         if integrations {
             spawn_update_check(ctx.clone(), update_info.clone(), update_checking.clone());
         }
-        let (tray, [open_id, clip_id, update_id, quit_id]) = if integrations {
+        let (tray, [open_id, clip_id, history_id, update_id, quit_id]) = if integrations {
             build_tray()
         } else {
             (None, Default::default())
         };
-        let (manager, clip_hk, show_hk) = if integrations {
+        let (manager, [clip_hk, show_hk, history_hk]) = if integrations {
             register_hotkeys()
         } else {
-            (None, None, None)
+            (None, [None, None, None])
         };
+
+        let history = history_dir.and_then(|dir| match History::open(&dir) {
+            Ok(h) => Some(Arc::new(Mutex::new(h))),
+            Err(e) => {
+                eprintln!(
+                    "xpress: could not open the history in {}: {e}",
+                    dir.display()
+                );
+                None
+            }
+        });
+        let capture = Arc::new(CaptureFlags::default());
+        if let (true, Some(history)) = (integrations, &history) {
+            let (tx, ctx) = (tx.clone(), ctx.clone());
+            crate::capture::start(history.clone(), capture.clone(), move || {
+                let _ = tx.send(Msg::HistoryChanged);
+                ctx.request_repaint();
+            });
+        }
 
         let settings = match &settings_path {
             Some(path) => Settings::load(path, || {
@@ -180,6 +238,16 @@ impl XpressApp {
             always_on_top: false,
             pipeline_dsl: String::new(),
             use_pipeline: false,
+            history,
+            history_panel: HistoryPanel::new(),
+            capture,
+            history_enabled: false,
+            history_screenshots: true,
+            history_ocr: true,
+            history_days: 30,
+            confirm_clear: false,
+            last_copied: None,
+            integrations,
             settings_path,
             saved_settings: settings.clone(),
             settings_changed: None,
@@ -190,6 +258,7 @@ impl XpressApp {
             _hotkey_manager: manager,
             clipboard_hotkey: clip_hk,
             show_hotkey: show_hk,
+            history_hotkey: history_hk,
             crop: None,
             update_info,
             update_checking,
@@ -200,10 +269,12 @@ impl XpressApp {
             _tray: tray,
             tray_open_id: open_id,
             tray_clip_id: clip_id,
+            tray_history_id: history_id,
             tray_update_id: update_id,
             tray_quit_id: quit_id,
         };
         app.apply_settings(&settings);
+        app.sync_capture();
         if app.always_on_top {
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
                 egui::WindowLevel::AlwaysOnTop,
@@ -225,6 +296,10 @@ impl XpressApp {
             always_on_top: self.always_on_top,
             pipeline: self.pipeline_dsl.clone(),
             use_pipeline: self.use_pipeline,
+            history_enabled: self.history_enabled,
+            history_screenshots: self.history_screenshots,
+            history_ocr: self.history_ocr,
+            history_days: self.history_days,
         }
     }
 
@@ -243,6 +318,80 @@ impl XpressApp {
         self.always_on_top = s.always_on_top;
         self.pipeline_dsl = s.pipeline.clone();
         self.use_pipeline = s.use_pipeline;
+        self.history_enabled = s.history_enabled;
+        self.history_screenshots = s.history_screenshots;
+        self.history_ocr = s.history_ocr;
+        self.history_days = s.history_days;
+    }
+
+    /// Tell the recording thread what the settings say.
+    fn sync_capture(&self) {
+        let c = &self.capture;
+        c.enabled.store(
+            self.history_enabled && self.history.is_some(),
+            Ordering::Relaxed,
+        );
+        c.screenshots
+            .store(self.history_screenshots, Ordering::Relaxed);
+        c.ocr.store(self.history_ocr, Ordering::Relaxed);
+        c.keep_days.store(self.history_days, Ordering::Relaxed);
+    }
+
+    /// Show the window on History, ready to type (the ⌃⌘V hotkey).
+    fn open_history(&mut self, ctx: &egui::Context) {
+        Self::show_window(ctx);
+        self.crop = None;
+        self.tab = Tab::History;
+        self.history_panel.reset_for_paste();
+    }
+
+    fn handle_history_action(&mut self, action: HistoryAction, ctx: &egui::Context) {
+        let Some(history) = self.history.clone() else {
+            return;
+        };
+        match action {
+            HistoryAction::Copy { id, hide } => {
+                let clip = history.lock().unwrap().get(id).ok().flatten();
+                let Some(clip) = clip else { return };
+                if self.integrations && !put_on_clipboard(&clip) {
+                    return;
+                }
+                let _ = history.lock().unwrap().touch(id);
+                self.last_copied = Some(id);
+                self.history_panel.dirty = true;
+                self.history_panel.selected = 0;
+                if hide && self.integrations {
+                    hide_app(ctx);
+                }
+            }
+            HistoryAction::CopyText(text) => {
+                if self.integrations {
+                    crate::pasteboard::write_text(&text);
+                }
+            }
+            HistoryAction::TogglePin(id) => {
+                let h = history.lock().unwrap();
+                if let Ok(Some(clip)) = h.get(id) {
+                    let _ = h.set_pinned(id, !clip.pinned);
+                }
+                self.history_panel.dirty = true;
+            }
+            HistoryAction::Delete(id) => {
+                let _ = history.lock().unwrap().delete(id);
+                self.history_panel.dirty = true;
+            }
+            HistoryAction::Reveal(path) => reveal_in_file_manager(&path),
+            HistoryAction::Open(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+            HistoryAction::Enable => {
+                self.history_enabled = true;
+                self.sync_capture();
+            }
+            HistoryAction::Hide => {
+                if self.integrations {
+                    hide_app(ctx);
+                }
+            }
+        }
     }
 
     /// Write the settings once they've changed and settled (or now, with
@@ -382,7 +531,14 @@ impl XpressApp {
     }
 
     fn drain_results(&mut self) {
-        while let Ok(Msg::Done(done)) = self.rx.try_recv() {
+        while let Ok(msg) = self.rx.try_recv() {
+            let done = match msg {
+                Msg::Done(done) => done,
+                Msg::HistoryChanged => {
+                    self.history_panel.dirty = true;
+                    continue;
+                }
+            };
             self.in_flight = self.in_flight.saturating_sub(1);
             let name = done
                 .source
@@ -504,6 +660,8 @@ impl eframe::App for XpressApp {
             } else if id == self.tray_clip_id {
                 Self::show_window(ctx);
                 self.optimise_clipboard(ctx);
+            } else if id == self.tray_history_id {
+                self.open_history(ctx);
             } else if id == self.tray_update_id {
                 Self::show_window(ctx);
                 self.tab = Tab::About;
@@ -529,10 +687,13 @@ impl eframe::App for XpressApp {
                 self.optimise_clipboard(ctx);
             } else if self.show_hotkey.map(|h| h.id()) == Some(ev.id) {
                 Self::show_window(ctx);
+            } else if self.history_hotkey.map(|h| h.id()) == Some(ev.id) {
+                self.open_history(ctx);
             }
         }
 
         self.drain_results();
+        self.sync_capture();
         self.persist_settings(false);
 
         if self.last_update_check.elapsed() >= UPDATE_INTERVAL
@@ -582,6 +743,7 @@ impl XpressApp {
                 )
                 .show(ui, |ui| match self.tab {
                     Tab::Optimise => self.optimise_view(ui),
+                    Tab::History => self.history_view(ui),
                     Tab::Settings => self.settings_view(ui),
                     Tab::About => self.about_view(ui),
                 });
@@ -622,6 +784,17 @@ impl XpressApp {
                 section_header(ui, "WORKSPACE");
                 if nav_item(ui, self.tab == Tab::Optimise, ACCENT, "⤓", "Optimise") {
                     self.tab = Tab::Optimise;
+                }
+                if nav_item(
+                    ui,
+                    self.tab == Tab::History,
+                    Color32::from_rgb(90, 180, 140),
+                    "≡",
+                    "History",
+                ) {
+                    self.tab = Tab::History;
+                    self.history_panel.dirty = true;
+                    self.history_panel.focus_search = true;
                 }
                 if nav_item(
                     ui,
@@ -823,6 +996,103 @@ impl XpressApp {
         }
     }
 
+    // ---- History view ------------------------------------------------------
+
+    fn history_view(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let Some(history) = self.history.clone() else {
+            ui.heading("History");
+            ui.label(RichText::new("The history could not be opened.").color(ERR_RED));
+            return;
+        };
+        if self.history_panel.dirty {
+            self.history_panel.refresh(&history.lock().unwrap());
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        if let Some(action) = self.history_panel.show(ui, self.history_enabled, now) {
+            self.handle_history_action(action, &ctx);
+        }
+    }
+
+    fn history_settings(&mut self, ui: &mut egui::Ui) {
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Clipboard history",
+                "Keep what you copy, searchable under History (⌃⌘V)",
+                |ui| {
+                    toggle(ui, &mut self.history_enabled);
+                },
+            );
+            ui.separator();
+            ui.add_enabled_ui(self.history_enabled, |ui| {
+                setting_row(
+                    ui,
+                    "Include screenshots",
+                    "Add new screenshots to the history",
+                    |ui| {
+                        toggle(ui, &mut self.history_screenshots);
+                    },
+                );
+                if xpress_core::ocr::available() {
+                    ui.separator();
+                    setting_row(
+                        ui,
+                        "Find text in images",
+                        "Recognise words in screenshots and images, on this Mac",
+                        |ui| {
+                            toggle(ui, &mut self.history_ocr);
+                        },
+                    );
+                }
+                ui.separator();
+                setting_row(ui, "Keep history", "Pinned clips are always kept", |ui| {
+                    let current = HISTORY_DAYS
+                        .iter()
+                        .find(|(d, _)| *d == self.history_days)
+                        .map(|(_, l)| *l)
+                        .unwrap_or("1 month");
+                    egui::ComboBox::from_id_salt("history_days")
+                        .selected_text(current)
+                        .width(140.0)
+                        .show_ui(ui, |ui| {
+                            for (days, label) in HISTORY_DAYS {
+                                ui.selectable_value(&mut self.history_days, days, label);
+                            }
+                        });
+                });
+            });
+            if let Some(history) = self.history.clone() {
+                ui.separator();
+                let (count, bytes) = history.lock().unwrap().stats().unwrap_or_default();
+                setting_row(
+                    ui,
+                    "Clear history",
+                    &format!("{count} clips · {} · pinned clips stay", human(bytes)),
+                    |ui| {
+                        let label = if self.confirm_clear {
+                            "Click again to clear"
+                        } else {
+                            "Clear…"
+                        };
+                        if ui.button(label).clicked() {
+                            if self.confirm_clear {
+                                let _ = history.lock().unwrap().clear(true);
+                                self.history_panel.dirty = true;
+                                self.confirm_clear = false;
+                            } else {
+                                self.confirm_clear = true;
+                            }
+                        }
+                    },
+                );
+            }
+        });
+    }
+
     // ---- Settings view -----------------------------------------------------
 
     fn settings_view(&mut self, ui: &mut egui::Ui) {
@@ -917,6 +1187,9 @@ impl XpressApp {
                 }
             });
         });
+
+        ui.add_space(12.0);
+        self.history_settings(ui);
 
         ui.add_space(12.0);
         card(ui, |ui| {
@@ -1187,23 +1460,26 @@ impl XpressApp {
 
 /// The menu-bar (status bar) icon and its menu; returns the menu item ids
 /// (open, clipboard, update, quit).
-fn build_tray() -> (Option<TrayIcon>, [String; 4]) {
+fn build_tray() -> (Option<TrayIcon>, [String; 5]) {
     let menu = Menu::new();
     let open_item = MenuItem::new("Open xpress\t⌘⇧X", true, None);
     let clip_item = MenuItem::new("Optimise clipboard\t⌘⇧O", true, None);
+    let history_item = MenuItem::new("Clipboard history\t⌃⌘V", true, None);
     let update_item = MenuItem::new("Check for updates", true, None);
     let quit_item = MenuItem::new("Quit xpress", true, None);
     let _ = menu.append_items(&[
         &open_item,
         &PredefinedMenuItem::separator(),
         &clip_item,
+        &history_item,
         &update_item,
         &PredefinedMenuItem::separator(),
         &quit_item,
     ]);
-    let (open_id, clip_id, update_id, quit_id) = (
+    let (open_id, clip_id, history_id, update_id, quit_id) = (
         open_item.id().0.clone(),
         clip_item.id().0.clone(),
+        history_item.id().0.clone(),
         update_item.id().0.clone(),
         quit_item.id().0.clone(),
     );
@@ -1216,21 +1492,24 @@ fn build_tray() -> (Option<TrayIcon>, [String; 4]) {
             .build()
             .ok()
     });
-    (tray, [open_id, clip_id, update_id, quit_id])
+    (tray, [open_id, clip_id, history_id, update_id, quit_id])
 }
 
 /// Register the global hotkeys: ⌘⇧O optimises the clipboard, ⌘⇧X shows the
-/// window. (⌘X alone is the system “cut” shortcut, so we use ⌘⇧X.)
-fn register_hotkeys() -> (Option<GlobalHotKeyManager>, Option<HotKey>, Option<HotKey>) {
+/// window, ⌃⌘V opens the history. (⌘X alone is the system “cut” shortcut, and
+/// ⌘⇧V is “Paste and Match Style” in many apps, so we leave those alone.)
+fn register_hotkeys() -> (Option<GlobalHotKeyManager>, [Option<HotKey>; 3]) {
     match GlobalHotKeyManager::new() {
         Ok(m) => {
-            let clip = HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyO);
-            let show = HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyX);
-            let clip = m.register(clip).ok().map(|_| clip);
-            let show = m.register(show).ok().map(|_| show);
-            (Some(m), clip, show)
+            let keys = [
+                HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyO),
+                HotKey::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::KeyX),
+                HotKey::new(Some(Modifiers::SUPER | Modifiers::CONTROL), Code::KeyV),
+            ];
+            let registered = keys.map(|k| m.register(k).ok().map(|_| k));
+            (Some(m), registered)
         }
-        Err(_) => (None, None, None),
+        Err(_) => (None, [None, None, None]),
     }
 }
 
@@ -1313,7 +1592,7 @@ fn card_fill(_ctx: &egui::Context) -> Color32 {
     BG3
 }
 
-fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) {
+pub(crate) fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) {
     egui::Frame::default()
         .fill(card_fill(ui.ctx()))
         .corner_radius(10)
@@ -1614,6 +1893,41 @@ fn activate_app() {
 #[cfg(not(target_os = "macos"))]
 fn activate_app() {}
 
+/// Hide xpress so the app you were in comes back to the front, ready for ⌘V.
+#[cfg(target_os = "macos")]
+fn hide_app(_ctx: &egui::Context) {
+    use objc2_foundation::MainThreadMarker;
+    if let Some(mtm) = MainThreadMarker::new() {
+        objc2_app_kit::NSApplication::sharedApplication(mtm).hide(None);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn hide_app(ctx: &egui::Context) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+}
+
+/// Put a history clip back on the clipboard.
+fn put_on_clipboard(clip: &xpress_core::history::Clip) -> bool {
+    use crate::pasteboard;
+    match clip.kind {
+        ClipKind::Files => pasteboard::write_files(&clip.paths()),
+        ClipKind::Image | ClipKind::Screenshot => clip
+            .image
+            .as_ref()
+            .and_then(|p| std::fs::read(p).ok())
+            .and_then(|bytes| {
+                if bytes.starts_with(b"\x89PNG") {
+                    Some(bytes)
+                } else {
+                    pasteboard::normalise_png(&bytes)
+                }
+            })
+            .is_some_and(|png| pasteboard::write_png(&png)),
+        _ => pasteboard::write_text(&clip.text),
+    }
+}
+
 /// Build a 32×32 RGBA menu-bar icon: the colourful "x" on a transparent field.
 fn tray_icon_image() -> Option<(Vec<u8>, u32, u32)> {
     let size = 32usize;
@@ -1832,7 +2146,7 @@ mod tests {
     }
 
     fn harness_with_settings(path: &Path) -> Harness<'static, XpressApp> {
-        let app = XpressApp::build_with(&egui::Context::default(), false, Some(path.into()));
+        let app = XpressApp::build_with(&egui::Context::default(), false, Some(path.into()), None);
         let mut h = Harness::builder()
             .with_size(egui::vec2(960.0, 692.0))
             .build_ui_state(|ui, app: &mut XpressApp| app.draw(ui), app);
@@ -1893,7 +2207,174 @@ mod tests {
 
     #[test]
     fn tests_do_not_touch_the_real_settings() {
-        assert!(harness().state().settings_path.is_none());
+        let h = harness();
+        assert!(h.state().settings_path.is_none());
+        assert!(h.state().history.is_none());
+    }
+
+    /// An app with a history in a temp folder, holding a few clips.
+    fn history_harness(dir: &Path) -> Harness<'static, XpressApp> {
+        use xpress_core::history::NewClip;
+        let history = History::open(&dir.join("history")).unwrap();
+        for clip in [
+            NewClip::text("Invoice 4711 is paid").from_app(Some("Mail".into()), None),
+            NewClip::text("https://kwhorne.com/xpress").from_app(Some("Safari".into()), None),
+            NewClip::text("#7aa2f7").from_app(Some("Figma".into()), None),
+        ] {
+            history.add(clip).unwrap();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        drop(history);
+        let mut app = XpressApp::build_with(
+            &egui::Context::default(),
+            false,
+            Some(dir.join("gui.json")),
+            Some(dir.join("history")),
+        );
+        app.tab = Tab::History;
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(960.0, 692.0))
+            .build_ui_state(|ui, app: &mut XpressApp| app.draw(ui), app);
+        h.run();
+        h
+    }
+
+    fn shown(h: &Harness<'static, XpressApp>) -> Vec<String> {
+        h.state()
+            .history_panel
+            .results
+            .iter()
+            .map(|c| c.text.clone())
+            .collect()
+    }
+
+    #[test]
+    fn history_is_off_until_turned_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = history_harness(dir.path());
+        assert!(!h.state().capture.enabled.load(Ordering::Relaxed));
+        assert!(h.query_by_label("Clipboard history is off").is_some());
+        h.get_by_label("Turn on clipboard history").click();
+        h.run();
+        assert!(h.state().history_enabled);
+        assert!(h.state().capture.enabled.load(Ordering::Relaxed));
+        assert!(h.query_by_label("Clipboard history is off").is_none());
+    }
+
+    #[test]
+    fn history_lists_searches_and_filters() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = history_harness(dir.path());
+        h.state_mut().history_enabled = true;
+        h.run();
+        assert_eq!(
+            shown(&h),
+            [
+                "#7aa2f7",
+                "https://kwhorne.com/xpress",
+                "Invoice 4711 is paid"
+            ]
+        );
+        assert!(h.query_by_label("Invoice 4711 is paid").is_some());
+        assert!(h.query_by_label_contains("Link  ·  Safari").is_some());
+
+        h.state_mut().history_panel.query = "inv".into();
+        h.state_mut().history_panel.dirty = true;
+        h.run();
+        assert_eq!(shown(&h), ["Invoice 4711 is paid"]);
+
+        h.state_mut().history_panel.query.clear();
+        h.state_mut().history_panel.dirty = true;
+        h.run();
+        h.get_by_label("Links").click();
+        h.run();
+        assert_eq!(shown(&h), ["https://kwhorne.com/xpress"]);
+        h.get_by_label("All").click();
+        h.run();
+        assert_eq!(shown(&h).len(), 3);
+    }
+
+    #[test]
+    fn history_keyboard_copy_pin_and_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = history_harness(dir.path());
+        h.state_mut().history_enabled = true;
+        h.run();
+        let ids: Vec<i64> = h
+            .state()
+            .history_panel
+            .results
+            .iter()
+            .map(|c| c.id)
+            .collect();
+
+        h.key_press(egui::Key::ArrowDown);
+        h.run();
+        assert_eq!(h.state().history_panel.selected, 1);
+        h.key_press(egui::Key::Enter);
+        h.run();
+        assert_eq!(h.state().last_copied, Some(ids[1]));
+        // Copying moves it to the top.
+        h.run();
+        assert_eq!(shown(&h)[0], "https://kwhorne.com/xpress");
+
+        let invoice = ids[2];
+        h.state_mut()
+            .handle_history_action(HistoryAction::TogglePin(invoice), &egui::Context::default());
+        h.run();
+        h.get_by_label("Pinned").click();
+        h.run();
+        assert_eq!(shown(&h), ["Invoice 4711 is paid"]);
+
+        h.state_mut()
+            .handle_history_action(HistoryAction::Delete(invoice), &egui::Context::default());
+        h.run();
+        assert!(shown(&h).is_empty());
+    }
+
+    #[test]
+    fn history_settings_are_remembered_and_clear_asks_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut h = history_harness(dir.path());
+            h.state_mut().tab = Tab::Settings;
+            h.state_mut().history_enabled = true;
+            h.state_mut().history_days = 7;
+            h.run();
+            assert!(h.query_by_label("Clipboard history").is_some());
+            h.get_by_label("Clear…").click();
+            h.run();
+            assert_eq!(
+                h.state()
+                    .history
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .stats()
+                    .unwrap()
+                    .0,
+                3
+            );
+            h.get_by_label("Click again to clear").click();
+            h.run();
+            assert_eq!(
+                h.state()
+                    .history
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .unwrap()
+                    .stats()
+                    .unwrap()
+                    .0,
+                0
+            );
+            h.state_mut().persist_settings(true);
+        }
+        let h = history_harness(dir.path());
+        assert!(h.state().history_enabled);
+        assert_eq!(h.state().capture.keep_days.load(Ordering::Relaxed), 7);
     }
 
     #[test]

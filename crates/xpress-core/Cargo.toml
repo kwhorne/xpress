@@ -38,6 +38,8 @@ ssimulacra2 = "0.5"
 png = "0.17"
 oxipng = { version = "9", default-features = false, features = ["parallel", "zopfli"] }
 include_dir = { version = "0.7", optional = true }
+# Clipboard history: SQLite (public domain) with FTS5 full-text search.
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 [dev-dependencies]
 lopdf = { version = "0.45", default-features = false }
@@ -47,8 +49,10 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 # copyfile(3): keep Finder tags / xattrs when atomically replacing a file.
 libc = "0.2"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSData"] }
+objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSString"] }
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard"] }
+# Text recognition in images (Apple Vision).
+objc2-vision = { version = "0.3", default-features = false, features = ["std", "VNRequest", "VNRecognizeTextRequest", "VNRequestHandler", "VNObservation", "VNTypes"] }
 
 [features]
 # Embed the binaries under `vendor/bin/<target>/` into the executable and extract
