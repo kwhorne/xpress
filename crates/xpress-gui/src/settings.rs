@@ -7,6 +7,25 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+/// An app whose copies aren't recorded in the history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct IgnoredApp {
+    pub name: String,
+    #[serde(default)]
+    pub bundle: Option<String>,
+}
+
+impl IgnoredApp {
+    /// Whether a copy from this app (name, bundle id) is this one: by bundle
+    /// id when both have one, else by name.
+    pub fn matches(&self, name: Option<&str>, bundle: Option<&str>) -> bool {
+        match (&self.bundle, bundle) {
+            (Some(mine), Some(theirs)) => mine == theirs,
+            _ => name.is_some_and(|n| n.eq_ignore_ascii_case(&self.name)),
+        }
+    }
+}
+
 /// Everything the app remembers. Unknown or missing fields fall back to the
 /// defaults, so older and newer files both load.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -37,6 +56,8 @@ pub struct Settings {
     pub paste_directly: bool,
     /// Sync the history between Macs through iCloud Drive.
     pub history_sync: bool,
+    /// Apps whose copies aren't recorded.
+    pub history_ignored: Vec<IgnoredApp>,
     /// Global shortcuts (`global_hotkey` strings; empty = off).
     pub shortcut_clipboard: String,
     pub shortcut_show: String,
@@ -70,6 +91,7 @@ impl Settings {
             history_days: 30,
             paste_directly: false,
             history_sync: false,
+            history_ignored: Vec::new(),
             shortcut_clipboard: crate::shortcuts::Action::Clipboard
                 .default_shortcut()
                 .into(),
@@ -105,6 +127,24 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ignored_apps_match_by_bundle_then_name() {
+        let bank = IgnoredApp {
+            name: "Bank".into(),
+            bundle: Some("com.bank.app".into()),
+        };
+        assert!(bank.matches(Some("Bank"), Some("com.bank.app")));
+        assert!(bank.matches(Some("Renamed"), Some("com.bank.app")));
+        assert!(!bank.matches(Some("Bank"), Some("com.other.bank")));
+        assert!(bank.matches(Some("bank"), None), "no bundle id: by name");
+        let notes = IgnoredApp {
+            name: "Notes".into(),
+            bundle: None,
+        };
+        assert!(notes.matches(Some("Notes"), Some("com.apple.Notes")));
+        assert!(!notes.matches(None, None));
+    }
 
     #[test]
     fn round_trip() {

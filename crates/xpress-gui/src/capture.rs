@@ -11,6 +11,7 @@ use std::time::{Duration, Instant, SystemTime};
 use xpress_core::history::{History, NewClip, Retention};
 
 use crate::pasteboard::{self, Snapshot, IGNORED_APPS};
+use crate::settings::IgnoredApp;
 
 const TICK: Duration = Duration::from_millis(500);
 const SCREENSHOT_EVERY: u32 = 4;
@@ -36,6 +37,8 @@ pub struct CaptureFlags {
     pub sync: AtomicBool,
     /// Start the next sync from a fresh snapshot (syncing was just turned on).
     pub sync_fresh: AtomicBool,
+    /// Apps the user chose not to record.
+    pub ignored: Mutex<Vec<IgnoredApp>>,
 }
 
 /// How syncing is going, for Preferences.
@@ -144,8 +147,14 @@ pub fn clip_from_snapshot(
     snap: Snapshot,
     app: Option<String>,
     bundle: Option<String>,
+    ignored: &[IgnoredApp],
 ) -> Option<NewClip> {
-    if snap.concealed || bundle.as_deref().is_some_and(|b| IGNORED_APPS.contains(&b)) {
+    if snap.concealed
+        || bundle.as_deref().is_some_and(|b| IGNORED_APPS.contains(&b))
+        || ignored
+            .iter()
+            .any(|i| i.matches(app.as_deref(), bundle.as_deref()))
+    {
         return None;
     }
     let text = snap.text.filter(|t| !t.trim().is_empty());
@@ -289,9 +298,11 @@ pub fn start(
                     last = count;
                     let own = count == flags.own_change.load(Ordering::Relaxed);
                     let (app, bundle) = pasteboard::frontmost_app();
-                    if let (false, Some(clip)) =
-                        (own, clip_from_snapshot(pasteboard::read(), app, bundle))
-                    {
+                    let ignored = flags.ignored.lock().unwrap().clone();
+                    if let (false, Some(clip)) = (
+                        own,
+                        clip_from_snapshot(pasteboard::read(), app, bundle, &ignored),
+                    ) {
                         dirty |= flags.record(&history, clip);
                     }
                 }
@@ -334,8 +345,13 @@ mod tests {
     }
 
     fn kind(snap: Snapshot) -> Option<ClipKind> {
-        clip_from_snapshot(snap, Some("Notes".into()), Some("com.apple.Notes".into()))
-            .map(|c| c.kind)
+        clip_from_snapshot(
+            snap,
+            Some("Notes".into()),
+            Some("com.apple.Notes".into()),
+            &[],
+        )
+        .map(|c| c.kind)
     }
 
     #[test]
@@ -400,7 +416,23 @@ mod tests {
             },
             Some("1Password".into()),
             Some("com.1password.1password".into()),
+            &[],
         );
+        assert!(from_password_manager.is_none());
+        let bank = IgnoredApp {
+            name: "Bank".into(),
+            bundle: Some("com.bank.app".into()),
+        };
+        let from_ignored_app = clip_from_snapshot(
+            Snapshot {
+                text: Some("account 1234".into()),
+                ..Default::default()
+            },
+            Some("Bank".into()),
+            Some("com.bank.app".into()),
+            &[bank],
+        );
+        assert!(from_ignored_app.is_none(), "an app the user ignores");
         assert!(from_password_manager.is_none());
     }
 
@@ -413,6 +445,7 @@ mod tests {
             },
             Some("Notes".into()),
             Some("com.apple.Notes".into()),
+            &[],
         )
         .unwrap();
         assert_eq!(clip.source_app.as_deref(), Some("Notes"));

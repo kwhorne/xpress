@@ -20,7 +20,7 @@ use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::capture::{CaptureFlags, SyncStatus};
 use crate::history_ui::{AiState, AiView, HistoryAction, HistoryPanel};
-use crate::settings::Settings;
+use crate::settings::{IgnoredApp, Settings};
 use crate::shortcuts::{self, Action};
 use crate::work::{self, Msg};
 use xpress_core::history::History;
@@ -128,6 +128,10 @@ pub struct XpressApp {
     paste_directly: bool,
     /// Sync the history through iCloud Drive.
     history_sync: bool,
+    /// Apps whose copies aren't recorded.
+    history_ignored: Vec<IgnoredApp>,
+    /// "Delete its clips" asks once more (the app's index in the list).
+    confirm_delete_app: Option<usize>,
     /// Whether the history records changes for syncing right now.
     journal_on: bool,
     sync_status: Arc<Mutex<SyncStatus>>,
@@ -299,6 +303,8 @@ impl XpressApp {
             ai_request: 0,
             paste_directly: false,
             history_sync: false,
+            history_ignored: Vec::new(),
+            confirm_delete_app: None,
             journal_on: false,
             sync_status,
             integrations,
@@ -361,6 +367,7 @@ impl XpressApp {
             history_days: self.history_days,
             paste_directly: self.paste_directly,
             history_sync: self.history_sync,
+            history_ignored: self.history_ignored.clone(),
             shortcut_clipboard: self.shortcuts[Action::Clipboard.index()].clone(),
             shortcut_show: self.shortcuts[Action::Show.index()].clone(),
             shortcut_history: self.shortcuts[Action::History.index()].clone(),
@@ -388,6 +395,7 @@ impl XpressApp {
         self.history_days = s.history_days;
         self.paste_directly = s.paste_directly;
         self.history_sync = s.history_sync;
+        self.history_ignored = s.history_ignored.clone();
         self.shortcuts = [
             s.shortcut_clipboard.clone(),
             s.shortcut_show.clone(),
@@ -586,6 +594,12 @@ impl XpressApp {
             .store(self.history_screenshots, Ordering::Relaxed);
         c.ocr.store(self.history_ocr, Ordering::Relaxed);
         c.keep_days.store(self.history_days, Ordering::Relaxed);
+        {
+            let mut ignored = c.ignored.lock().unwrap();
+            if *ignored != self.history_ignored {
+                *ignored = self.history_ignored.clone();
+            }
+        }
 
         let sync = self.history_sync && self.history_enabled && self.history.is_some();
         c.sync.store(sync, Ordering::Relaxed);
@@ -718,6 +732,9 @@ impl XpressApp {
                     });
                 }
             }
+            HistoryAction::IgnoreApp { name, bundle } => {
+                self.ignore_app(IgnoredApp { name, bundle })
+            }
             HistoryAction::SaveText(text) => {
                 let clip = xpress_core::history::NewClip::text(text)
                     .from_app(Some("Apple Intelligence".into()), None);
@@ -753,6 +770,117 @@ impl XpressApp {
             if self.paste_directly && crate::autopaste::allowed() {
                 crate::autopaste::paste_soon();
             }
+        }
+    }
+
+    /// Add an app to the ignore list (once).
+    fn ignore_app(&mut self, app: IgnoredApp) {
+        let known = self
+            .history_ignored
+            .iter()
+            .any(|i| i.matches(Some(&app.name), app.bundle.as_deref()));
+        if !known {
+            self.history_ignored.push(app);
+            self.sync_capture();
+        }
+    }
+
+    fn ignored_apps_settings(&mut self, ui: &mut egui::Ui) {
+        let Some(history) = self.history.clone() else {
+            return;
+        };
+        let sources = history.lock().unwrap().app_sources().unwrap_or_default();
+        let mut add = None;
+        setting_row(
+            ui,
+            "Ignore apps",
+            "Don't record what you copy in these apps — password managers are always left out",
+            |ui| {
+                ui.menu_button("Add app…", |ui| {
+                    let mut listed = false;
+                    for (name, bundle, count) in &sources {
+                        let ignored = self
+                            .history_ignored
+                            .iter()
+                            .any(|i| i.matches(Some(name), bundle.as_deref()));
+                        if !ignored {
+                            listed = true;
+                            if ui.button(format!("{name}  ({count})")).clicked() {
+                                add = Some(IgnoredApp {
+                                    name: name.clone(),
+                                    bundle: bundle.clone(),
+                                });
+                                ui.close();
+                            }
+                        }
+                    }
+                    if listed {
+                        ui.separator();
+                    }
+                    if ui.button("Choose from Applications…").clicked() {
+                        add = pick_app();
+                        ui.close();
+                    }
+                });
+            },
+        );
+        if let Some(app) = add {
+            self.ignore_app(app);
+        }
+        let mut remove = None;
+        let mut delete = None;
+        for (i, app) in self.history_ignored.iter().enumerate() {
+            let count = history
+                .lock()
+                .unwrap()
+                .count_from_app(&app.name, app.bundle.as_deref())
+                .unwrap_or(0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(&app.name).strong());
+                if let Some(bundle) = &app.bundle {
+                    ui.label(RichText::new(bundle).weak().small());
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if ui
+                        .small_button("×")
+                        .on_hover_text("Record it again")
+                        .clicked()
+                    {
+                        remove = Some(i);
+                    }
+                    if count > 0 {
+                        let label = if self.confirm_delete_app == Some(i) {
+                            "Click again to delete".to_string()
+                        } else {
+                            format!(
+                                "Delete its {count} clip{}",
+                                if count == 1 { "" } else { "s" }
+                            )
+                        };
+                        if ui.small_button(label).clicked() {
+                            if self.confirm_delete_app == Some(i) {
+                                delete = Some(i);
+                            } else {
+                                self.confirm_delete_app = Some(i);
+                            }
+                        }
+                    }
+                });
+            });
+        }
+        if let Some(i) = delete {
+            let app = &self.history_ignored[i];
+            let _ = history
+                .lock()
+                .unwrap()
+                .delete_from_app(&app.name, app.bundle.as_deref());
+            self.confirm_delete_app = None;
+            self.history_panel.dirty = true;
+        }
+        if let Some(i) = remove {
+            self.history_ignored.remove(i);
+            self.confirm_delete_app = None;
+            self.sync_capture();
         }
     }
 
@@ -1506,6 +1634,8 @@ impl XpressApp {
                     let (text, color) = sync_status_line(&status, now);
                     ui.label(RichText::new(text).small().color(color));
                 }
+                ui.separator();
+                self.ignored_apps_settings(ui);
                 ui.separator();
                 setting_row(ui, "Keep history", "Pinned clips are always kept", |ui| {
                     let current = HISTORY_DAYS
@@ -2375,6 +2505,31 @@ fn hide_app(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
 }
 
+/// Pick an app in /Applications to ignore.
+fn pick_app() -> Option<IgnoredApp> {
+    let path = rfd::FileDialog::new()
+        .set_directory("/Applications")
+        .add_filter("Apps", &["app"])
+        .pick_file()?;
+    let name = path.file_stem()?.to_string_lossy().into_owned();
+    Some(IgnoredApp {
+        name,
+        bundle: bundle_id(&path),
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn bundle_id(app: &Path) -> Option<String> {
+    use objc2_foundation::{NSBundle, NSString};
+    let bundle = NSBundle::bundleWithPath(&NSString::from_str(&app.to_string_lossy()))?;
+    bundle.bundleIdentifier().map(|id| id.to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn bundle_id(_app: &Path) -> Option<String> {
+    None
+}
+
 /// "Synced 2 min ago with MacBook Air", or what's wrong.
 fn sync_status_line(status: &SyncStatus, now: i64) -> (String, Color32) {
     if let Some(error) = &status.error {
@@ -3157,6 +3312,62 @@ mod tests {
             h.state().shortcuts[Action::Show.index()],
             Action::Show.default_shortcut()
         );
+    }
+
+    #[test]
+    fn ignoring_an_app_from_a_clip_and_in_preferences() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut h = enabled_history(dir.path());
+            let safari = h
+                .state()
+                .history_panel
+                .results
+                .iter()
+                .find(|c| c.source_app.as_deref() == Some("Safari"))
+                .unwrap()
+                .id;
+            assert!(!h
+                .state()
+                .capture
+                .ignored
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|i| i.name == "Safari"));
+            let action = HistoryAction::IgnoreApp {
+                name: "Safari".into(),
+                bundle: None,
+            };
+            h.state_mut()
+                .handle_history_action(action.clone(), &egui::Context::default());
+            h.state_mut()
+                .handle_history_action(action, &egui::Context::default());
+            assert_eq!(h.state().history_ignored.len(), 1, "once");
+            assert_eq!(h.state().capture.ignored.lock().unwrap()[0].name, "Safari");
+
+            // Preferences list it, with its clips to delete (asking twice).
+            h.state_mut().tab = Tab::Settings;
+            h.set_size(egui::vec2(960.0, 2400.0));
+            h.run();
+            assert!(h.query_by_label("Ignore apps").is_some());
+            h.get_by_label("Delete its 1 clip").click();
+            h.run();
+            h.get_by_label("Click again to delete").click();
+            h.run();
+            let h_ref = h.state().history.as_ref().unwrap().clone();
+            assert!(h_ref.lock().unwrap().get(safari).unwrap().is_none());
+            h.state_mut().persist_settings(true);
+        }
+        let mut h = enabled_history(dir.path());
+        assert_eq!(h.state().history_ignored[0].name, "Safari");
+        h.state_mut().tab = Tab::Settings;
+        h.set_size(egui::vec2(960.0, 2400.0));
+        h.run();
+        h.get_by_label("×").click();
+        h.run();
+        assert!(h.state().history_ignored.is_empty());
+        assert!(h.state().capture.ignored.lock().unwrap().is_empty());
     }
 
     #[test]

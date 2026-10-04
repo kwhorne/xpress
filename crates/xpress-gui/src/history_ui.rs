@@ -68,6 +68,11 @@ pub enum HistoryAction {
     },
     /// Add text to the history (e.g. an Apple Intelligence result).
     SaveText(String),
+    /// Stop recording copies from this app.
+    IgnoreApp {
+        name: String,
+        bundle: Option<String>,
+    },
 }
 
 /// An Apple Intelligence request and its result, shown in a dialog.
@@ -1019,6 +1024,18 @@ impl HistoryPanel {
             .clicked()
         {
             action = Some(HistoryAction::TogglePin(clip.id));
+        }
+        if let (Some(app), false) = (&clip.source_app, clip.kind == ClipKind::Screenshot) {
+            if ui
+                .button(format!("Don't record from {app}"))
+                .on_hover_text("Add it to Preferences → Ignore apps")
+                .clicked()
+            {
+                action = Some(HistoryAction::IgnoreApp {
+                    name: app.clone(),
+                    bundle: clip.source_bundle.clone(),
+                });
+            }
         }
         ui.menu_button("Categories", |ui| {
             for category in &self.categories {

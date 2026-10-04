@@ -69,6 +69,7 @@ line, and *kind · app · when · size*. Copying a clip again moves it to the to
 | Show items | For a multi-clip: list what's in it (← Back returns) |
 | Show in Finder | Reveal a copied file, or the stored image |
 | Pin / Unpin | Pinned clips are never removed automatically (also ☆ on the row) |
+| Don't record from … | Add the clip's app to *Ignore apps* |
 | Categories ▸ | Tick the categories it belongs to, or make a new one |
 | Delete | Remove it from the history |
 
@@ -246,7 +247,20 @@ count as the same when their pixels are.
   [nspasteboard.org](http://nspasteboard.org) markers, and 1Password's own).
 - Anything copied while **Passwords, Keychain Access, 1Password, Bitwarden,
   KeePassXC or Dashlane** is in front.
+- Anything copied in an app on your own **Ignore apps** list (see below).
 - Text over 5 MB.
+
+### Ignore apps
+
+To keep an app out of the history — a banking app, a work tool — add it in
+**Preferences → Clipboard history → Ignore apps**: *Add app…* lists the apps
+you've copied from, or *Choose from Applications…* picks any app. Or
+right-click one of its clips → **Don't record from …**.
+
+From then on nothing you copy in that app is recorded. Clips it already left
+stay until you remove them: *Delete its N clips* next to the app (click twice;
+with sync on, they're deleted on your other Macs too). **×** takes the app off
+the list. Apps are matched by their bundle id, so renaming doesn't matter.
 
 ## Text in images (OCR)
 
@@ -292,6 +306,7 @@ All in **Preferences → Clipboard history**:
 | Find text in images | on | Recognise words in images (macOS) |
 | Paste directly | off | Paste the chosen clip into the app you were using (needs Accessibility permission) |
 | Sync with iCloud | off | Share the history between your Macs through iCloud Drive |
+| Ignore apps | none | Apps whose copies are never recorded |
 | Keep history | 1 month | How long unpinned clips are kept |
 | Clear… | | Delete all unpinned clips (and multi-clips that aren't pinned) |
 
