@@ -21,11 +21,12 @@ use xpress_core::result::OptimiseOptions;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use crate::capture::CaptureFlags;
-use crate::history_ui::{HistoryAction, HistoryPanel};
+use crate::capture::{CaptureFlags, SyncStatus};
+use crate::history_ui::{AiState, AiView, HistoryAction, HistoryPanel};
 use crate::settings::Settings;
 use crate::work::{self, Msg};
 use xpress_core::history::{ClipKind, History};
+use xpress_core::intelligence::Status as AiStatus;
 
 // Palette matching elyra-conductor (Tokyo Night).
 const BG: Color32 = Color32::from_rgb(0x16, 0x16, 0x1e);
@@ -121,8 +122,17 @@ pub struct XpressApp {
     last_copied: Option<i64>,
     /// Every copy goes into one multi-clip.
     collecting: bool,
+    /// Apple Intelligence, once checked (in the background at launch).
+    ai_status: Arc<Mutex<Option<AiStatus>>>,
+    /// The latest Apple Intelligence request (older answers are dropped).
+    ai_request: u64,
     /// Press ⌘V in the previous app after choosing a clip.
     paste_directly: bool,
+    /// Sync the history through iCloud Drive.
+    history_sync: bool,
+    /// Whether the history records changes for syncing right now.
+    journal_on: bool,
+    sync_status: Arc<Mutex<SyncStatus>>,
     /// Platform side (tray, hotkeys, clipboard, recording) is set up.
     integrations: bool,
 
@@ -217,6 +227,27 @@ impl XpressApp {
             }
         });
         let capture = Arc::new(CaptureFlags::default());
+        let ai_status = Arc::new(Mutex::new(None));
+        let sync_status = Arc::new(Mutex::new(SyncStatus::default()));
+        if let (true, Some(history)) = (integrations, &history) {
+            let (tx, ctx) = (tx.clone(), ctx.clone());
+            crate::capture::start_sync(
+                history.clone(),
+                capture.clone(),
+                sync_status.clone(),
+                move || {
+                    let _ = tx.send(Msg::HistoryChanged);
+                    ctx.request_repaint();
+                },
+            );
+        }
+        if integrations {
+            let (slot, ctx) = (ai_status.clone(), ctx.clone());
+            std::thread::spawn(move || {
+                *slot.lock().unwrap() = Some(xpress_core::intelligence::status());
+                ctx.request_repaint();
+            });
+        }
         if let (true, Some(history)) = (integrations, &history) {
             let (tx, ctx) = (tx.clone(), ctx.clone());
             crate::capture::start(history.clone(), capture.clone(), move || {
@@ -255,7 +286,12 @@ impl XpressApp {
             confirm_clear: false,
             last_copied: None,
             collecting: false,
+            ai_status,
+            ai_request: 0,
             paste_directly: false,
+            history_sync: false,
+            journal_on: false,
+            sync_status,
             integrations,
             settings_path,
             saved_settings: settings.clone(),
@@ -312,6 +348,7 @@ impl XpressApp {
             history_ocr: self.history_ocr,
             history_days: self.history_days,
             paste_directly: self.paste_directly,
+            history_sync: self.history_sync,
         }
     }
 
@@ -335,10 +372,11 @@ impl XpressApp {
         self.history_ocr = s.history_ocr;
         self.history_days = s.history_days;
         self.paste_directly = s.paste_directly;
+        self.history_sync = s.history_sync;
     }
 
     /// Tell the recording thread what the settings say.
-    fn sync_capture(&self) {
+    fn sync_capture(&mut self) {
         let c = &self.capture;
         c.enabled.store(
             self.history_enabled && self.history.is_some(),
@@ -348,6 +386,19 @@ impl XpressApp {
             .store(self.history_screenshots, Ordering::Relaxed);
         c.ocr.store(self.history_ocr, Ordering::Relaxed);
         c.keep_days.store(self.history_days, Ordering::Relaxed);
+
+        let sync = self.history_sync && self.history_enabled && self.history.is_some();
+        c.sync.store(sync, Ordering::Relaxed);
+        if sync != self.journal_on {
+            if let Some(history) = &self.history {
+                history.lock().unwrap().set_journal(sync);
+            }
+            if sync {
+                // Changes made while it was off weren't recorded.
+                c.sync_fresh.store(true, Ordering::Relaxed);
+            }
+            self.journal_on = sync;
+        }
     }
 
     /// Show the window on History, ready to type (the ⌃⌘V hotkey).
@@ -442,6 +493,33 @@ impl XpressApp {
             HistoryAction::DeleteCategory(id) => {
                 let _ = history.lock().unwrap().delete_category(id);
                 self.history_panel.editor = None;
+            }
+            HistoryAction::Intelligence { id, task } => {
+                let clip = history.lock().unwrap().get(id).ok().flatten();
+                let Some((clip, text)) =
+                    clip.and_then(|c| crate::history_ui::ai_text(&c).map(|t| (c, t)))
+                else {
+                    return;
+                };
+                self.ai_request += 1;
+                self.history_panel.ai = Some(AiView {
+                    task,
+                    source: crate::history_ui::title(&clip),
+                    state: AiState::Working,
+                });
+                if self.integrations {
+                    let (request, tx, ctx) = (self.ai_request, self.tx.clone(), ctx.clone());
+                    std::thread::spawn(move || {
+                        let result = xpress_core::intelligence::run(task, &text);
+                        let _ = tx.send(Msg::Ai { request, result });
+                        ctx.request_repaint();
+                    });
+                }
+            }
+            HistoryAction::SaveText(text) => {
+                let clip = xpress_core::history::NewClip::text(text)
+                    .from_app(Some("Apple Intelligence".into()), None);
+                let _ = history.lock().unwrap().add(clip);
             }
         }
     }
@@ -637,6 +715,17 @@ impl XpressApp {
                 Msg::Done(done) => done,
                 Msg::HistoryChanged => {
                     self.history_panel.dirty = true;
+                    continue;
+                }
+                Msg::Ai { request, result } => {
+                    if let (true, Some(view)) =
+                        (request == self.ai_request, &mut self.history_panel.ai)
+                    {
+                        view.state = match result {
+                            Ok(text) => AiState::Done(text),
+                            Err(e) => AiState::Failed(e),
+                        };
+                    }
                     continue;
                 }
             };
@@ -1117,6 +1206,7 @@ impl XpressApp {
         if self.history_panel.dirty {
             self.history_panel.refresh(&history.lock().unwrap());
         }
+        self.history_panel.ai_status = *self.ai_status.lock().unwrap();
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
@@ -1195,6 +1285,24 @@ impl XpressApp {
                     }
                     ui.separator();
                 }
+                setting_row(
+                    ui,
+                    "Sync with iCloud",
+                    "Share the history between your Macs through iCloud Drive",
+                    |ui| {
+                        toggle(ui, &mut self.history_sync);
+                    },
+                );
+                if self.history_sync {
+                    let status = self.sync_status.lock().unwrap().clone();
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    let (text, color) = sync_status_line(&status, now);
+                    ui.label(RichText::new(text).small().color(color));
+                }
+                ui.separator();
                 setting_row(ui, "Keep history", "Pinned clips are always kept", |ui| {
                     let current = HISTORY_DAYS
                         .iter()
@@ -2060,6 +2168,26 @@ fn hide_app(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
 }
 
+/// "Synced 2 min ago with MacBook Air", or what's wrong.
+fn sync_status_line(status: &SyncStatus, now: i64) -> (String, Color32) {
+    if let Some(error) = &status.error {
+        return (error.clone(), ERR_RED);
+    }
+    let Some(last) = status.last else {
+        return ("Syncing…".into(), TEXT_DIM);
+    };
+    let mut text = format!("Synced {}", crate::history_ui::ago(now, last));
+    match status.devices.as_slice() {
+        [] => text.push_str(" — no other Mac yet"),
+        [one] => text.push_str(&format!(" with {one}")),
+        many => text.push_str(&format!(" with {} Macs", many.len())),
+    }
+    if status.waiting > 0 {
+        text.push_str(&format!(" · {} changes waiting for iCloud", status.waiting));
+    }
+    (text, TEXT_DIM)
+}
+
 /// "Invoices" exists already, rather than SQLite's wording.
 fn category_error(e: &dyn std::fmt::Display, name: &str) -> String {
     let text = e.to_string();
@@ -2662,6 +2790,102 @@ mod tests {
         assert!(h
             .query_by_label_contains("already a category called")
             .is_some());
+    }
+
+    #[test]
+    fn apple_intelligence_result_can_be_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = enabled_history(dir.path());
+        *h.state().ai_status.lock().unwrap() = Some(AiStatus::Available);
+        let invoice = h
+            .state()
+            .history_panel
+            .results
+            .iter()
+            .find(|c| c.text.starts_with("Invoice"))
+            .unwrap()
+            .id;
+        h.state_mut().handle_history_action(
+            HistoryAction::Intelligence {
+                id: invoice,
+                task: xpress_core::intelligence::Task::Professional,
+            },
+            &egui::Context::default(),
+        );
+        // The spinner keeps repainting while it works.
+        h.run_steps(3);
+        assert!(h.query_by_label("Rewritten").is_some());
+        assert!(h.query_by_label("Make professional…").is_some());
+
+        // An answer to an older request is ignored; the current one is shown.
+        let request = h.state().ai_request;
+        let tx = h.state().tx.clone();
+        tx.send(Msg::Ai {
+            request: request - 1,
+            result: Ok("stale".into()),
+        })
+        .unwrap();
+        tx.send(Msg::Ai {
+            request,
+            result: Ok("Invoice 4711 has been paid.".into()),
+        })
+        .unwrap();
+        h.state_mut().drain_results();
+        h.run();
+        assert!(h.query_by_label("Invoice 4711 has been paid.").is_some());
+        h.get_by_label("Save to history").click();
+        h.run();
+        h.run();
+        assert!(h.state().history_panel.ai.is_none());
+        let first = &h.state().history_panel.results[0];
+        assert_eq!(first.text, "Invoice 4711 has been paid.");
+        assert_eq!(first.source_app.as_deref(), Some("Apple Intelligence"));
+    }
+
+    #[test]
+    fn turning_sync_on_records_changes_and_starts_fresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = enabled_history(dir.path());
+        assert!(!h
+            .state()
+            .history
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .journal());
+        h.state_mut().history_sync = true;
+        h.state_mut().sync_capture();
+        let app = h.state();
+        assert!(app.history.as_ref().unwrap().lock().unwrap().journal());
+        assert!(app.capture.sync.load(Ordering::Relaxed));
+        assert!(app.capture.sync_fresh.load(Ordering::Relaxed));
+        h.state_mut().history_sync = false;
+        h.state_mut().sync_capture();
+        assert!(!h.state().capture.sync.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn sync_status_lines() {
+        let min = 60_000;
+        let mut s = SyncStatus::default();
+        assert_eq!(sync_status_line(&s, 0).0, "Syncing…");
+        s.last = Some(0);
+        assert_eq!(
+            sync_status_line(&s, 2 * min).0,
+            "Synced 2 min ago — no other Mac yet"
+        );
+        s.devices = vec!["MacBook Air".into()];
+        s.waiting = 3;
+        assert_eq!(
+            sync_status_line(&s, 0).0,
+            "Synced just now with MacBook Air · 3 changes waiting for iCloud"
+        );
+        s.error = Some("iCloud Drive is off".into());
+        assert_eq!(
+            sync_status_line(&s, 0),
+            ("iCloud Drive is off".into(), ERR_RED)
+        );
     }
 
     #[test]

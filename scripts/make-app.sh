@@ -83,6 +83,14 @@ if [[ -n "$BIN_DIR" && -d "$BIN_DIR" ]]; then
   chmod +x "$APP/Contents/Resources/bin/"* 2>/dev/null || true
 fi
 
+# The Apple Intelligence helper (macOS 26+; skipped without a suitable SDK).
+echo "==> Apple Intelligence helper"
+"$ROOT/scripts/build-xpress-ai.sh"
+if [[ -x "$ROOT/target/xpress-ai/xpress-ai" ]]; then
+  mkdir -p "$APP/Contents/Resources/bin"
+  cp -f "$ROOT/target/xpress-ai/xpress-ai" "$APP/Contents/Resources/bin/xpress-ai"
+fi
+
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

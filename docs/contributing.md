@@ -44,7 +44,12 @@ logic there (and unit-tested) and keep the binaries thin.
   `*hdr*` names, a bigger output for `*grow*` names) to test video, audio and
   placement logic without real encodes.
 - **GUI**: `egui_kittest` drives the app headlessly (`crates/xpress-gui`,
-  `app::tests`) — navigation, crop, conversion menus.
+  `app::tests`) — navigation, crop, conversion menus, history.
+- **Sync**: `sync::tests` simulates several Macs sharing one folder.
+- **Apple Intelligence**: `tests/intelligence.rs` runs the real on-device
+  model when it's available — build the helper first with
+  `scripts/build-xpress-ai.sh` (needs Xcode/Command Line Tools 26+); it skips
+  otherwise.
 
 Test real behaviour with real files when changing codecs: e.g. compare sizes at
 equal SSIMULACRA2 (`xpress_core::quality::score`) before and after.

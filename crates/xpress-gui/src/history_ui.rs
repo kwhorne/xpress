@@ -8,6 +8,7 @@ use eframe::egui;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Align, Color32, FontId, Key, Layout, Modifiers, Rect, RichText, Sense, Vec2};
 use xpress_core::history::{parse_color, Category, Clip, ClipKind, History, Query, Rule};
+use xpress_core::intelligence::{Status as AiStatus, Task};
 
 const ROW_HEIGHT: f32 = 62.0;
 const PREVIEW: f32 = 46.0;
@@ -60,6 +61,39 @@ pub enum HistoryAction {
         rule: Rule,
     },
     DeleteCategory(i64),
+    /// Run an Apple Intelligence task on a clip's text.
+    Intelligence {
+        id: i64,
+        task: Task,
+    },
+    /// Add text to the history (e.g. an Apple Intelligence result).
+    SaveText(String),
+}
+
+/// An Apple Intelligence request and its result, shown in a dialog.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AiView {
+    pub task: Task,
+    /// What it was asked about (the clip's title).
+    pub source: String,
+    pub state: AiState,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum AiState {
+    Working,
+    Done(String),
+    Failed(String),
+}
+
+/// The text Apple Intelligence can work on for a clip, if any.
+pub fn ai_text(clip: &Clip) -> Option<String> {
+    let text = match clip.kind {
+        ClipKind::Text | ClipKind::Code | ClipKind::Multi => clip.text.as_str(),
+        ClipKind::Image | ClipKind::Screenshot => clip.ocr.as_str(),
+        _ => "",
+    };
+    (!text.trim().is_empty()).then(|| text.to_string())
 }
 
 /// The "New category" / "Edit category" dialog.
@@ -122,6 +156,9 @@ pub struct HistoryPanel {
     /// Items of the multi-clips in `results`.
     pub multi_items: HashMap<i64, Vec<Clip>>,
     pub editor: Option<CategoryEditor>,
+    /// Whether Apple Intelligence can be used (kept up to date by the app).
+    pub ai_status: Option<AiStatus>,
+    pub ai: Option<AiView>,
     /// Re-run the query on the next frame.
     pub dirty: bool,
     /// Put the cursor in the search field on the next frame.
@@ -327,7 +364,7 @@ impl HistoryPanel {
                 number,
             )
         });
-        let editing = self.editor.is_some();
+        let editing = self.editor.is_some() || self.ai.is_some();
         let mut scroll_to_selected = false;
         if !editing {
             if n > 0 && down {
@@ -373,6 +410,9 @@ impl HistoryPanel {
         }
 
         if let Some(a) = self.category_editor(ui.ctx()) {
+            action = Some(a);
+        }
+        if let Some(a) = self.ai_dialog(ui.ctx()) {
             action = Some(a);
         }
 
@@ -754,6 +794,70 @@ impl HistoryPanel {
         action
     }
 
+    fn ai_dialog(&mut self, ctx: &egui::Context) -> Option<HistoryAction> {
+        let view = self.ai.clone()?;
+        let mut action = None;
+        let mut close = false;
+        let modal = egui::Modal::new(egui::Id::new("ai_result")).show(ctx, |ui| {
+            ui.set_width(460.0);
+            ui.heading(view.task.result_title());
+            ui.label(
+                RichText::new(format!("Apple Intelligence · {}", view.source))
+                    .weak()
+                    .small(),
+            );
+            ui.add_space(10.0);
+            match &view.state {
+                AiState::Working => {
+                    ui.horizontal(|ui| {
+                        ui.add(egui::Spinner::new());
+                        ui.label(format!("{}…", view.task.label()));
+                    });
+                    ui.add_space(10.0);
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                }
+                AiState::Done(text) => {
+                    egui::ScrollArea::vertical()
+                        .max_height(320.0)
+                        .show(ui, |ui| {
+                            ui.add(egui::Label::new(text.as_str()).selectable(true).wrap());
+                        });
+                    ui.add_space(12.0);
+                    ui.horizontal(|ui| {
+                        if ui.button("Copy").clicked() {
+                            action = Some(HistoryAction::CopyText(text.clone()));
+                            close = true;
+                        }
+                        if ui
+                            .button("Save to history")
+                            .on_hover_text("Keep it as a new clip")
+                            .clicked()
+                        {
+                            action = Some(HistoryAction::SaveText(text.clone()));
+                            close = true;
+                        }
+                        if ui.button("Close").clicked() {
+                            close = true;
+                        }
+                    });
+                }
+                AiState::Failed(error) => {
+                    ui.colored_label(crate::app::ERR_RED, error);
+                    ui.add_space(10.0);
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                }
+            }
+        });
+        if close || modal.should_close() {
+            self.ai = None;
+        }
+        action
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn row(
         &mut self,
@@ -876,6 +980,26 @@ impl HistoryPanel {
         }
         if !clip.ocr.is_empty() && ui.button("Copy text in image").clicked() {
             action = Some(HistoryAction::CopyText(clip.ocr.clone()));
+        }
+        if ai_text(clip).is_some() {
+            match self.ai_status {
+                Some(AiStatus::Available) => {
+                    ui.menu_button("Apple Intelligence", |ui| {
+                        for task in Task::ALL {
+                            if ui.button(task.label()).clicked() {
+                                action = Some(HistoryAction::Intelligence { id: clip.id, task });
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+                // Not on this macOS: don't mention it.
+                None | Some(AiStatus::Missing) => {}
+                Some(status) => {
+                    ui.add_enabled(false, egui::Button::new("Apple Intelligence"))
+                        .on_disabled_hover_text(status.explain().unwrap_or_default());
+                }
+            }
         }
         if clip.kind == ClipKind::Link && ui.button("Open link").clicked() {
             action = Some(HistoryAction::Open(clip.text.trim().to_string()));
@@ -1207,6 +1331,20 @@ mod tests {
             })
             .collect();
         p
+    }
+
+    #[test]
+    fn what_apple_intelligence_works_on() {
+        assert_eq!(
+            ai_text(&clip(ClipKind::Text, "hello")).as_deref(),
+            Some("hello")
+        );
+        assert_eq!(ai_text(&clip(ClipKind::Text, "  ")), None);
+        assert_eq!(ai_text(&clip(ClipKind::Link, "https://x.y")), None);
+        let mut shot = clip(ClipKind::Screenshot, "Screenshot.png");
+        assert_eq!(ai_text(&shot), None, "the file name isn't the content");
+        shot.ocr = "Invoice 4711".into();
+        assert_eq!(ai_text(&shot).as_deref(), Some("Invoice 4711"));
     }
 
     #[test]

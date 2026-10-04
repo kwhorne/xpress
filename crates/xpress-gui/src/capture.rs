@@ -32,6 +32,75 @@ pub struct CaptureFlags {
     pub collection: AtomicI64,
     /// The pasteboard change xpress made itself (not to be recorded).
     pub own_change: AtomicIsize,
+    /// Sync through iCloud Drive.
+    pub sync: AtomicBool,
+    /// Start the next sync from a fresh snapshot (syncing was just turned on).
+    pub sync_fresh: AtomicBool,
+}
+
+/// How syncing is going, for Preferences.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SyncStatus {
+    /// Unix milliseconds of the last successful round.
+    pub last: Option<i64>,
+    pub devices: Vec<String>,
+    /// Changes waiting for images still on their way.
+    pub waiting: usize,
+    pub error: Option<String>,
+}
+
+const SYNC_EVERY: Duration = Duration::from_secs(10);
+
+/// Sync the history through iCloud Drive while `flags.sync` is on.
+pub fn start_sync(
+    history: Arc<Mutex<History>>,
+    flags: Arc<CaptureFlags>,
+    status: Arc<Mutex<SyncStatus>>,
+    changed: impl Fn() + Send + 'static,
+) {
+    std::thread::Builder::new()
+        .name("xpress-sync".into())
+        .spawn(move || {
+            let name = xpress_core::sync::device_name();
+            loop {
+                if flags.sync.load(Ordering::Relaxed) {
+                    let fresh = flags.sync_fresh.swap(false, Ordering::Relaxed);
+                    let result = match xpress_core::sync::default_root() {
+                        Some(root) => xpress_core::sync::sync_with(
+                            &history,
+                            &root,
+                            &name,
+                            flags.retention(),
+                            fresh,
+                        )
+                        .map_err(|e| e.to_string()),
+                        None => Err("iCloud Drive is off — turn it on in System Settings → \
+                                     Apple Account → iCloud."
+                            .into()),
+                    };
+                    let mut s = status.lock().unwrap();
+                    match result {
+                        Ok(report) => {
+                            s.last = Some(xpress_core::history::now_ms());
+                            s.devices = report.devices;
+                            s.waiting = report.waiting;
+                            s.error = None;
+                            if report.received > 0 {
+                                changed();
+                            }
+                        }
+                        Err(e) => {
+                            if fresh {
+                                flags.sync_fresh.store(true, Ordering::Relaxed);
+                            }
+                            s.error = Some(e);
+                        }
+                    }
+                }
+                std::thread::sleep(SYNC_EVERY);
+            }
+        })
+        .expect("start the sync thread");
 }
 
 impl CaptureFlags {

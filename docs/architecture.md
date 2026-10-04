@@ -31,6 +31,8 @@ Both binaries are thin: everything testable lives in `xpress-core`.
 | `web` | Responsive image sets and the `<picture>` markup. |
 | `history` | Clipboard/screenshot history: SQLite + FTS5 search, kind detection (text/link/code/colour), image storage and previews, retention. |
 | `ocr` | Text in images via Apple Vision (macOS). |
+| `intelligence` | Apple Intelligence tasks (summarise, rewrite, proofread, translate), run through the bundled Swift helper `xpress-ai` (`tools/xpress-ai`). |
+| `sync` | History sync through a shared folder (iCloud Drive): per-Mac append-only JSON-line logs, image blobs, tombstones, snapshots. |
 | `scale`, `crop` | Downscale and size/ratio/long-edge/rect crops (images in-process, video via ffmpeg filters). |
 | `effects` | Watermark overlay (ffmpeg). |
 | `pipeline` | Parse and run the step DSL. |

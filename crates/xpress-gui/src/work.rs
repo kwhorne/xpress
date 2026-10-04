@@ -20,6 +20,11 @@ pub enum Msg {
     Done(Box<Done>),
     /// The clipboard history changed (something was copied or captured).
     HistoryChanged,
+    /// An Apple Intelligence answer (for the request with this number).
+    Ai {
+        request: u64,
+        result: Result<String, String>,
+    },
 }
 
 /// Optimise a single file on a background thread. With a `quality` target,

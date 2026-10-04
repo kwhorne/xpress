@@ -63,6 +63,7 @@ line, and *kind · app · when · size*. Copying a clip again moves it to the to
 |------|------|
 | Copy | Put it on the clipboard |
 | Copy text in image | Copy the words recognised in a screenshot or image |
+| Apple Intelligence ▸ | Summarise, proofread or rewrite the text (see [below](#apple-intelligence)) |
 | Open link | Open a link clip in your browser |
 | Show items | For a multi-clip: list what's in it (← Back returns) |
 | Show in Finder | Reveal a copied file, or the stored image |
@@ -130,6 +131,59 @@ macOS only allows this with your permission. The first time you switch it on,
 macOS asks; allow **xpress** under **System Settings → Privacy & Security →
 Accessibility**. Until then, Preferences shows a reminder with an *Open
 Settings* button, and xpress only copies.
+
+## Apple Intelligence
+
+On a Mac with **Apple Intelligence** (macOS 26 or later, Apple silicon, turned
+on in System Settings → Apple Intelligence & Siri), right-click a text clip — or
+a screenshot or image with recognised text, or a multi-clip — and choose
+**Apple Intelligence**:
+
+| | |
+|---|---|
+| **Summarise** | The key points in a few sentences or bullets |
+| **Proofread** | Fix spelling, grammar and punctuation, nothing else |
+| **Make shorter** | Say the same in fewer words |
+| **Make professional** | Clear and polite, for work |
+| **Make friendly** | Warm and relaxed |
+| **Translate to English** | Into natural English |
+
+The text keeps its language (except when translating). The result appears in a
+window: **Copy** it, **Save to history** to keep it as a new clip (from *Apple
+Intelligence*), or close it.
+
+It runs on Apple's **on-device** model — nothing is sent anywhere — and takes a
+second or two. Very long text is cut to about 8,000 characters. When Apple
+Intelligence is off or still getting ready, the menu item is greyed out and
+says why; on older macOS versions it isn't shown.
+
+## Sync between your Macs
+
+Turn on **Sync with iCloud** in Preferences → Clipboard history on each Mac. The
+history then follows you: what you copy on one Mac shows up on the others,
+usually within a minute (xpress checks every 10 seconds; iCloud decides how fast
+files travel) — clips, images and screenshots, multi-clips, pins and
+categories. Deleting a clip (or *Clear…*) removes it everywhere.
+
+- It goes through **iCloud Drive**, in a folder called `xpress`, so iCloud
+  Drive must be on (System Settings → Apple Account → iCloud). Preferences shows
+  when it last synced and with which Macs.
+- Each Mac writes its own changes there and reads the others'; nothing is
+  overwritten, and the same text copied on two Macs is one clip.
+- Images arrive once iCloud has copied them; until then Preferences shows
+  “changes waiting for iCloud”.
+- How long clips are kept is set **per Mac** (*Keep history*): one Mac can keep
+  a year while another keeps a week. Old clips from other Macs aren't brought in
+  only to be removed again.
+- Turning sync on uploads this Mac's history once; turning it off stops sharing
+  (the clips stay). To stop syncing everywhere, turn it off on every Mac, then
+  delete the `xpress` folder in iCloud Drive.
+
+**Privacy:** the folder holds your clips as files in your iCloud Drive. With
+**Advanced Data Protection** on (System Settings → Apple Account → iCloud) they
+are end-to-end encrypted; otherwise Apple's standard iCloud protection applies.
+Passwords and other private clipboard content are never recorded, so never
+synced.
 
 ## What's recorded, and what isn't
 
@@ -200,6 +254,7 @@ All in **Preferences → Clipboard history**:
 | Include screenshots | on | Also record new screenshots |
 | Find text in images | on | Recognise words in images (macOS) |
 | Paste directly | off | Paste the chosen clip into the app you were using (needs Accessibility permission) |
+| Sync with iCloud | off | Share the history between your Macs through iCloud Drive |
 | Keep history | 1 month | How long unpinned clips are kept |
 | Clear… | | Delete all unpinned clips (and multi-clips that aren't pinned) |
 
@@ -207,4 +262,5 @@ All in **Preferences → Clipboard history**:
 
 Everything above is for **macOS**. On Linux the app records copied **text**
 only, without the source app; there's no text recognition, a multi-clip is
-pasted as text, and *Paste directly* isn't available.
+pasted as text, and *Paste directly*, Apple Intelligence and iCloud sync
+aren't available.
