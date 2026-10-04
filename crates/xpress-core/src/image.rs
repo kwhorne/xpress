@@ -79,6 +79,11 @@ fn open_decoder(path: &Path) -> Result<impl ImageDecoder, OptimiseError> {
 /// with its ICC profile and EXIF block. Refuses animated images rather than
 /// silently dropping every frame but the first.
 pub fn load(path: &Path) -> Result<(DynamicImage, Meta), OptimiseError> {
+    if needs_external_decode(path) {
+        let tmp = TempDir::new()?;
+        let decoded = readable_source(path, &tmp)?;
+        return load(&decoded);
+    }
     if is_animated(path) {
         return Err(OptimiseError::Other(format!(
             "{} is animated; this operation would keep only the first frame",
@@ -294,8 +299,26 @@ fn save_with_meta(img: &DynamicImage, out: &Path, meta: &Meta) -> Result<(), Opt
             std::fs::write(out, buf)?;
             Ok(())
         }
+        Some("tiff") | Some("tif") => {
+            let mut buf = std::io::Cursor::new(Vec::new());
+            let mut enc = image::codecs::tiff::TiffEncoder::new(&mut buf);
+            apply_meta(&mut enc, meta);
+            img.write_with_encoder(enc).map_err(other)?;
+            std::fs::write(out, buf.into_inner())?;
+            Ok(())
+        }
+        Some("gif") => write_gif(img, out),
         _ => img.save(out).map_err(other),
     }
+}
+
+/// A still GIF (256 colours, 1-bit transparency).
+fn write_gif(img: &DynamicImage, out: &Path) -> Result<(), OptimiseError> {
+    let f = BufWriter::new(std::fs::File::create(out)?);
+    // Speed 10 (of 1-30): good palettes without NeuQuant's slowest setting.
+    let mut enc = image::codecs::gif::GifEncoder::new_with_speed(f, 10);
+    enc.encode_frame(image::Frame::new(img.to_rgba8()))
+        .map_err(other)
 }
 
 /// Lossless PNG with ICC, EXIF and XMP.
@@ -916,6 +939,9 @@ pub enum ImageFormat {
     Jxl,
     Png,
     Jpeg,
+    Gif,
+    Tiff,
+    Bmp,
 }
 
 impl ImageFormat {
@@ -928,6 +954,9 @@ impl ImageFormat {
             "jxl" => Some(ImageFormat::Jxl),
             "png" => Some(ImageFormat::Png),
             "jpeg" | "jpg" => Some(ImageFormat::Jpeg),
+            "gif" => Some(ImageFormat::Gif),
+            "tiff" | "tif" => Some(ImageFormat::Tiff),
+            "bmp" => Some(ImageFormat::Bmp),
             _ => None,
         }
     }
@@ -940,14 +969,102 @@ impl ImageFormat {
             ImageFormat::Jxl => "jxl",
             ImageFormat::Png => "png",
             ImageFormat::Jpeg => "jpg",
+            ImageFormat::Gif => "gif",
+            ImageFormat::Tiff => "tiff",
+            ImageFormat::Bmp => "bmp",
         }
+    }
+
+    /// The format a file's extension says it is, if it's one we can write.
+    pub fn of(path: &Path) -> Option<ImageFormat> {
+        ImageFormat::from_str(&extension_lower(path)?)
+    }
+
+    /// Short display name, e.g. "JPEG".
+    pub fn label(&self) -> &'static str {
+        match self {
+            ImageFormat::Webp => "WebP",
+            ImageFormat::Avif => "AVIF",
+            ImageFormat::Heic => "HEIC",
+            ImageFormat::Jxl => "JPEG XL",
+            ImageFormat::Png => "PNG",
+            ImageFormat::Jpeg => "JPEG",
+            ImageFormat::Gif => "GIF",
+            ImageFormat::Tiff => "TIFF",
+            ImageFormat::Bmp => "BMP",
+        }
+    }
+
+    /// One line on what the format is good for (shown in the app).
+    pub fn description(&self) -> &'static str {
+        match self {
+            ImageFormat::Webp => "Small, transparency, works in all browsers",
+            ImageFormat::Avif => "Smallest, modern browsers and apps",
+            ImageFormat::Heic => "Apple Photos format, small",
+            ImageFormat::Jxl => "Next-gen, limited support",
+            ImageFormat::Png => "Lossless, transparency",
+            ImageFormat::Jpeg => "Photos, opens everywhere, no transparency",
+            ImageFormat::Gif => "256 colours, opens everywhere",
+            ImageFormat::Tiff => "Lossless, print and archiving",
+            ImageFormat::Bmp => "Uncompressed, legacy apps",
+        }
+    }
+
+    /// Whether this format keeps an alpha channel.
+    pub fn supports_transparency(&self) -> bool {
+        !matches!(self, ImageFormat::Jpeg)
+    }
+
+    /// The formats the app offers to convert to, in display order (HEIC needs
+    /// macOS's built-in encoder; JPEG XL needs the optional `cjxl`).
+    pub fn convertible() -> Vec<ImageFormat> {
+        let mut v = vec![
+            ImageFormat::Png,
+            ImageFormat::Jpeg,
+            ImageFormat::Webp,
+            ImageFormat::Avif,
+        ];
+        if cfg!(target_os = "macos") {
+            v.push(ImageFormat::Heic);
+        }
+        v.extend([ImageFormat::Gif, ImageFormat::Tiff, ImageFormat::Bmp]);
+        v
     }
 }
 
-/// Produce a path the pure-Rust pipeline (or `sips`) can read. HEIC/HEIF inputs
-/// are decoded to a temporary PNG first; everything else is returned unchanged.
+/// Whether `path` is a format the `image` crate can't decode, so it has to be
+/// decoded externally first (see [`readable_source`]).
+fn needs_external_decode(path: &Path) -> bool {
+    matches!(
+        extension_lower(path).as_deref(),
+        Some("heic" | "heif" | "avif")
+    )
+}
+
+/// Produce a path the pure-Rust pipeline (or `sips`) can read. HEIC/HEIF and
+/// AVIF inputs are decoded to a temporary PNG first (macOS: the built-in
+/// `sips`; AVIF elsewhere: ffmpeg); everything else is returned unchanged.
 fn readable_source(path: &Path, tmp: &TempDir) -> Result<PathBuf, OptimiseError> {
     let ext = extension_lower(path).unwrap_or_default();
+    if ext == "avif" {
+        let out = tmp.path().join("decoded_src.png");
+        #[cfg(target_os = "macos")]
+        heic_decode(path, &out)?;
+        #[cfg(not(target_os = "macos"))]
+        tools::run(
+            Tool::Ffmpeg,
+            [
+                "-y",
+                "-hide_banner",
+                "-i",
+                &path.display().to_string(),
+                "-frames:v",
+                "1",
+                &out.display().to_string(),
+            ],
+        )?;
+        return Ok(out);
+    }
     if matches!(ext.as_str(), "heic" | "heif") {
         #[cfg(target_os = "macos")]
         {
@@ -1019,6 +1136,17 @@ pub fn convert(
     format: ImageFormat,
     options: &OptimiseOptions,
 ) -> Result<OptimisationResult, OptimiseError> {
+    convert_with(path, format, options, false)
+}
+
+/// Like [`convert`]; with `lossless_png`, a PNG target keeps every pixel
+/// exactly (just squeezed by oxipng) instead of being reduced to a palette.
+pub fn convert_with(
+    path: &Path,
+    format: ImageFormat,
+    options: &OptimiseOptions,
+    lossless_png: bool,
+) -> Result<OptimisationResult, OptimiseError> {
     if !path.is_file() {
         return Err(OptimiseError::NotFound(path.to_path_buf()));
     }
@@ -1036,6 +1164,13 @@ pub fn convert(
 
     let strip = Strip::from_options(options);
     match format {
+        ImageFormat::Png if lossless_png => {
+            let (img, meta) = load(&work_src)?;
+            let raw = encode_png(&img, &meta_for(meta, strip))?;
+            let opts = oxipng::Options::from_preset(2);
+            let squeezed = oxipng::optimize_from_memory(&raw, &opts).unwrap_or(raw);
+            std::fs::write(&temp_out, squeezed)?;
+        }
         ImageFormat::Png => optimise_png(&work_src, &temp_out, cq, strip)?,
         ImageFormat::Jpeg => optimise_jpeg(&work_src, &temp_out, cq, strip)?,
         ImageFormat::Webp => {
@@ -1080,6 +1215,15 @@ pub fn convert(
                     2,
                 )?;
             }
+        }
+        ImageFormat::Gif | ImageFormat::Tiff | ImageFormat::Bmp => {
+            let (img, meta) = load(&work_src)?;
+            let img = if format == ImageFormat::Bmp && !img.color().has_alpha() {
+                DynamicImage::ImageRgb8(img.to_rgb8())
+            } else {
+                img
+            };
+            save_with_meta(&img, &temp_out, &meta_for(meta, strip))?;
         }
         ImageFormat::Jxl => {
             tools::run_with_retries(

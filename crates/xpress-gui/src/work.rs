@@ -6,6 +6,7 @@ use std::sync::mpsc::Sender;
 use eframe::egui;
 use xpress_core::audio::AudioFormat;
 use xpress_core::filetype::{classify, MediaKind};
+use xpress_core::image::ImageFormat;
 use xpress_core::result::{OptimisationResult, OptimiseOptions};
 
 /// A finished (or failed) job, plus an optional preview of the output.
@@ -41,6 +42,39 @@ pub fn spawn(
             .ok()
             .filter(|r| r.kind == MediaKind::Image)
             .and_then(|r| make_thumbnail(&r.output));
+        let _ = tx.send(Msg::Done(Box::new(Done {
+            source: path,
+            result,
+            thumbnail,
+        })));
+        ctx.request_repaint();
+    });
+}
+
+/// Convert an image to `format` on a background thread, keeping the original.
+/// PNG is lossless; JPEG/WebP use the `quality` target when one is set
+/// (falling back to the compression slider if it can't be met).
+pub fn spawn_convert(
+    path: PathBuf,
+    format: ImageFormat,
+    options: OptimiseOptions,
+    quality: Option<f64>,
+    ctx: egui::Context,
+    tx: Sender<Msg>,
+) {
+    std::thread::spawn(move || {
+        let by_quality = match (quality, format) {
+            (Some(q), ImageFormat::Jpeg | ImageFormat::Webp) => {
+                xpress_core::quality::convert_to_quality(&path, format, q, &options).ok()
+            }
+            _ => None,
+        };
+        let result = match by_quality {
+            Some(r) => Ok(r),
+            None => xpress_core::image::convert_with(&path, format, &options, true),
+        }
+        .map_err(|e| e.to_string());
+        let thumbnail = result.as_ref().ok().and_then(|r| make_thumbnail(&r.output));
         let _ = tx.send(Msg::Done(Box::new(Done {
             source: path,
             result,

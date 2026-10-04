@@ -134,7 +134,13 @@ xpress downscale -f 0.75 recording.mov
 xpress convert [OPTIONS] -t <FORMAT> <ITEMS>...
 ```
 
-- `-t, --to` — image (`webp|avif|heic|jxl|png|jpeg`), audio (`aac|mp3|opus|wav|flac|aiff`), or video (`gif|mp4|hevc|av1|webm`).
+- `-t, --to` — image (`png|jpeg|webp|avif|heic|gif|tiff|bmp|jxl`), audio
+  (`aac|mp3|opus|wav|flac|aiff`), or video (`mp4|hevc|av1|webm|gif`). Any
+  image xpress can read converts to any of these — PNG, JPEG, WebP, GIF, BMP,
+  TIFF, HEIC and AVIF in (HEIC on macOS; AVIF via `sips` on macOS, `ffmpeg`
+  elsewhere). With `--to gif`, videos become animated GIFs and images still GIFs.
+- `--palette` — PNG output: reduce to a palette (smaller, lossy). By default a
+  conversion to PNG is lossless.
 - `--bitrate <kbps>` — explicit audio bitrate.
 - `--hw` — use a hardware (VideoToolbox) encoder for video on Apple Silicon.
 - `--quality <target>` — for `jpeg`, `png` and `webp`: the smallest output that

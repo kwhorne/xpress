@@ -191,9 +191,9 @@ pub fn convert_to_quality(
     base: &OptimiseOptions,
 ) -> Result<OptimisationResult, OptimiseError> {
     check_image(path)?;
-    if matches!(
+    if !matches!(
         format,
-        ImageFormat::Avif | ImageFormat::Heic | ImageFormat::Jxl
+        ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::Webp
     ) {
         return Err(OptimiseError::Other(format!(
             "quality targets support jpeg, png and webp output, not {}",

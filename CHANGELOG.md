@@ -6,6 +6,20 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Image conversion in the desktop app**, Clop-style: a *Convert to* picker on
+  the Optimise screen (applies to everything dropped, opened or pasted), a
+  format chip on each image result (`PNG ▾` → convert to another format), and a
+  right-click menu on results (*Convert to*, *Crop…*, *Show in Finder*,
+  *Copy*). Converted files are saved next to the originals.
+- **More formats**: convert to **GIF, TIFF and BMP**, and read **AVIF** (also
+  for crop, resize and quality targets) — every readable image now converts to
+  every writable format. `convert --to gif` handles images as well as videos.
+
+### Changed
+- `convert --to png` (and PNG in the desktop app) is now **lossless**; pass
+  `--palette` for the smaller, palette-reduced PNG it used to produce.
+
 ### Fixed
 - **`xpress update` on macOS** has not worked since the app zip joined the
   release assets (0.4.4): the updater takes the first asset, alphabetically,
