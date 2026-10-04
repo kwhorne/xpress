@@ -42,6 +42,7 @@ pub const IGNORED_APPS: [&str; 7] = [
 pub use xpress_core::clipboard::Part;
 
 /// Decode any image the `image` crate reads and re-encode it as PNG.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn normalise_png(bytes: &[u8]) -> Option<Vec<u8>> {
     let img = image::load_from_memory(bytes).ok()?;
     let mut out = Vec::new();
