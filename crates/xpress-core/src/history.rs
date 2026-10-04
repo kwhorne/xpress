@@ -11,6 +11,10 @@
 //! ```
 //!
 //! The same content copied again isn't stored twice: it moves back to the top.
+//!
+//! A **multi-clip** collects several clips (text, images, files, …) to paste
+//! together; its items stay clips of their own. **Categories** group clips by
+//! hand or automatically, through a rule (source app, kind, words).
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -33,10 +37,12 @@ pub enum ClipKind {
     Image,
     Screenshot,
     Files,
+    /// Several clips to paste together.
+    Multi,
 }
 
 impl ClipKind {
-    pub const ALL: [ClipKind; 7] = [
+    pub const ALL: [ClipKind; 8] = [
         ClipKind::Text,
         ClipKind::Link,
         ClipKind::Code,
@@ -44,6 +50,7 @@ impl ClipKind {
         ClipKind::Image,
         ClipKind::Screenshot,
         ClipKind::Files,
+        ClipKind::Multi,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -55,6 +62,7 @@ impl ClipKind {
             ClipKind::Image => "image",
             ClipKind::Screenshot => "screenshot",
             ClipKind::Files => "files",
+            ClipKind::Multi => "multi",
         }
     }
 
@@ -73,6 +81,7 @@ impl ClipKind {
             ClipKind::Image => "Images",
             ClipKind::Screenshot => "Screenshots",
             ClipKind::Files => "Files",
+            ClipKind::Multi => "Multi-clips",
         }
     }
 
@@ -180,6 +189,8 @@ pub struct Clip {
     /// Unix milliseconds; when it was last copied (or copied back).
     pub last_used: i64,
     pub pinned: bool,
+    /// The categories it's in.
+    pub categories: Vec<i64>,
 }
 
 impl Clip {
@@ -208,7 +219,55 @@ pub struct Query {
     pub kind: Option<ClipKind>,
     pub app: Option<String>,
     pub pinned_only: bool,
+    pub category: Option<i64>,
     pub limit: usize,
+}
+
+/// A user-made group of clips, optionally filled automatically.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Category {
+    pub id: i64,
+    pub name: String,
+    pub color: [u8; 3],
+    pub rule: Rule,
+    /// How many clips are in it.
+    pub count: usize,
+}
+
+/// Which new clips join a category by themselves. Every part that's set
+/// must match; an empty rule means "only by hand".
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Rule {
+    /// Copied in this app (case-insensitive).
+    pub app: Option<String>,
+    pub kind: Option<ClipKind>,
+    /// Contains these words, in the text or in the text found in an image.
+    pub contains: Option<String>,
+}
+
+impl Rule {
+    pub fn is_empty(&self) -> bool {
+        self.app.is_none() && self.kind.is_none() && self.contains.is_none()
+    }
+
+    pub fn matches(&self, clip: &Clip) -> bool {
+        if self.is_empty() || clip.kind == ClipKind::Multi {
+            return false;
+        }
+        let app_ok = self.app.as_ref().is_none_or(|want| {
+            clip.source_app
+                .as_ref()
+                .is_some_and(|app| app.eq_ignore_ascii_case(want))
+        });
+        let kind_ok = self.kind.is_none_or(|k| k == clip.kind);
+        let words_ok = self.contains.as_ref().is_none_or(|words| {
+            let hay = format!("{}\n{}", clip.text, clip.ocr).to_lowercase();
+            words
+                .split_whitespace()
+                .all(|w| hay.contains(&w.to_lowercase()))
+        });
+        app_ok && kind_ok && words_ok
+    }
 }
 
 /// How long and how much to keep. Pinned clips are always kept.
@@ -239,6 +298,7 @@ impl History {
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
+             PRAGMA foreign_keys = ON;
              CREATE TABLE IF NOT EXISTS clips (
                  id INTEGER PRIMARY KEY,
                  kind TEXT NOT NULL,
@@ -274,7 +334,33 @@ impl History {
                  INSERT INTO clips_fts(rowid, text, ocr, source_app)
                  VALUES (new.id, new.text, new.ocr, new.source_app);
              END;
-             PRAGMA user_version = 1;",
+             CREATE TABLE IF NOT EXISTS clip_items (
+                 parent_id INTEGER NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+                 position INTEGER NOT NULL,
+                 child_id INTEGER NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+                 PRIMARY KEY (parent_id, position)
+             );
+             CREATE INDEX IF NOT EXISTS clip_items_child ON clip_items(child_id);
+             CREATE TRIGGER IF NOT EXISTS clip_items_emptied AFTER DELETE ON clip_items
+             WHEN NOT EXISTS (SELECT 1 FROM clip_items WHERE parent_id = old.parent_id)
+             BEGIN
+                 DELETE FROM clips WHERE id = old.parent_id;
+             END;
+             CREATE TABLE IF NOT EXISTS categories (
+                 id INTEGER PRIMARY KEY,
+                 name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                 color TEXT NOT NULL,
+                 rule_app TEXT,
+                 rule_kind TEXT,
+                 rule_text TEXT,
+                 position INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS clip_categories (
+                 clip_id INTEGER NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+                 category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+                 PRIMARY KEY (clip_id, category_id)
+             );
+             PRAGMA user_version = 2;",
         )?;
         Ok(History {
             conn,
@@ -335,10 +421,238 @@ impl History {
                 at
             ],
         )?;
-        Ok(Added {
-            id: self.conn.last_insert_rowid(),
-            new: true,
-        })
+        let id = self.conn.last_insert_rowid();
+        self.apply_rules(id)?;
+        Ok(Added { id, new: true })
+    }
+
+    // ---- Multi-clips --------------------------------------------------------
+
+    /// Make a multi-clip of `ids`, in that order.
+    pub fn combine(&self, ids: &[i64]) -> rusqlite::Result<i64> {
+        if ids.is_empty() {
+            return Err(rusqlite::Error::ToSqlConversionFailure(
+                "nothing to combine".into(),
+            ));
+        }
+        let at = now_ms();
+        let hash = {
+            let mut h = Sha256::new();
+            h.update(b"multi");
+            for id in ids {
+                h.update(id.to_le_bytes());
+            }
+            h.update(
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+                    .to_le_bytes(),
+            );
+            hex16(&h.finalize())
+        };
+        self.conn.execute(
+            "INSERT INTO clips (kind, hash, created, last_used) VALUES ('multi', ?1, ?2, ?2)",
+            params![hash, at],
+        )?;
+        let multi = self.conn.last_insert_rowid();
+        for (pos, id) in ids.iter().enumerate() {
+            self.conn.execute(
+                "INSERT INTO clip_items (parent_id, position, child_id) VALUES (?1, ?2, ?3)",
+                params![multi, pos as i64, id],
+            )?;
+        }
+        self.refresh_multi(multi)?;
+        Ok(multi)
+    }
+
+    /// Add `clip` to the end of `multi`, or start a new multi-clip with it
+    /// when there's none (or it's gone). Returns the multi-clip.
+    pub fn append_to(&self, multi: Option<i64>, clip: i64) -> rusqlite::Result<i64> {
+        let existing = match multi {
+            Some(id) => self.get(id)?.filter(|c| c.kind == ClipKind::Multi),
+            None => None,
+        };
+        let Some(multi) = existing else {
+            return self.combine(&[clip]);
+        };
+        let last: Option<(i64, i64)> = self
+            .conn
+            .query_row(
+                "SELECT position, child_id FROM clip_items WHERE parent_id = ?1
+                 ORDER BY position DESC LIMIT 1",
+                [multi.id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        if last.map(|(_, child)| child) != Some(clip) {
+            self.conn.execute(
+                "INSERT INTO clip_items (parent_id, position, child_id) VALUES (?1, ?2, ?3)",
+                params![multi.id, last.map_or(0, |(pos, _)| pos + 1), clip],
+            )?;
+            self.refresh_multi(multi.id)?;
+        }
+        self.touch(multi.id)?;
+        Ok(multi.id)
+    }
+
+    /// The clips in a multi-clip, in order.
+    pub fn items(&self, multi: i64) -> rusqlite::Result<Vec<Clip>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {COLUMNS} FROM clip_items JOIN clips ON clips.id = clip_items.child_id
+             WHERE clip_items.parent_id = ?1 ORDER BY clip_items.position"
+        ))?;
+        let rows = stmt.query_map([multi], |r| self.row(r))?;
+        rows.collect()
+    }
+
+    /// Keep a multi-clip's searchable text in step with its items.
+    fn refresh_multi(&self, multi: i64) -> rusqlite::Result<()> {
+        let text: Vec<String> = self
+            .items(multi)?
+            .iter()
+            .map(|c| {
+                if c.kind.is_image() {
+                    c.ocr.clone()
+                } else {
+                    c.text.chars().take(2000).collect()
+                }
+            })
+            .filter(|t| !t.is_empty())
+            .collect();
+        self.conn
+            .execute(
+                "UPDATE clips SET text = ?2 WHERE id = ?1",
+                params![multi, text.join("\n")],
+            )
+            .map(|_| ())
+    }
+
+    fn parents_of(&self, clip: i64) -> rusqlite::Result<Vec<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT parent_id FROM clip_items WHERE child_id = ?1")?;
+        let rows = stmt.query_map([clip], |r| r.get(0))?;
+        rows.collect()
+    }
+
+    // ---- Categories ---------------------------------------------------------
+
+    pub fn categories(&self) -> rusqlite::Result<Vec<Category>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, color, rule_app, rule_kind, rule_text,
+                    (SELECT COUNT(*) FROM clip_categories WHERE category_id = categories.id)
+             FROM categories ORDER BY position, name COLLATE NOCASE",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            let color: String = r.get(2)?;
+            let kind: Option<String> = r.get(4)?;
+            Ok(Category {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                color: parse_color(&color).map_or([122, 162, 247], |[r, g, b, _]| [r, g, b]),
+                rule: Rule {
+                    app: r.get(3)?,
+                    kind: kind.as_deref().and_then(ClipKind::from_str),
+                    contains: r.get(5)?,
+                },
+                count: r.get::<_, i64>(6)? as usize,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Create a category (`id: None`) or change one. Clips already in the
+    /// history that match the rule join it. Returns its id.
+    pub fn save_category(
+        &self,
+        id: Option<i64>,
+        name: &str,
+        color: [u8; 3],
+        rule: &Rule,
+    ) -> rusqlite::Result<i64> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(rusqlite::Error::ToSqlConversionFailure(
+                "a category needs a name".into(),
+            ));
+        }
+        let clean = |s: &Option<String>| {
+            s.as_ref()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
+        let color = format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]);
+        let values = params![
+            name,
+            color,
+            clean(&rule.app),
+            rule.kind.map(|k| k.as_str()),
+            clean(&rule.contains),
+            id
+        ];
+        let id = match id {
+            Some(id) => {
+                self.conn.execute(
+                    "UPDATE categories SET name = ?1, color = ?2, rule_app = ?3,
+                         rule_kind = ?4, rule_text = ?5 WHERE id = ?6",
+                    values,
+                )?;
+                id
+            }
+            None => {
+                self.conn.execute(
+                    "INSERT INTO categories (name, color, rule_app, rule_kind, rule_text, position)
+                     VALUES (?1, ?2, ?3, ?4, ?5,
+                             COALESCE(?6, (SELECT COUNT(*) FROM categories)))",
+                    values,
+                )?;
+                self.conn.last_insert_rowid()
+            }
+        };
+        if let Some(category) = self.categories()?.into_iter().find(|c| c.id == id) {
+            if !category.rule.is_empty() {
+                let everything = Query {
+                    limit: usize::MAX >> 1,
+                    ..Default::default()
+                };
+                for clip in self.search(&everything)? {
+                    if category.rule.matches(&clip) {
+                        self.set_category(clip.id, id, true)?;
+                    }
+                }
+            }
+        }
+        Ok(id)
+    }
+
+    pub fn delete_category(&self, id: i64) -> rusqlite::Result<()> {
+        self.conn
+            .execute("DELETE FROM categories WHERE id = ?1", [id])
+            .map(|_| ())
+    }
+
+    /// Put a clip in a category, or take it out.
+    pub fn set_category(&self, clip: i64, category: i64, on: bool) -> rusqlite::Result<()> {
+        let sql = if on {
+            "INSERT OR IGNORE INTO clip_categories (clip_id, category_id) VALUES (?1, ?2)"
+        } else {
+            "DELETE FROM clip_categories WHERE clip_id = ?1 AND category_id = ?2"
+        };
+        self.conn.execute(sql, params![clip, category]).map(|_| ())
+    }
+
+    /// Add a clip to every category whose rule it matches.
+    fn apply_rules(&self, clip: i64) -> rusqlite::Result<()> {
+        let Some(clip) = self.get(clip)? else {
+            return Ok(());
+        };
+        for category in self.categories()? {
+            if category.rule.matches(&clip) {
+                self.set_category(clip.id, category.id, true)?;
+            }
+        }
+        Ok(())
     }
 
     /// Write the image (PNGs losslessly recompressed) and its preview.
@@ -383,8 +697,13 @@ impl History {
     /// Store the text recognised in a clip's image.
     pub fn set_ocr(&self, id: i64, text: &str) -> rusqlite::Result<()> {
         self.conn
-            .execute("UPDATE clips SET ocr = ?2 WHERE id = ?1", params![id, text])
-            .map(|_| ())
+            .execute("UPDATE clips SET ocr = ?2 WHERE id = ?1", params![id, text])?;
+        // Rules on words can match now.
+        self.apply_rules(id)?;
+        for parent in self.parents_of(id)? {
+            self.refresh_multi(parent)?;
+        }
+        Ok(())
     }
 
     /// Mark a clip as just used (copied back), moving it to the top.
@@ -426,6 +745,8 @@ impl History {
                AND (?2 IS NULL OR kind = ?2)
                AND (?3 IS NULL OR source_app = ?3)
                AND (?4 = 0 OR pinned = 1)
+               AND (?6 IS NULL OR id IN
+                    (SELECT clip_id FROM clip_categories WHERE category_id = ?6))
              ORDER BY last_used DESC, id DESC
              LIMIT ?5"
         );
@@ -436,7 +757,8 @@ impl History {
                 query.kind.map(|k| k.as_str()),
                 query.app,
                 query.pinned_only,
-                limit
+                limit,
+                query.category
             ],
             |r| self.row(r),
         )?;
@@ -463,6 +785,7 @@ impl History {
     }
 
     pub fn delete(&self, id: i64) -> rusqlite::Result<()> {
+        let parents = self.parents_of(id)?;
         let files: Option<(Option<String>, Option<String>)> = self
             .conn
             .query_row("SELECT image, thumb FROM clips WHERE id = ?1", [id], |r| {
@@ -475,16 +798,31 @@ impl History {
                 let _ = std::fs::remove_file(self.dir.join(rel));
             }
         }
+        // Multi-clips it was in (an emptied one removes itself).
+        for parent in parents {
+            if self.get(parent)?.is_some() {
+                self.refresh_multi(parent)?;
+            }
+        }
         Ok(())
     }
 
     /// Delete every clip (except pinned ones, with `keep_pinned`).
     pub fn clear(&self, keep_pinned: bool) -> rusqlite::Result<usize> {
-        let ids = self.ids_where(if keep_pinned { "pinned = 0" } else { "1" }, [])?;
-        for id in &ids {
-            self.delete(*id)?;
+        let filter = if keep_pinned {
+            format!("pinned = 0 AND {NOT_IN_PINNED_MULTI}")
+        } else {
+            "1".to_string()
+        };
+        let ids = self.ids_where(&filter, [])?;
+        let mut removed = 0;
+        for id in ids {
+            if self.get(id)?.is_some() {
+                self.delete(id)?;
+                removed += 1;
+            }
         }
-        Ok(ids.len())
+        Ok(removed)
     }
 
     /// Drop unpinned clips past the retention limits; returns how many.
@@ -496,17 +834,21 @@ impl History {
         let mut removed = 0;
         if let Some(age) = retention.max_age {
             let cutoff = now - age.as_millis() as i64;
-            for id in self.ids_where("pinned = 0 AND last_used < ?1", [cutoff])? {
-                self.delete(id)?;
-                removed += 1;
+            let filter = format!("pinned = 0 AND last_used < ?1 AND {NOT_IN_MULTI}");
+            for id in self.ids_where(&filter, [cutoff])? {
+                if self.get(id)?.is_some() {
+                    self.delete(id)?;
+                    removed += 1;
+                }
             }
         }
         if let Some(max) = retention.max_bytes {
             let (_, mut total) = self.stats()?;
             if total > max {
-                let mut stmt = self.conn.prepare(
-                    "SELECT id, bytes FROM clips WHERE pinned = 0 ORDER BY last_used ASC, id ASC",
-                )?;
+                let mut stmt = self.conn.prepare(&format!(
+                    "SELECT id, bytes FROM clips WHERE pinned = 0 AND {NOT_IN_MULTI}
+                     ORDER BY last_used ASC, id ASC"
+                ))?;
                 let oldest: Vec<(i64, i64)> = stmt
                     .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?
                     .collect::<rusqlite::Result<_>>()?;
@@ -547,12 +889,26 @@ impl History {
             created: r.get(9)?,
             last_used: r.get(10)?,
             pinned: r.get(11)?,
+            categories: r
+                .get::<_, Option<String>>(12)?
+                .map(|ids| ids.split(',').filter_map(|i| i.parse().ok()).collect())
+                .unwrap_or_default(),
         })
     }
 }
 
-const COLUMNS: &str = "id, kind, text, ocr, image, thumb, bytes, source_app, source_bundle, \
-                       created, last_used, pinned";
+const COLUMNS: &str = "clips.id, kind, text, ocr, image, thumb, bytes, source_app, \
+     source_bundle, created, last_used, pinned, \
+     (SELECT GROUP_CONCAT(category_id) FROM clip_categories WHERE clip_id = clips.id)";
+
+/// Items of a multi-clip are kept as long as it is.
+const NOT_IN_MULTI: &str = "id NOT IN (SELECT child_id FROM clip_items)";
+const NOT_IN_PINNED_MULTI: &str = "id NOT IN (SELECT child_id FROM clip_items \
+     JOIN clips p ON p.id = clip_items.parent_id WHERE p.pinned = 1)";
+
+fn hex16(digest: &[u8]) -> String {
+    digest[..16].iter().map(|b| format!("{b:02x}")).collect()
+}
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -581,10 +937,7 @@ fn content_hash(clip: &NewClip) -> String {
             h.update(clip.text.as_bytes());
         }
     }
-    h.finalize()[..16]
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect()
+    hex16(&h.finalize())
 }
 
 /// Every word as a quoted prefix term, so `inv 47` finds "Invoice 4711" and
@@ -991,6 +1344,215 @@ mod tests {
         assert!(h
             .add(NewClip::text("x".repeat(MAX_TEXT_BYTES + 1)))
             .is_err());
+    }
+
+    #[test]
+    fn multi_clips_combine_search_and_survive_pruning() {
+        let (_d, h) = history();
+        let day = 24 * 60 * 60 * 1000;
+        let a = h.add_at(NewClip::text("first part"), 0).unwrap().id;
+        let img = h.add_at(NewClip::image_png(png(40, 20, 1)), 0).unwrap().id;
+        h.set_ocr(img, "receipt total").unwrap();
+        let multi = h.combine(&[a, img]).unwrap();
+
+        let clip = h.get(multi).unwrap().unwrap();
+        assert_eq!(clip.kind, ClipKind::Multi);
+        assert_eq!(clip.text, "first part\nreceipt total");
+        assert_eq!(
+            h.items(multi)
+                .unwrap()
+                .iter()
+                .map(|c| c.id)
+                .collect::<Vec<_>>(),
+            [a, img]
+        );
+        let found = h
+            .search(&Query {
+                text: "receipt".into(),
+                kind: Some(ClipKind::Multi),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(found.len(), 1);
+
+        // Old items are kept as long as their multi-clip is.
+        let a_week_later = Retention {
+            max_age: Some(Duration::from_millis(day as u64)),
+            max_bytes: None,
+        };
+        assert_eq!(h.prune_at(a_week_later, now_ms() + 7 * day).unwrap(), 1);
+        assert!(
+            h.get(multi).unwrap().is_none(),
+            "the multi-clip was old too"
+        );
+        assert_eq!(h.prune_at(a_week_later, now_ms() + 7 * day).unwrap(), 2);
+
+        let a = h.add_at(NewClip::text("kept"), 0).unwrap().id;
+        let multi = h.combine(&[a]).unwrap();
+        assert_eq!(h.prune_at(a_week_later, now_ms()).unwrap(), 0);
+        assert!(h.get(a).unwrap().is_some());
+        h.set_pinned(multi, true).unwrap();
+        assert_eq!(
+            h.clear(true).unwrap(),
+            0,
+            "items of a pinned multi-clip stay"
+        );
+    }
+
+    #[test]
+    fn deleting_items_updates_and_finally_removes_a_multi_clip() {
+        let (_d, h) = history();
+        let a = h.add(NewClip::text("alpha")).unwrap().id;
+        let b = h.add(NewClip::text("beta")).unwrap().id;
+        let multi = h.combine(&[a, b]).unwrap();
+        h.delete(a).unwrap();
+        assert_eq!(h.get(multi).unwrap().unwrap().text, "beta");
+        h.delete(b).unwrap();
+        assert!(h.get(multi).unwrap().is_none(), "an empty multi-clip goes");
+        // Deleting a multi-clip keeps its items.
+        let c = h.add(NewClip::text("gamma")).unwrap().id;
+        let m = h.combine(&[c]).unwrap();
+        h.delete(m).unwrap();
+        assert!(h.get(c).unwrap().is_some());
+    }
+
+    #[test]
+    fn collecting_appends_to_one_multi_clip() {
+        let (_d, h) = history();
+        let a = h.add(NewClip::text("one")).unwrap().id;
+        let b = h.add(NewClip::text("two")).unwrap().id;
+        let m = h.append_to(None, a).unwrap();
+        assert_eq!(h.append_to(Some(m), b).unwrap(), m);
+        assert_eq!(
+            h.append_to(Some(m), b).unwrap(),
+            m,
+            "same clip twice in a row: once"
+        );
+        assert_eq!(h.items(m).unwrap().len(), 2);
+        h.delete(m).unwrap();
+        let fresh = h.append_to(Some(m), a).unwrap();
+        assert_eq!(
+            h.items(fresh).unwrap().len(),
+            1,
+            "a gone multi-clip starts a new one"
+        );
+    }
+
+    #[test]
+    fn categories_by_hand_and_by_rule() {
+        let (_d, h) = history();
+        let mail = h
+            .add(NewClip::text("Invoice 4711").from_app(Some("Mail".into()), None))
+            .unwrap()
+            .id;
+        let note = h.add(NewClip::text("groceries: milk")).unwrap().id;
+
+        // A rule fills the category with matching clips already there…
+        let invoices = h
+            .save_category(
+                None,
+                "Invoices",
+                [255, 158, 100],
+                &Rule {
+                    contains: Some("invoice".into()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(h.get(mail).unwrap().unwrap().categories, [invoices]);
+        // …and with new ones, also when the words are found in an image later.
+        let later = h.add(NewClip::text("invoice 4712 paid")).unwrap().id;
+        assert_eq!(h.get(later).unwrap().unwrap().categories, [invoices]);
+        let img = h.add(NewClip::image_png(png(30, 30, 9))).unwrap().id;
+        assert!(h.get(img).unwrap().unwrap().categories.is_empty());
+        h.set_ocr(img, "INVOICE from ACME").unwrap();
+        assert_eq!(h.get(img).unwrap().unwrap().categories, [invoices]);
+
+        // By hand.
+        let personal = h
+            .save_category(None, "Personal", [10, 200, 10], &Rule::default())
+            .unwrap();
+        h.set_category(note, personal, true).unwrap();
+        let in_personal = h
+            .search(&Query {
+                category: Some(personal),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(texts(&in_personal), ["groceries: milk"]);
+
+        let cats = h.categories().unwrap();
+        assert_eq!(
+            cats.iter()
+                .map(|c| (c.name.as_str(), c.count))
+                .collect::<Vec<_>>(),
+            [("Invoices", 3), ("Personal", 1)]
+        );
+        assert_eq!(cats[0].color, [255, 158, 100]);
+        assert!(
+            h.save_category(None, "invoices", [0, 0, 0], &Rule::default())
+                .is_err(),
+            "names are unique"
+        );
+        assert!(h
+            .save_category(None, "  ", [0, 0, 0], &Rule::default())
+            .is_err());
+
+        // Rename, change the rule; delete.
+        h.save_category(
+            Some(personal),
+            "Home",
+            [1, 2, 3],
+            &Rule {
+                app: Some("mail".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let home = h
+            .categories()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.id == personal)
+            .unwrap();
+        assert_eq!(home.name, "Home");
+        assert_eq!(home.count, 2, "the note, and the Mail clip by the new rule");
+        h.delete_category(invoices).unwrap();
+        assert_eq!(h.get(mail).unwrap().unwrap().categories, [personal]);
+        h.set_category(note, personal, false).unwrap();
+        assert!(h.get(note).unwrap().unwrap().categories.is_empty());
+    }
+
+    #[test]
+    fn rules() {
+        let clip = Clip {
+            id: 1,
+            kind: ClipKind::Link,
+            text: "https://github.com/kwhorne".into(),
+            ocr: String::new(),
+            image: None,
+            thumb: None,
+            bytes: 0,
+            source_app: Some("Safari".into()),
+            source_bundle: None,
+            created: 0,
+            last_used: 0,
+            pinned: false,
+            categories: Vec::new(),
+        };
+        let rule = |app: Option<&str>, kind: Option<ClipKind>, words: Option<&str>| Rule {
+            app: app.map(Into::into),
+            kind,
+            contains: words.map(Into::into),
+        };
+        assert!(
+            !rule(None, None, None).matches(&clip),
+            "empty: by hand only"
+        );
+        assert!(rule(Some("safari"), None, None).matches(&clip));
+        assert!(rule(None, Some(ClipKind::Link), Some("GITHUB kwhorne")).matches(&clip));
+        assert!(!rule(Some("Safari"), Some(ClipKind::Text), None).matches(&clip));
+        assert!(!rule(None, None, Some("gitlab")).matches(&clip));
     }
 
     #[test]
