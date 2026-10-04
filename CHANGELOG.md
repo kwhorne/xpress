@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Ignore apps** for the clipboard history: nothing copied in them is
+  recorded. Add them in Preferences (from the apps you've copied from, or any
+  app in /Applications) or right-click a clip → *Don't record from …*; delete
+  the clips an app already left with one button.
+
 ## [0.8.0] - 2026-10-04
 
 ### Added

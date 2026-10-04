@@ -1027,6 +1027,55 @@ impl History {
         rows.collect()
     }
 
+    /// The apps clips came from, with their bundle ids and how many.
+    pub fn app_sources(&self) -> rusqlite::Result<Vec<(String, Option<String>, usize)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT source_app, MAX(source_bundle), COUNT(*) FROM clips
+             WHERE source_app IS NOT NULL AND kind != 'screenshot'
+             GROUP BY source_app ORDER BY COUNT(*) DESC, source_app",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? as usize))
+        })?;
+        rows.collect()
+    }
+
+    /// The clips copied in an app: by bundle id when known, else by name.
+    fn from_app_filter(bundle: Option<&str>) -> &'static str {
+        if bundle.is_some() {
+            "(source_bundle = ?2 OR (source_bundle IS NULL AND source_app = ?1 COLLATE NOCASE))"
+        } else {
+            "source_app = ?1 COLLATE NOCASE"
+        }
+    }
+
+    pub fn count_from_app(&self, name: &str, bundle: Option<&str>) -> rusqlite::Result<usize> {
+        let sql = format!(
+            "SELECT COUNT(*) FROM clips WHERE kind != 'multi' AND {}",
+            Self::from_app_filter(bundle)
+        );
+        let n: i64 = match bundle {
+            Some(b) => self.conn.query_row(&sql, params![name, b], |r| r.get(0))?,
+            None => self.conn.query_row(&sql, params![name], |r| r.get(0))?,
+        };
+        Ok(n as usize)
+    }
+
+    /// Delete every clip copied in an app (on every Mac, when syncing).
+    pub fn delete_from_app(&self, name: &str, bundle: Option<&str>) -> rusqlite::Result<usize> {
+        let filter = format!("kind != 'multi' AND {}", Self::from_app_filter(bundle));
+        let ids = match bundle {
+            Some(b) => self.ids_where(&filter, params![name, b])?,
+            None => self.ids_where(&filter, params![name])?,
+        };
+        for id in &ids {
+            if self.get(*id)?.is_some() {
+                self.delete(*id)?;
+            }
+        }
+        Ok(ids.len())
+    }
+
     /// Number of clips and the bytes they take up.
     pub fn stats(&self) -> rusqlite::Result<(usize, u64)> {
         self.conn.query_row(
@@ -1879,6 +1928,40 @@ mod tests {
             pinned: false,
             categories: Vec::new(),
         }
+    }
+
+    #[test]
+    fn clips_by_source_app() {
+        let (_d, h) = history();
+        let app =
+            |name: &str, bundle: Option<&str>| (Some(name.to_string()), bundle.map(str::to_string));
+        let (n, b) = app("Bank", Some("com.bank.app"));
+        h.add(NewClip::text("account 1234").from_app(n, b)).unwrap();
+        let (n, b) = app("Bank", Some("com.bank.app"));
+        h.add(NewClip::text("account 5678").from_app(n, b)).unwrap();
+        let (n, b) = app("Notes", None);
+        h.add(NewClip::text("shopping").from_app(n, b)).unwrap();
+        let note = h.add(NewClip::text("unrelated")).unwrap().id;
+        let both = h.combine(&[note]).unwrap();
+
+        let sources = h.app_sources().unwrap();
+        assert_eq!(sources[0], ("Bank".into(), Some("com.bank.app".into()), 2));
+        assert_eq!(sources[1], ("Notes".into(), None, 1));
+        assert_eq!(h.count_from_app("Bank", Some("com.bank.app")).unwrap(), 2);
+        assert_eq!(
+            h.count_from_app("notes", None).unwrap(),
+            1,
+            "names ignore case"
+        );
+
+        assert_eq!(h.delete_from_app("Bank", Some("com.bank.app")).unwrap(), 2);
+        assert_eq!(h.count_from_app("Bank", Some("com.bank.app")).unwrap(), 0);
+        assert!(h.get(note).unwrap().is_some() && h.get(both).unwrap().is_some());
+        assert_eq!(
+            h.stats().unwrap().0,
+            3,
+            "notes, unrelated and the multi-clip remain"
+        );
     }
 
     #[test]

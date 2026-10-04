@@ -77,7 +77,8 @@ metadata at all.
 The app's [clipboard history](history.md) is **off until you turn it on**,
 keeps everything on your Mac (`history/` in the config folder), never records
 content that password managers mark as private, and ignores copies made in
-password managers. Text recognition in images runs on the Mac too. *Paste directly* uses the
+password managers, or in apps you put on the *Ignore apps* list. Text
+recognition in images runs on the Mac too. *Paste directly* uses the
 Accessibility permission only to press ⌘V in the app you return to. Apple
 Intelligence runs on the Mac's own model. *Sync with iCloud* (off by default)
 stores the history in your iCloud Drive — end-to-end encrypted when Advanced
