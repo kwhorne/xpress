@@ -295,7 +295,7 @@ mod imp {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         (&text, &files).hash(&mut h);
         if text.is_none() && files.is_none() {
-            if CHECKS.fetch_add(1, Ordering::Relaxed) % 2 == 0 {
+            if CHECKS.fetch_add(1, Ordering::Relaxed).is_multiple_of(2) {
                 let signature = clipboard
                     .get_image()
                     .map(|img| image_signature(img.width, img.height, &img.bytes))
