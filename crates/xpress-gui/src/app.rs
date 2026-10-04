@@ -14,6 +14,8 @@ use global_hotkey::{
     GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState,
 };
 use xpress_core::compression::{CompressionQuality, CompressionTier};
+use xpress_core::filetype::MediaKind;
+use xpress_core::image::ImageFormat;
 use xpress_core::result::OptimiseOptions;
 
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
@@ -80,6 +82,8 @@ pub struct XpressApp {
     strip_location: bool,
     /// Index into [`QUALITY_TARGETS`].
     quality_target: usize,
+    /// Convert dropped/opened images to this format instead of optimising them.
+    convert_to: Option<ImageFormat>,
     skip_optimised: bool,
     always_on_top: bool,
     pipeline_dsl: String,
@@ -148,6 +152,7 @@ impl XpressApp {
             strip_metadata: false,
             strip_location: false,
             quality_target: 0,
+            convert_to: None,
             skip_optimised: true,
             always_on_top: false,
             pipeline_dsl: "crop(longEdge: 2000) -> convert(to: webp)".to_string(),
@@ -236,7 +241,17 @@ impl XpressApp {
         }
         self.in_flight += 1;
         let options = self.options();
-        if self.use_pipeline {
+        let is_image = xpress_core::filetype::classify(&path) == Some(MediaKind::Image);
+        if let (Some(format), true) = (self.convert_to, is_image) {
+            work::spawn_convert(
+                path,
+                format,
+                options,
+                self.quality(),
+                ctx.clone(),
+                self.tx.clone(),
+            );
+        } else if self.use_pipeline {
             match xpress_core::pipeline::parse(&self.pipeline_dsl) {
                 Ok(steps) => {
                     work::spawn_pipeline(path, steps, options, ctx.clone(), self.tx.clone())
@@ -290,6 +305,17 @@ impl XpressApp {
             let from_clipboard = done.source.starts_with(clipboard_dir());
             let card = match done.result {
                 Ok(r) => {
+                    // A conversion: show "photo.png → photo.jpg".
+                    let name = if r.output.extension() != done.source.extension() {
+                        let out = r
+                            .output
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_default();
+                        format!("{name} → {out}")
+                    } else {
+                        name
+                    };
                     let mut detail = if r.cached {
                         format!("{}  ·  already optimised — skipped", human(r.old_size))
                     } else {
@@ -518,7 +544,10 @@ impl XpressApp {
                     if let Some(p) = rfd::FileDialog::new()
                         .add_filter(
                             "images",
-                            &["png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff"],
+                            &[
+                                "png", "jpg", "jpeg", "webp", "gif", "bmp", "tiff", "tif", "heic",
+                                "heif", "avif",
+                            ],
                         )
                         .pick_file()
                     {
@@ -648,6 +677,13 @@ impl XpressApp {
                 });
             });
             ui.horizontal(|ui| {
+                ui.label(RichText::new("Convert to").strong());
+                convert_picker(ui, &mut self.convert_to);
+                if let Some(format) = self.convert_to {
+                    ui.label(RichText::new(convert_note(format)).weak().small());
+                }
+            });
+            ui.horizontal(|ui| {
                 toggle_labeled(ui, &mut self.use_pipeline, "Pipeline");
                 ui.add_enabled(
                     self.use_pipeline,
@@ -664,8 +700,9 @@ impl XpressApp {
         }
         ui.label(RichText::new("RESULTS").size(11.0).weak());
         ui.add_space(6.0);
+        let mut action = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
-            for card in &mut self.cards {
+            for (i, card) in self.cards.iter_mut().enumerate() {
                 if card.texture.is_none() {
                     if let Some(image) = card.pending_thumb.take() {
                         card.texture = Some(ui.ctx().load_texture(
@@ -675,9 +712,26 @@ impl XpressApp {
                         ));
                     }
                 }
-                result_card(ui, card);
+                if let Some(a) = result_card(ui, card, i) {
+                    action = Some(a);
+                }
             }
         });
+        match action {
+            Some(CardAction::Convert(path, format)) => {
+                self.in_flight += 1;
+                work::spawn_convert(
+                    path,
+                    format,
+                    self.options(),
+                    self.quality(),
+                    ctx.clone(),
+                    self.tx.clone(),
+                );
+            }
+            Some(CardAction::Crop(path)) => self.enter_crop(path, &ctx),
+            None => {}
+        }
     }
 
     // ---- Settings view -----------------------------------------------------
@@ -1276,49 +1330,173 @@ fn setting_row(ui: &mut egui::Ui, label: &str, desc: &str, control: impl FnOnce(
     });
 }
 
-fn result_card(ui: &mut egui::Ui, card: &Card) {
-    egui::Frame::default()
-        .fill(card_fill(ui.ctx()))
-        .corner_radius(10)
-        .inner_margin(egui::Margin::same(10))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                if let Some(tex) = &card.texture {
-                    let s = tex.size_vec2();
-                    let scale = 52.0 / s.y.max(1.0);
-                    ui.image((tex.id(), s * scale));
-                } else {
-                    let icon = if card.ok { "🗎" } else { "⚠" };
-                    ui.label(RichText::new(icon).size(26.0));
-                }
-                ui.vertical(|ui| {
-                    ui.label(RichText::new(&card.title).strong());
-                    let color = if card.ok { OK_GREEN } else { ERR_RED };
-                    ui.label(RichText::new(&card.detail).color(color).small());
-                    if let Some(out) = &card.output {
+/// What the user asked for from a result card.
+enum CardAction {
+    Convert(PathBuf, ImageFormat),
+    Crop(PathBuf),
+}
+
+/// The "Convert to" entries for a file currently in `current` format.
+fn convert_menu(
+    ui: &mut egui::Ui,
+    path: &Path,
+    current: Option<ImageFormat>,
+    action: &mut Option<CardAction>,
+) {
+    for format in ImageFormat::convertible() {
+        if Some(format) == current {
+            continue;
+        }
+        if ui
+            .button(format.label())
+            .on_hover_text(format.description())
+            .clicked()
+        {
+            *action = Some(CardAction::Convert(path.to_path_buf(), format));
+            ui.close();
+        }
+    }
+    ui.separator();
+    ui.label(
+        RichText::new("Saved next to it; the original is kept.")
+            .weak()
+            .small(),
+    );
+}
+
+fn result_card(ui: &mut egui::Ui, card: &Card, index: usize) -> Option<CardAction> {
+    let mut action = None;
+    let image_out = card
+        .output
+        .as_deref()
+        .filter(|p| xpress_core::filetype::classify(p) == Some(MediaKind::Image));
+    let current = image_out.and_then(ImageFormat::of);
+    // A clickable container (children stay on top and keep their clicks), so a
+    // right-click anywhere on the card opens its menu.
+    let resp = ui
+        .scope_builder(
+            egui::UiBuilder::new()
+                .id_salt(("result_card", index))
+                .sense(Sense::click()),
+            |ui| {
+                // Selectable labels would swallow the right-click meant for
+                // the card's menu.
+                ui.style_mut().interaction.selectable_labels = false;
+                egui::Frame::default()
+                    .fill(card_fill(ui.ctx()))
+                    .corner_radius(10)
+                    .inner_margin(egui::Margin::same(10))
+                    .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            if ui.small_button("Reveal").clicked() {
-                                reveal_in_file_manager(out);
+                            if let Some(tex) = &card.texture {
+                                let s = tex.size_vec2();
+                                let scale = 52.0 / s.y.max(1.0);
+                                ui.image((tex.id(), s * scale));
+                            } else {
+                                let icon = if card.ok { "🗎" } else { "⚠" };
+                                ui.label(RichText::new(icon).size(26.0));
                             }
-                            if ui.small_button("Copy").clicked() {
-                                xpress_core::clipboard::set_clipboard_png(out);
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new(&card.title).strong());
+                                let color = if card.ok { OK_GREEN } else { ERR_RED };
+                                ui.label(RichText::new(&card.detail).color(color).small());
+                                if let Some(out) = &card.output {
+                                    ui.horizontal(|ui| {
+                                        if let Some(img) = image_out {
+                                            let label =
+                                                current.map(|f| f.label()).unwrap_or("Image");
+                                            ui.menu_button(format!("{label} ▾"), |ui| {
+                                                ui.label(RichText::new("Convert to").strong());
+                                                convert_menu(ui, img, current, &mut action);
+                                            })
+                                            .response
+                                            .on_hover_text("Convert to another format");
+                                        }
+                                        if ui.small_button("Reveal").clicked() {
+                                            reveal_in_file_manager(out);
+                                        }
+                                        if ui.small_button("Copy").clicked() {
+                                            xpress_core::clipboard::set_clipboard_png(out);
+                                        }
+                                    });
+                                }
+                            });
+                            if card.ok && card.saved_pct > 0.0 {
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    ui.label(
+                                        RichText::new(format!("−{:.0}%", card.saved_pct))
+                                            .size(18.0)
+                                            .strong()
+                                            .color(OK_GREEN),
+                                    );
+                                });
                             }
                         });
-                    }
-                });
-                if card.ok && card.saved_pct > 0.0 {
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(format!("−{:.0}%", card.saved_pct))
-                                .size(18.0)
-                                .strong()
-                                .color(OK_GREEN),
-                        );
                     });
+            },
+        )
+        .response;
+
+    if let Some(out) = card.output.clone() {
+        resp.context_menu(|ui| {
+            if let Some(img) = image_out {
+                ui.menu_button("Convert to", |ui| {
+                    convert_menu(ui, img, current, &mut action);
+                });
+                if ui.button("Crop…").clicked() {
+                    action = Some(CardAction::Crop(img.to_path_buf()));
+                    ui.close();
                 }
-            });
+                ui.separator();
+            }
+            if ui.button("Show in Finder").clicked() {
+                reveal_in_file_manager(&out);
+                ui.close();
+            }
+            if ui.button("Copy").clicked() {
+                xpress_core::clipboard::set_clipboard_png(&out);
+                ui.close();
+            }
         });
+    }
     ui.add_space(6.0);
+    action
+}
+
+/// The "Convert to" picker on the Optimise screen.
+fn convert_picker(ui: &mut egui::Ui, value: &mut Option<ImageFormat>) {
+    let selected = value.map(|f| f.label()).unwrap_or("Keep format");
+    egui::ComboBox::from_id_salt("convert_to")
+        .selected_text(selected)
+        .width(150.0)
+        // Tall enough to list every format without scrolling.
+        .height(480.0)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(value, None, "Keep format — just optimise");
+            ui.separator();
+            for format in ImageFormat::convertible() {
+                ui.selectable_value(
+                    value,
+                    Some(format),
+                    format!("{}  ·  {}", format.label(), format.description()),
+                );
+            }
+        });
+}
+
+/// What happens to images converted to `format` (shown next to the picker).
+fn convert_note(format: ImageFormat) -> String {
+    let caveat = match format {
+        ImageFormat::Jpeg => " · transparent areas become white",
+        ImageFormat::Gif => " · limited to 256 colours",
+        ImageFormat::Bmp => " · uncompressed, large files",
+        ImageFormat::Png | ImageFormat::Tiff => " · lossless",
+        _ => "",
+    };
+    format!(
+        "Images are saved as {} next to the originals{caveat}",
+        format.label()
+    )
 }
 
 fn lerp_u8(a: u8, b: u8, t: f32) -> u8 {
@@ -1591,6 +1769,89 @@ mod tests {
         h.run();
         assert!(h.state().crop.is_none(), "back to the main view");
         assert!(h.query_by_label("Optimise clipboard").is_some());
+    }
+
+    fn temp_png(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("xpress-gui-conv-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(name);
+        image::RgbaImage::from_fn(48, 32, |x, y| {
+            image::Rgba([x as u8 * 5, y as u8 * 7, 90, 255])
+        })
+        .save(&path)
+        .unwrap();
+        path
+    }
+
+    /// Run frames and collect background results until a card arrives.
+    fn wait_for_card(h: &mut Harness<'static, XpressApp>, cards: usize) {
+        for _ in 0..200 {
+            h.state_mut().drain_results();
+            if h.state().cards.len() >= cards {
+                h.run();
+                return;
+            }
+            // A spinner keeps repainting while a job runs: step, don't run.
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        panic!("no result arrived");
+    }
+
+    #[test]
+    fn convert_to_picker_converts_dropped_images() {
+        let mut h = harness();
+        // The combo box carries its selection as its value.
+        h.get_by_value("Keep format").click();
+        h.run();
+        h.get_by_label_contains("JPEG  ·").click();
+        h.run();
+        assert_eq!(h.state().convert_to, Some(ImageFormat::Jpeg));
+        assert!(h
+            .query_by_label_contains("transparent areas become white")
+            .is_some());
+
+        let src = temp_png("dropped.png");
+        let ctx = h.ctx.clone();
+        h.state_mut().submit(src.clone(), &ctx);
+        wait_for_card(&mut h, 1);
+
+        let jpg = src.with_extension("jpg");
+        assert!(jpg.exists(), "converted next to the original");
+        assert!(src.exists(), "original kept");
+        assert!(h.query_by_label("dropped.png → dropped.jpg").is_some());
+    }
+
+    #[test]
+    fn card_format_chip_and_context_menu_convert() {
+        let mut h = harness();
+        let src = temp_png("card.png");
+        h.state_mut().push_card(Card {
+            title: "card.png".into(),
+            detail: "1 KB → 1 KB".into(),
+            saved_pct: 0.0,
+            ok: true,
+            output: Some(src.clone()),
+            texture: None,
+            pending_thumb: None,
+        });
+        h.run();
+
+        // The chip shows the current format and offers the others.
+        h.get_by_label("PNG ▾").click();
+        h.run();
+        assert!(h.query_by_label("JPEG").is_some());
+        h.get_by_label("WebP").click();
+        h.step();
+        wait_for_card(&mut h, 2);
+        assert!(src.with_extension("webp").exists());
+
+        // Right-click on the card opens the same choices plus file actions.
+        h.get_by_label("card.png").click_secondary();
+        h.run();
+        assert!(h.query_by_label("Convert to").is_some());
+        assert!(h.query_by_label("Show in Finder").is_some());
+        assert!(h.query_by_label("Crop…").is_some());
     }
 
     #[test]

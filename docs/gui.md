@@ -23,6 +23,17 @@ cargo run -p xpress-gui --release
   `strip metadata`, an inline **pipeline** field, and a **float on top** toggle.
 - **Open files…** picker, and **Optimise clipboard** / **Clear** buttons.
 - **Crop image…** opens an interactive crop tool: drag a region and **Apply crop**.
+- **Convert images** to PNG, JPEG, WebP, AVIF, HEIC (macOS), GIF, TIFF or BMP —
+  from any image, including iPhone HEIC and AVIF:
+  - **Convert to** on the Optimise screen applies to everything you drop, open or
+    paste (*Keep format* just optimises). Each format says what it's good for,
+    and a note warns where it matters (JPEG has no transparency, GIF has 256
+    colours).
+  - Each image result has a **format chip** (e.g. `PNG ▾`) that converts that
+    file to another format, and a **right-click menu** with *Convert to*,
+    *Crop…*, *Show in Finder* and *Copy*.
+  - Converted files are saved next to the original, which is kept. PNG is
+    lossless; JPEG/WebP use the *Quality target* from Preferences if set.
 - Each result card has **Reveal** (show in the file manager) and **Copy** (put the
   image on the clipboard). Native drag-*out* isn't supported by the egui shell
   yet — see [integrations](integrations.md).
