@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-10-04
+
 ### Added
 - **Complete user guide** in [`docs/`](docs/README.md): getting started,
   optimising, converting, resizing and cropping, video and audio, PDFs, web
@@ -371,7 +373,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/kwhorne/xpress/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/kwhorne/xpress/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/kwhorne/xpress/compare/v0.4.9...v0.5.0
 [0.4.9]: https://github.com/kwhorne/xpress/compare/v0.4.8...v0.4.9

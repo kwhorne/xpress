@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: kwhorne/xpress@v0.5.1
+      - uses: kwhorne/xpress@v0.5.2
         with:
           paths: public assets
           max-size: 500kb
@@ -80,7 +80,7 @@ The action downloads the xpress release for the runner and runs
 | `min-savings` | `10` | Percent that counts as "unoptimised" |
 | `quality` | `visually-lossless` | Perceptual target for images |
 | `exclude` | `node_modules .git` | Directory names to skip |
-| `version` | `latest` | xpress release, e.g. `v0.5.1` |
+| `version` | `latest` | xpress release, e.g. `v0.5.2` |
 
 It runs on `ubuntu-latest` and `macos-latest` (Apple silicon). Images and PDFs
 need nothing else; checking **videos or audio** needs ffmpeg on the runner
