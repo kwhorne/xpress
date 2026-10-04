@@ -16,8 +16,8 @@ audio).
 the same page, unpack it and put `xpress` somewhere on your `PATH`:
 
 ```sh
-tar xzf xpress-v0.5.2-aarch64-apple-darwin.tar.gz
-sudo mv xpress-v0.5.2-aarch64-apple-darwin/xpress /usr/local/bin/
+tar xzf xpress-v0.5.3-aarch64-apple-darwin.tar.gz
+sudo mv xpress-v0.5.3-aarch64-apple-darwin/xpress /usr/local/bin/
 xpress --version
 ```
 

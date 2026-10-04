@@ -6613,7 +6613,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xpress-cli"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "arboard",
@@ -6637,7 +6637,7 @@ dependencies = [
 
 [[package]]
 name = "xpress-core"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "crc32fast",
@@ -6673,7 +6673,7 @@ dependencies = [
 
 [[package]]
 name = "xpress-gui"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "anyhow",
  "arboard",

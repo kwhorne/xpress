@@ -23,8 +23,8 @@ platform on the [releases page](https://github.com/kwhorne/xpress/releases/lates
 | Linux, x86-64 | `xpress-<version>-x86_64-unknown-linux-gnu.tar.gz` |
 
 ```sh
-tar xzf xpress-v0.5.2-aarch64-apple-darwin.tar.gz
-sudo mv xpress-v0.5.2-aarch64-apple-darwin/xpress /usr/local/bin/
+tar xzf xpress-v0.5.3-aarch64-apple-darwin.tar.gz
+sudo mv xpress-v0.5.3-aarch64-apple-darwin/xpress /usr/local/bin/
 xpress --version
 ```
 
