@@ -34,8 +34,17 @@ until you create it; every field is optional:
 | `strip_metadata` | `false` | Remove EXIF/XMP | `--strip-metadata` |
 | `preserve_dates` | `true` | Keep the original modification date | `--no-preserve-dates` |
 
-> The desktop app has its own settings in **Preferences**; they currently last
-> until you quit the app and don't read `config.json`.
+## Desktop app settings: `gui.json`
+
+The [desktop app](gui.md) remembers its settings — the compression slider,
+*Aggressive*, *Convert to*, the pipeline, and everything in **Preferences** — in
+`gui.json` next to `config.json`. Changes are saved automatically.
+
+On the first launch the app starts from `config.json` (`compression`,
+`aggressive`, `backup`, `strip_metadata`). After that the two are separate:
+moving the slider in the app doesn't change what `xpress optimise` does, and
+vice versa. To start the app over from `config.json`, quit it and delete
+`gui.json`.
 
 ## Saved pipelines and automations: `pipelines.json`
 
