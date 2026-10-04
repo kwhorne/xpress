@@ -648,3 +648,94 @@ fn strip_location_removes_gps_but_keeps_camera_and_icc() {
         &3012u32.to_le_bytes()
     ));
 }
+
+#[test]
+fn converts_to_gif_tiff_and_bmp() {
+    let dir = tmpdir("new-targets");
+    let f = dir.join("pic.png");
+    photo(48, 32).save(&f).unwrap();
+    for (format, ext) in [
+        (ImageFormat::Gif, "gif"),
+        (ImageFormat::Tiff, "tiff"),
+        (ImageFormat::Bmp, "bmp"),
+    ] {
+        let r = ximage::convert(&f, format, &opts()).unwrap();
+        assert_eq!(r.output, dir.join(format!("pic.{ext}")));
+        let decoded = image::open(&r.output).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (48, 32), "{ext}");
+    }
+    // TIFF and BMP are lossless.
+    let original = image::open(&f).unwrap().to_rgb8();
+    for ext in ["tiff", "bmp"] {
+        let back = image::open(dir.join(format!("pic.{ext}")))
+            .unwrap()
+            .to_rgb8();
+        assert_eq!(back, original, "{ext} round-trips exactly");
+    }
+}
+
+#[test]
+fn gif_keeps_transparency() {
+    let dir = tmpdir("gif-alpha");
+    let f = dir.join("logo.png");
+    let img = image::RgbaImage::from_fn(32, 32, |x, _| {
+        if x < 16 {
+            image::Rgba([0, 0, 0, 0])
+        } else {
+            image::Rgba([200, 30, 30, 255])
+        }
+    });
+    DynamicImage::ImageRgba8(img).save(&f).unwrap();
+    let r = ximage::convert(&f, ImageFormat::Gif, &opts()).unwrap();
+    let back = image::open(&r.output).unwrap().to_rgba8();
+    assert_eq!(
+        back.get_pixel(4, 4).0[3],
+        0,
+        "transparent stays transparent"
+    );
+    assert_eq!(back.get_pixel(24, 4).0[3], 255);
+}
+
+#[test]
+fn lossless_png_conversion_keeps_every_pixel() {
+    let dir = tmpdir("png-lossless");
+    let f = dir.join("photo.jpg");
+    write_jpeg_with_meta(&f, &photo(64, 48), 1);
+    let r = ximage::convert_with(&f, ImageFormat::Png, &opts(), true).unwrap();
+    let decoded_jpeg = ximage::open_oriented(&f).unwrap().to_rgb8();
+    let png = image::open(&r.output).unwrap().to_rgb8();
+    assert_eq!(png, decoded_jpeg);
+    let (_, _, icc, _) = inspect(&r.output);
+    assert_eq!(
+        icc.as_deref(),
+        Some(FAKE_ICC),
+        "colour profile carried over"
+    );
+}
+
+#[test]
+fn format_names_and_extensions() {
+    for f in ImageFormat::convertible() {
+        assert_eq!(ImageFormat::from_str(f.extension()), Some(f));
+        assert!(!f.label().is_empty() && !f.description().is_empty());
+    }
+    assert_eq!(ImageFormat::of(Path::new("a.TIF")), Some(ImageFormat::Tiff));
+    assert!(!ImageFormat::Jpeg.supports_transparency());
+}
+
+/// AVIF can be read (decoded by macOS's sips) and so converted from.
+#[cfg(target_os = "macos")]
+#[test]
+fn reads_avif() {
+    let dir = tmpdir("avif-in");
+    let f = dir.join("pic.png");
+    photo(64, 64).save(&f).unwrap();
+    let avif = ximage::convert(&f, ImageFormat::Avif, &opts())
+        .unwrap()
+        .output;
+
+    let r = ximage::convert(&avif, ImageFormat::Png, &opts()).unwrap();
+    let decoded = image::open(&r.output).unwrap();
+    assert_eq!((decoded.width(), decoded.height()), (64, 64));
+    assert_eq!(ximage::oriented_dimensions(&avif), Some((64, 64)));
+}

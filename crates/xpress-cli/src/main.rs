@@ -240,9 +240,13 @@ struct DownscaleArgs {
 struct ConvertArgs {
     #[command(flatten)]
     common: CommonOpts,
-    /// Target format. Image: webp|avif|heic|jxl|png|jpeg. Audio: aac|mp3|opus|wav|flac|aiff.
+    /// Target format. Image: png|jpeg|webp|avif|heic|gif|tiff|bmp|jxl.
+    /// Audio: aac|mp3|opus|wav|flac|aiff. Video: mp4|hevc|av1|webm|gif.
     #[arg(short, long)]
     to: String,
+    /// PNG: reduce to a palette (smaller, lossy) instead of converting losslessly.
+    #[arg(long)]
+    palette: bool,
     /// Explicit audio bitrate in kbps.
     #[arg(long)]
     bitrate: Option<i32>,
@@ -854,12 +858,16 @@ fn run_downscale(args: DownscaleArgs) -> Result<()> {
 }
 
 fn run_convert(args: ConvertArgs) -> Result<()> {
-    // Video -> GIF.
-    if args.to.eq_ignore_ascii_case("gif") {
-        let files = collect_files(&args.items, args.common.recursive, &[MediaKind::Video]);
-        if files.is_empty() {
-            bail!("no videos found to convert to GIF");
-        }
+    // Video -> animated GIF. (Images -> GIF fall through to the image path.)
+    let gif_videos = if args.to.eq_ignore_ascii_case("gif") {
+        collect_files(&args.items, args.common.recursive, &[MediaKind::Video])
+    } else {
+        Vec::new()
+    };
+    let gif_images = args.to.eq_ignore_ascii_case("gif")
+        && !collect_files(&args.items, args.common.recursive, &[MediaKind::Image]).is_empty();
+    if !gif_videos.is_empty() && !gif_images {
+        let files = gif_videos;
         let single = files.len() == 1;
         let counter = std::cell::Cell::new(1u64);
         let jobs: Vec<_> = files
@@ -923,11 +931,12 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
             })
             .collect();
         let quality = args.quality;
+        let lossless_png = !args.palette;
         let results =
             progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
                 match quality {
                     Some(target) => xpress_core::quality::convert_to_quality(f, format, target, o),
-                    None => xpress_core::image::convert(f, format, o),
+                    None => xpress_core::image::convert_with(f, format, o, lossless_png),
                 }
             });
         render::summarise(&results, args.common.output_mode());

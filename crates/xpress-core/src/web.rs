@@ -84,6 +84,9 @@ fn mime(format: ImageFormat) -> &'static str {
         ImageFormat::Jpeg => "image/jpeg",
         ImageFormat::Heic => "image/heic",
         ImageFormat::Jxl => "image/jxl",
+        ImageFormat::Gif => "image/gif",
+        ImageFormat::Tiff => "image/tiff",
+        ImageFormat::Bmp => "image/bmp",
     }
 }
 
