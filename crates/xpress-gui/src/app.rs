@@ -2023,9 +2023,18 @@ fn result_card(ui: &mut egui::Ui, card: &Card, index: usize) -> Option<CardActio
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             if let Some(tex) = &card.texture {
+                                // Fit a fixed 52×52 slot, so wide or tall
+                                // images don't push the text around.
+                                let (slot, _) =
+                                    ui.allocate_exact_size(egui::vec2(52.0, 52.0), Sense::hover());
                                 let s = tex.size_vec2();
-                                let scale = 52.0 / s.y.max(1.0);
-                                ui.image((tex.id(), s * scale));
+                                let scale = (52.0 / s.x.max(1.0)).min(52.0 / s.y.max(1.0));
+                                ui.painter().image(
+                                    tex.id(),
+                                    Rect::from_center_size(slot.center(), s * scale),
+                                    Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                                    Color32::WHITE,
+                                );
                             } else {
                                 let icon = if card.ok { "🗎" } else { "⚠" };
                                 ui.label(RichText::new(icon).size(26.0));
