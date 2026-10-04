@@ -18,7 +18,7 @@ use xpress_core::filetype::MediaKind;
 use xpress_core::image::ImageFormat;
 use xpress_core::result::OptimiseOptions;
 
-use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::capture::CaptureFlags;
@@ -35,7 +35,7 @@ const PANEL: Color32 = Color32::from_rgb(0x1e, 0x1f, 0x2b);
 pub(crate) const BORDER: Color32 = Color32::from_rgb(0x2a, 0x2b, 0x3c);
 const TEXT: Color32 = Color32::from_rgb(0xc0, 0xca, 0xf5);
 const TEXT_DIM: Color32 = Color32::from_rgb(0x78, 0x7c, 0x99);
-const ACCENT: Color32 = Color32::from_rgb(0x7a, 0xa2, 0xf7);
+pub(crate) const ACCENT: Color32 = Color32::from_rgb(0x7a, 0xa2, 0xf7);
 pub(crate) const ACCENT2: Color32 = Color32::from_rgb(0x2f, 0x36, 0x50);
 const OK_GREEN: Color32 = Color32::from_rgb(0x9e, 0xce, 0x6a);
 pub(crate) const ERR_RED: Color32 = Color32::from_rgb(0xf7, 0x76, 0x8e);
@@ -119,6 +119,10 @@ pub struct XpressApp {
     confirm_clear: bool,
     /// The clip last put on the clipboard (tests read this).
     last_copied: Option<i64>,
+    /// Every copy goes into one multi-clip.
+    collecting: bool,
+    /// Press ⌘V in the previous app after choosing a clip.
+    paste_directly: bool,
     /// Platform side (tray, hotkeys, clipboard, recording) is set up.
     integrations: bool,
 
@@ -152,6 +156,8 @@ pub struct XpressApp {
     tray_open_id: String,
     tray_clip_id: String,
     tray_history_id: String,
+    tray_collect_id: String,
+    tray_collect_item: Option<CheckMenuItem>,
     tray_update_id: String,
     tray_quit_id: String,
 }
@@ -188,11 +194,12 @@ impl XpressApp {
         if integrations {
             spawn_update_check(ctx.clone(), update_info.clone(), update_checking.clone());
         }
-        let (tray, [open_id, clip_id, history_id, update_id, quit_id]) = if integrations {
-            build_tray()
-        } else {
-            (None, Default::default())
-        };
+        let (tray, [open_id, clip_id, history_id, collect_id, update_id, quit_id], collect_item) =
+            if integrations {
+                build_tray()
+            } else {
+                (None, Default::default(), None)
+            };
         let (manager, [clip_hk, show_hk, history_hk]) = if integrations {
             register_hotkeys()
         } else {
@@ -247,6 +254,8 @@ impl XpressApp {
             history_days: 30,
             confirm_clear: false,
             last_copied: None,
+            collecting: false,
+            paste_directly: false,
             integrations,
             settings_path,
             saved_settings: settings.clone(),
@@ -270,6 +279,8 @@ impl XpressApp {
             tray_open_id: open_id,
             tray_clip_id: clip_id,
             tray_history_id: history_id,
+            tray_collect_id: collect_id,
+            tray_collect_item: collect_item,
             tray_update_id: update_id,
             tray_quit_id: quit_id,
         };
@@ -300,6 +311,7 @@ impl XpressApp {
             history_screenshots: self.history_screenshots,
             history_ocr: self.history_ocr,
             history_days: self.history_days,
+            paste_directly: self.paste_directly,
         }
     }
 
@@ -322,6 +334,7 @@ impl XpressApp {
         self.history_screenshots = s.history_screenshots;
         self.history_ocr = s.history_ocr;
         self.history_days = s.history_days;
+        self.paste_directly = s.paste_directly;
     }
 
     /// Tell the recording thread what the settings say.
@@ -349,24 +362,24 @@ impl XpressApp {
         let Some(history) = self.history.clone() else {
             return;
         };
+        self.history_panel.dirty = true;
         match action {
-            HistoryAction::Copy { id, hide } => {
-                let clip = history.lock().unwrap().get(id).ok().flatten();
-                let Some(clip) = clip else { return };
-                if self.integrations && !put_on_clipboard(&clip) {
-                    return;
-                }
-                let _ = history.lock().unwrap().touch(id);
-                self.last_copied = Some(id);
-                self.history_panel.dirty = true;
-                self.history_panel.selected = 0;
-                if hide && self.integrations {
-                    hide_app(ctx);
+            HistoryAction::Copy { id, hide } => self.copy_clip(&history, id, hide, ctx),
+            HistoryAction::Combine { ids, copy } => {
+                let combined = history.lock().unwrap().combine(&ids);
+                match combined {
+                    Ok(multi) => {
+                        self.history_panel.marked.clear();
+                        if copy {
+                            self.copy_clip(&history, multi, true, ctx);
+                        }
+                    }
+                    Err(e) => eprintln!("xpress: could not combine clips: {e}"),
                 }
             }
             HistoryAction::CopyText(text) => {
-                if self.integrations {
-                    crate::pasteboard::write_text(&text);
+                if self.integrations && crate::pasteboard::write_text(&text) {
+                    self.capture.mark_own_change();
                 }
             }
             HistoryAction::TogglePin(id) => {
@@ -374,11 +387,20 @@ impl XpressApp {
                 if let Ok(Some(clip)) = h.get(id) {
                     let _ = h.set_pinned(id, !clip.pinned);
                 }
-                self.history_panel.dirty = true;
             }
-            HistoryAction::Delete(id) => {
-                let _ = history.lock().unwrap().delete(id);
-                self.history_panel.dirty = true;
+            HistoryAction::Pin(ids) => {
+                let h = history.lock().unwrap();
+                for id in ids {
+                    let _ = h.set_pinned(id, true);
+                }
+                self.history_panel.marked.clear();
+            }
+            HistoryAction::Delete(ids) => {
+                let h = history.lock().unwrap();
+                for id in ids {
+                    let _ = h.delete(id);
+                }
+                self.history_panel.marked.clear();
             }
             HistoryAction::Reveal(path) => reveal_in_file_manager(&path),
             HistoryAction::Open(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
@@ -391,7 +413,86 @@ impl XpressApp {
                     hide_app(ctx);
                 }
             }
+            HistoryAction::SetCollecting(on) => self.set_collecting(on),
+            HistoryAction::SetCategory {
+                clips,
+                category,
+                on,
+            } => {
+                let h = history.lock().unwrap();
+                for clip in clips {
+                    let _ = h.set_category(clip, category, on);
+                }
+            }
+            HistoryAction::SaveCategory {
+                id,
+                name,
+                color,
+                rule,
+            } => {
+                let saved = history
+                    .lock()
+                    .unwrap()
+                    .save_category(id, &name, color, &rule);
+                match saved {
+                    Ok(_) => self.history_panel.editor = None,
+                    Err(e) => self.history_panel.editor_failed(category_error(&e, &name)),
+                }
+            }
+            HistoryAction::DeleteCategory(id) => {
+                let _ = history.lock().unwrap().delete_category(id);
+                self.history_panel.editor = None;
+            }
         }
+    }
+
+    /// Put a clip on the clipboard; with `hide`, step aside so it can be
+    /// pasted — and paste it, when "Paste directly" is on and allowed.
+    fn copy_clip(
+        &mut self,
+        history: &Arc<Mutex<History>>,
+        id: i64,
+        hide: bool,
+        ctx: &egui::Context,
+    ) {
+        let (clip, items) = {
+            let h = history.lock().unwrap();
+            let clip = h.get(id).ok().flatten();
+            let items = clip
+                .as_ref()
+                .filter(|c| c.kind == ClipKind::Multi)
+                .map(|c| h.items(c.id).unwrap_or_default());
+            (clip, items)
+        };
+        let Some(clip) = clip else { return };
+        if self.integrations {
+            if !put_on_clipboard(&clip, items.as_deref()) {
+                return;
+            }
+            self.capture.mark_own_change();
+        }
+        let _ = history.lock().unwrap().touch(id);
+        self.last_copied = Some(id);
+        self.history_panel.selected = 0;
+        if hide && self.integrations {
+            hide_app(ctx);
+            if self.paste_directly && crate::autopaste::allowed() {
+                crate::autopaste::paste_soon();
+            }
+        }
+    }
+
+    /// Start or stop collecting every copy into one multi-clip.
+    fn set_collecting(&mut self, on: bool) {
+        self.collecting = on;
+        self.capture.collecting.store(on, Ordering::Relaxed);
+        if on {
+            self.capture.collection.store(0, Ordering::Relaxed);
+        }
+        if let Some(item) = &self.tray_collect_item {
+            item.set_checked(on);
+        }
+        self.history_panel.dirty = true;
     }
 
     /// Write the settings once they've changed and settled (or now, with
@@ -662,6 +763,9 @@ impl eframe::App for XpressApp {
                 self.optimise_clipboard(ctx);
             } else if id == self.tray_history_id {
                 self.open_history(ctx);
+            } else if id == self.tray_collect_id {
+                let on = !self.collecting;
+                self.set_collecting(on);
             } else if id == self.tray_update_id {
                 Self::show_window(ctx);
                 self.tab = Tab::About;
@@ -744,7 +848,12 @@ impl XpressApp {
                 .show(ui, |ui| match self.tab {
                     Tab::Optimise => self.optimise_view(ui),
                     Tab::History => self.history_view(ui),
-                    Tab::Settings => self.settings_view(ui),
+                    // Taller than the window: scroll.
+                    Tab::Settings => {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| self.settings_view(ui));
+                    }
                     Tab::About => self.about_view(ui),
                 });
         }
@@ -1012,7 +1121,10 @@ impl XpressApp {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        if let Some(action) = self.history_panel.show(ui, self.history_enabled, now) {
+        if let Some(action) =
+            self.history_panel
+                .show(ui, self.history_enabled, self.collecting, now)
+        {
             self.handle_history_action(action, &ctx);
         }
     }
@@ -1049,6 +1161,40 @@ impl XpressApp {
                     );
                 }
                 ui.separator();
+                if crate::autopaste::supported() {
+                    setting_row(
+                        ui,
+                        "Paste directly",
+                        "After you choose a clip, paste it into the app you were using",
+                        |ui| {
+                            if toggle(ui, &mut self.paste_directly).changed()
+                                && self.paste_directly
+                                && self.integrations
+                                && !crate::autopaste::allowed()
+                            {
+                                crate::autopaste::ask();
+                            }
+                        },
+                    );
+                    if self.paste_directly && self.integrations && !crate::autopaste::allowed() {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(
+                                    "Needs permission: System Settings → Privacy & Security → \
+                                     Accessibility → xpress",
+                                )
+                                .color(ERR_RED)
+                                .small(),
+                            );
+                            if ui.small_button("Open Settings").clicked() {
+                                ui.ctx().open_url(egui::OpenUrl::new_tab(
+                                    crate::autopaste::SETTINGS_URL,
+                                ));
+                            }
+                        });
+                    }
+                    ui.separator();
+                }
                 setting_row(ui, "Keep history", "Pinned clips are always kept", |ui| {
                     let current = HISTORY_DAYS
                         .iter()
@@ -1460,11 +1606,12 @@ impl XpressApp {
 
 /// The menu-bar (status bar) icon and its menu; returns the menu item ids
 /// (open, clipboard, update, quit).
-fn build_tray() -> (Option<TrayIcon>, [String; 5]) {
+fn build_tray() -> (Option<TrayIcon>, [String; 6], Option<CheckMenuItem>) {
     let menu = Menu::new();
     let open_item = MenuItem::new("Open xpress\t⌘⇧X", true, None);
     let clip_item = MenuItem::new("Optimise clipboard\t⌘⇧O", true, None);
     let history_item = MenuItem::new("Clipboard history\t⌃⌘V", true, None);
+    let collect_item = CheckMenuItem::new("Collect clips", true, false, None);
     let update_item = MenuItem::new("Check for updates", true, None);
     let quit_item = MenuItem::new("Quit xpress", true, None);
     let _ = menu.append_items(&[
@@ -1472,14 +1619,16 @@ fn build_tray() -> (Option<TrayIcon>, [String; 5]) {
         &PredefinedMenuItem::separator(),
         &clip_item,
         &history_item,
+        &collect_item,
         &update_item,
         &PredefinedMenuItem::separator(),
         &quit_item,
     ]);
-    let (open_id, clip_id, history_id, update_id, quit_id) = (
+    let (open_id, clip_id, history_id, collect_id, update_id, quit_id) = (
         open_item.id().0.clone(),
         clip_item.id().0.clone(),
         history_item.id().0.clone(),
+        collect_item.id().0.clone(),
         update_item.id().0.clone(),
         quit_item.id().0.clone(),
     );
@@ -1492,7 +1641,11 @@ fn build_tray() -> (Option<TrayIcon>, [String; 5]) {
             .build()
             .ok()
     });
-    (tray, [open_id, clip_id, history_id, update_id, quit_id])
+    (
+        tray,
+        [open_id, clip_id, history_id, collect_id, update_id, quit_id],
+        Some(collect_item),
+    )
 }
 
 /// Register the global hotkeys: ⌘⇧O optimises the clipboard, ⌘⇧X shows the
@@ -1907,9 +2060,41 @@ fn hide_app(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
 }
 
-/// Put a history clip back on the clipboard.
-fn put_on_clipboard(clip: &xpress_core::history::Clip) -> bool {
-    use crate::pasteboard;
+/// "Invoices" exists already, rather than SQLite's wording.
+fn category_error(e: &dyn std::fmt::Display, name: &str) -> String {
+    let text = e.to_string();
+    if text.contains("UNIQUE") {
+        format!("There's already a category called “{name}”.")
+    } else {
+        text
+    }
+}
+
+/// Put a history clip back on the clipboard (a multi-clip: all its items).
+fn put_on_clipboard(
+    clip: &xpress_core::history::Clip,
+    items: Option<&[xpress_core::history::Clip]>,
+) -> bool {
+    use crate::pasteboard::{self, Part};
+    if let Some(items) = items {
+        let parts: Vec<Part> = items
+            .iter()
+            .flat_map(|item| match item.kind {
+                ClipKind::Files => item.paths().into_iter().map(Part::File).collect(),
+                ClipKind::Image | ClipKind::Screenshot => item
+                    .image
+                    .as_ref()
+                    .and_then(|p| std::fs::read(p).ok())
+                    .and_then(|bytes| pasteboard::normalise_png(&bytes))
+                    .map(Part::Png)
+                    .into_iter()
+                    .collect(),
+                ClipKind::Multi => Vec::new(),
+                _ => vec![Part::Text(item.text.clone())],
+            })
+            .collect();
+        return pasteboard::write_parts(&parts);
+    }
     match clip.kind {
         ClipKind::Files => pasteboard::write_files(&clip.paths()),
         ClipKind::Image | ClipKind::Screenshot => clip
@@ -2326,10 +2511,157 @@ mod tests {
         h.run();
         assert_eq!(shown(&h), ["Invoice 4711 is paid"]);
 
-        h.state_mut()
-            .handle_history_action(HistoryAction::Delete(invoice), &egui::Context::default());
+        h.state_mut().handle_history_action(
+            HistoryAction::Delete(vec![invoice]),
+            &egui::Context::default(),
+        );
         h.run();
         assert!(shown(&h).is_empty());
+    }
+
+    fn enabled_history(dir: &Path) -> Harness<'static, XpressApp> {
+        let mut h = history_harness(dir);
+        h.state_mut().history_enabled = true;
+        h.run();
+        h
+    }
+
+    fn ids(h: &Harness<'static, XpressApp>) -> Vec<i64> {
+        h.state()
+            .history_panel
+            .results
+            .iter()
+            .map(|c| c.id)
+            .collect()
+    }
+
+    #[test]
+    fn pick_several_and_copy_them_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = enabled_history(dir.path());
+        let all = ids(&h);
+        let cmd = egui::Modifiers {
+            command: true,
+            ..Default::default()
+        };
+        h.state_mut().history_panel.click(0, egui::Modifiers::NONE);
+        h.state_mut().history_panel.click(2, cmd);
+        h.run();
+        assert!(h.query_by_label("2 selected").is_some());
+        h.key_press(egui::Key::Enter);
+        h.run();
+        h.run();
+
+        let multi = h.state().last_copied.unwrap();
+        assert!(!all.contains(&multi), "a new multi-clip");
+        let first = &h.state().history_panel.results[0];
+        assert_eq!((first.id, first.kind), (multi, ClipKind::Multi));
+        assert!(h.state().history_panel.marked.is_empty());
+        assert!(h
+            .query_by_label("#7aa2f7  ·  Invoice 4711 is paid")
+            .is_some());
+        assert!(h.query_by_label_contains("Multi-clip  ·").is_some());
+
+        // Its items, and back.
+        h.state_mut().history_panel.parent = Some(multi);
+        h.state_mut().history_panel.dirty = true;
+        h.run();
+        assert_eq!(shown(&h), ["#7aa2f7", "Invoice 4711 is paid"]);
+        h.get_by_label("← Back").click();
+        h.run();
+        h.run();
+        assert_eq!(h.state().history_panel.results.len(), 4);
+    }
+
+    #[test]
+    fn number_keys_copy_that_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = enabled_history(dir.path());
+        let second = ids(&h)[1];
+        h.key_press_modifiers(
+            egui::Modifiers {
+                command: true,
+                ..Default::default()
+            },
+            egui::Key::Num2,
+        );
+        h.run();
+        assert_eq!(h.state().last_copied, Some(second));
+    }
+
+    #[test]
+    fn collecting_from_the_history_view() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = enabled_history(dir.path());
+        h.get_by_label("⧉ Collect").click();
+        h.run();
+        assert!(h.state().collecting);
+        assert!(h.state().capture.collecting.load(Ordering::Relaxed));
+        assert!(h
+            .query_by_label_contains("Collecting — everything you copy")
+            .is_some());
+        h.get_by_label("Done").click();
+        h.run();
+        assert!(!h.state().capture.collecting.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn categories_are_made_used_and_filtered() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = enabled_history(dir.path());
+        h.get_by_label("+ Category").click();
+        h.run();
+        assert!(h.query_by_label("New category").is_some());
+        h.state_mut().history_panel.editor.as_mut().unwrap().name = "Work".into();
+        h.state_mut().history_panel.editor.as_mut().unwrap().app = Some("Safari".into());
+        h.run();
+        h.get_by_label("Save").click();
+        h.run();
+        h.run();
+        assert!(h.state().history_panel.editor.is_none());
+        let work = h.state().history_panel.categories[0].clone();
+        assert_eq!(
+            (work.name.as_str(), work.count),
+            ("Work", 1),
+            "the Safari link by rule"
+        );
+
+        // By hand, then filter.
+        let invoice = h
+            .state()
+            .history_panel
+            .results
+            .iter()
+            .find(|c| c.text.starts_with("Invoice"))
+            .unwrap()
+            .id;
+        h.state_mut().handle_history_action(
+            HistoryAction::SetCategory {
+                clips: vec![invoice],
+                category: work.id,
+                on: true,
+            },
+            &egui::Context::default(),
+        );
+        h.run();
+        h.get_by_label_contains("Work").click();
+        h.run();
+        h.run();
+        assert_eq!(
+            shown(&h),
+            ["https://kwhorne.com/xpress", "Invoice 4711 is paid"]
+        );
+
+        // The same name again is refused, and the dialog stays open.
+        h.state_mut().history_panel.editor = Some(Default::default());
+        h.state_mut().history_panel.editor.as_mut().unwrap().name = "work".into();
+        h.run();
+        h.get_by_label("Save").click();
+        h.run();
+        h.run();
+        assert!(h
+            .query_by_label_contains("already a category called")
+            .is_some());
     }
 
     #[test]
@@ -2339,7 +2671,10 @@ mod tests {
             let mut h = history_harness(dir.path());
             h.state_mut().tab = Tab::Settings;
             h.state_mut().history_enabled = true;
+            // Preferences scroll; show all of it.
+            h.set_size(egui::vec2(960.0, 1800.0));
             h.state_mut().history_days = 7;
+            h.state_mut().paste_directly = true;
             h.run();
             assert!(h.query_by_label("Clipboard history").is_some());
             h.get_by_label("Clear…").click();
@@ -2375,6 +2710,7 @@ mod tests {
         let h = history_harness(dir.path());
         assert!(h.state().history_enabled);
         assert_eq!(h.state().capture.keep_days.load(Ordering::Relaxed), 7);
+        assert!(h.state().paste_directly);
     }
 
     #[test]
