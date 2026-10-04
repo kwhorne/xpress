@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- *Paste directly* presses the key that gives ⌘V in the current keyboard
+  layout; with plain Dvorak it pressed the wrong key.
+- Result cards fit very wide or tall images into the same preview size instead
+  of pushing the text aside.
+- New app screenshot (with History in the sidebar).
+
 ## [0.7.0] - 2026-10-04
 
 ### Added
