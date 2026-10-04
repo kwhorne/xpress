@@ -68,6 +68,7 @@ them with the `pipeline` commands rather than editing by hand — see
 | Converted files | Next to the original, with the new extension |
 | Optimised clipboard images | `~/Pictures/xpress` |
 | [Clipboard history](history.md) | `history/` next to `config.json` (`history.db`, `images/`, `thumbs/`) |
+| History sync (when on) | `xpress/` in iCloud Drive (`devices/<mac>/log-*.jsonl`, `blobs/`) |
 | `xpress web` output | `<name>-web/` next to the image (or `-o`) |
 | External tools (optional) | macOS `~/Library/Application Support/xpress/bin`, Linux `~/.local/share/xpress/bin` |
 | "Already optimised" marks | An extended attribute on each file (`com.xpress.optimised`; Linux `user.xpress.optimised`) — see `xattr -l <file>` |

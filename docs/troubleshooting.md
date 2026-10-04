@@ -104,6 +104,18 @@ Some apps take only one kind of content. Plain text fields get all the text;
 rich editors get text and images; a pure picture field gets the first image.
 Right-click the multi-clip → *Show items* to copy items one by one.
 
+**There's no Apple Intelligence menu.**
+It needs macOS 26 or later on Apple silicon, Apple Intelligence turned on
+(System Settings → Apple Intelligence & Siri), and a text clip (or an image with
+recognised text). A greyed-out item tells you what's missing; the model may
+still be downloading after you turn it on.
+
+**History doesn't sync.**
+Turn on *Sync with iCloud* on **every** Mac, and check that iCloud Drive is on.
+Preferences shows the last sync and any problem. Images can take a while to
+reach the other Mac (“changes waiting for iCloud”); with *Optimise Mac Storage*
+on, iCloud may first need to download them.
+
 **A screenshot isn't found by its text.**
 Text recognition needs *Find text in images* on, runs once when the image is
 recorded, and reads printed text best; tiny or handwritten text may be missed.

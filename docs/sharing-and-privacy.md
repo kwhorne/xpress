@@ -78,7 +78,10 @@ The app's [clipboard history](history.md) is **off until you turn it on**,
 keeps everything on your Mac (`history/` in the config folder), never records
 content that password managers mark as private, and ignores copies made in
 password managers. Text recognition in images runs on the Mac too. *Paste directly* uses the
-Accessibility permission only to press ⌘V in the app you return to. Delete single
+Accessibility permission only to press ⌘V in the app you return to. Apple
+Intelligence runs on the Mac's own model. *Sync with iCloud* (off by default)
+stores the history in your iCloud Drive — end-to-end encrypted when Advanced
+Data Protection is on; see [Sync between your Macs](history.md#sync-between-your-macs). Delete single
 clips with right-click → *Delete*, or everything unpinned with *Clear…* in
 Preferences.
 

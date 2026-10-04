@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Apple Intelligence** in the clipboard history: summarise, proofread, make
+  shorter / professional / friendly, or translate a clip to English with the
+  on-device model (macOS 26+, Apple silicon), then copy the result or save it
+  as a new clip. A small Swift helper, `xpress-ai`, is bundled with the app.
+- **Sync with iCloud**: the clipboard history — clips, images, multi-clips,
+  pins and categories — follows you between Macs through an `xpress` folder in
+  iCloud Drive. Each Mac keeps its own retention; deletions sync.
+
 ## [0.6.0] - 2026-10-04
 
 ### Added

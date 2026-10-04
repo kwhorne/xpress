@@ -46,8 +46,11 @@ One tool, three ways to use it:
   them by name, and attach them to folders for hands-off automation.
 - **Clipboard and screenshot history** (app): everything you copy and every
   screenshot, searchable — including the words inside images (on-device text
-  recognition) — filtered by kind and app, one keystroke from pasting again.
-  Off until you turn it on; passwords are never recorded.
+  recognition) — filtered by kind, app and your own categories, one keystroke
+  from pasting again; multi-clips paste several things at once; **Apple
+  Intelligence** summarises, proofreads and rewrites clips on-device; **sync
+  with iCloud** between your Macs. Off until you turn it on; passwords are
+  never recorded.
 - **Non-destructive by default**: originals are backed up and can be restored.
 
 Images **and PDFs** are optimised, resized, cropped and converted **entirely in

@@ -99,7 +99,7 @@ For crops to an exact size or aspect ratio, or batches, use
 | Aggressive by default | off | Start with the aggressive preset. |
 | Float on top | off | Keep the window above other windows. |
 | Default pipeline | `crop(longEdge: 2000) -> convert(to: webp)` | Used when *Pipeline* is switched on. |
-| Clipboard history | off | Record what you copy and your screenshots — with *Include screenshots*, *Find text in images*, *Paste directly*, *Keep history* and *Clear…*. See [History](history.md#settings). |
+| Clipboard history | off | Record what you copy and your screenshots — with *Include screenshots*, *Find text in images*, *Paste directly*, *Sync with iCloud*, *Keep history* and *Clear…*. See [History](history.md#settings). |
 
 Settings — these and the compression slider, *Aggressive*, *Convert to* and
 *Pipeline* on the Optimise screen — are saved automatically and restored the
