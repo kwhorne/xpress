@@ -92,6 +92,18 @@ private. Screenshots are picked up from the folder macOS saves them to (set in
 the Screenshot app's *Options*); it can take a few seconds after the floating
 thumbnail disappears.
 
+**Paste directly doesn't paste.**
+xpress needs the Accessibility permission: System Settings → Privacy & Security
+→ Accessibility → switch on *xpress* (remove and re-add it if it's listed but
+still doesn't work). xpress presses the key where *V* is on a QWERTY keyboard; with
+a layout that moves V (plain Dvorak), use a “⌘ QWERTY” variant of it, or paste
+yourself with ⌘V.
+
+**Only the first part of a multi-clip is pasted.**
+Some apps take only one kind of content. Plain text fields get all the text;
+rich editors get text and images; a pure picture field gets the first image.
+Right-click the multi-clip → *Show items* to copy items one by one.
+
 **A screenshot isn't found by its text.**
 Text recognition needs *Find text in images* on, runs once when the image is
 recorded, and reads printed text best; tiny or handwritten text may be missed.

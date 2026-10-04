@@ -16,6 +16,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   private, and copies made in password managers, are never recorded. Kept for
   a chosen time (default a month, pinned clips forever, at most 2 GB) in a
   local SQLite database. See [docs/history.md](docs/history.md).
+- **Multi-clips**: pick several clips (⌘-click, ⇧-click) and *Copy together*,
+  or *Collect* everything you copy into one — text, links, images and files
+  from different apps, pasted at once (plain text in text fields; text and
+  images in rich editors; all files in Finder).
+- **Categories** for the clipboard history, with colours and optional rules
+  (source app, kind, words — also words found in images) that sort new and
+  existing clips automatically; filter by category.
+- **Paste directly**: choose a clip and xpress pastes it into the app you were
+  using (needs the Accessibility permission).
+- ⌘1–⌘9 copy the first nine clips; *Collect clips* in the menu-bar menu.
+
+### Fixed
+- Preferences scroll when they're taller than the window.
 
 ## [0.5.4] - 2026-10-04
 
