@@ -1,84 +1,129 @@
-# Desktop GUI
+# The desktop app
 
-`xpress-gui` is a small native app (egui/eframe) for interactive optimisation.
+![The xpress desktop app](screenshot.png)
 
-```sh
-cargo run -p xpress-gui --release
-```
+The xpress app is a small **menu-bar app** for macOS: drag files onto its window
+(or press a hotkey) and they come out smaller. Everything the command line can
+do to a single file is a click away; batch automation lives in
+[pipelines](pipelines.md) and the [watcher](daemon.md).
 
-## Features
+## The menu bar and hotkeys
 
-- **Drag and drop** images, videos, PDFs or audio onto the window to optimise them.
-- **Result cards** show before/after size, the saving (`-NN%`), and a thumbnail
-  for images.
-- **Global hotkeys**: `⌘⇧O` optimises the clipboard image from anywhere, and
-  `⌘⇧X` brings the xpress window to the front (great with the menu-bar app).
-- **Self-updating**: when a newer release is published, an **Update & Restart**
-  button downloads it, replaces the installed `.app`, and relaunches — no trip to
-  the browser.
-- **Menu-bar app**: a status-bar icon (Open / Optimise clipboard / Check for
-  updates / Quit) keeps xpress a click away. Closing the window hides it to the
-  menu bar; use the menu's **Quit** to exit.
-- **Controls**: a compression slider (5–100), `aggressive`, `backup`,
-  `strip metadata`, an inline **pipeline** field, and a **float on top** toggle.
-- **Open files…** picker, and **Optimise clipboard** / **Clear** buttons.
-- **Crop image…** opens an interactive crop tool: drag a region and **Apply crop**.
-- **Convert images** to PNG, JPEG, WebP, AVIF, HEIC (macOS), GIF, TIFF or BMP —
-  from any image, including iPhone HEIC and AVIF:
-  - **Convert to** on the Optimise screen applies to everything you drop, open or
-    paste (*Keep format* just optimises). Each format says what it's good for,
-    and a note warns where it matters (JPEG has no transparency, GIF has 256
-    colours).
-  - Each image result has a **format chip** (e.g. `PNG ▾`) that converts that
-    file to another format, and a **right-click menu** with *Convert to*,
-    *Crop…*, *Show in Finder* and *Copy*.
-  - Converted files are saved next to the original, which is kept. PNG is
-    lossless; JPEG/WebP use the *Quality target* from Preferences if set.
-- Each result card has **Reveal** (show in the file manager) and **Copy** (put the
-  image on the clipboard). Native drag-*out* isn't supported by the egui shell
-  yet — see [integrations](integrations.md).
-- Work runs off the UI thread, so the window stays responsive while encoding.
+xpress has no Dock icon — look for the **✕** in the menu bar. Its menu has:
 
-Clipboard images are saved to `~/Pictures/xpress`.
+| Item | Shortcut | Does |
+|------|----------|------|
+| Open xpress | ⌘⇧X | Bring the window to the front |
+| Optimise clipboard | ⌘⇧O | Optimise the image you copied, and put the smaller one back on the clipboard |
+| Check for updates | | Look for a new version now |
+| Quit xpress | | Quit (closing the window only hides it) |
 
-## Building a macOS `.app`
+The two shortcuts work **from any app**: copy a screenshot, press **⌘⇧O**, and
+paste the optimised version.
+
+## Optimise
+
+The main screen. Its sidebar entry is **Optimise**.
+
+### Adding files
+
+- **Drag** images, videos, PDFs or audio files onto the window (the drop area
+  lights up). Several files at once are fine.
+- **Open files…** picks files with a file dialog.
+- **Optimise clipboard** takes the image on the clipboard (same as ⌘⇧O).
+  Clipboard images are saved to `~/Pictures/xpress`, and the optimised image is
+  copied back so your next paste is the small one.
+
+Work happens in the background — the window stays responsive, and the bottom
+of the sidebar shows how many files are in progress (*2 working…*).
+
+### Controls
+
+| Control | What it does |
+|---------|--------------|
+| **Compression** | How hard to compress, from 5 (best quality) to 100 (smallest). 30 is the normal default. See [Optimising](optimising.md#the-compression-dial). Disabled while a *Quality target* is set. |
+| **Aggressive** | Use the aggressive preset (compression 64) for noticeably smaller files. |
+| **Convert to** | *Keep format* just optimises. Choosing a format (PNG, JPEG, WebP, AVIF, HEIC, GIF, TIFF, BMP) **converts** every image you add instead — saved next to the original, which is kept. A note explains what to expect, e.g. that JPEG has no transparency. Videos, PDFs and audio are still optimised. See [Converting formats](converting.md). |
+| **Pipeline** | Run a [pipeline](pipelines.md) on everything you add instead, e.g. `crop(longEdge: 2000) -> convert(to: webp)`. |
+
+### Results
+
+Each file gets a card:
+
+- a **thumbnail** (for images), the **file name** — `photo.png → photo.jpg` when
+  the format changed — and the **sizes before → after**;
+- the **saving** on the right, e.g. `−62%`; notes such as *already optimised —
+  skipped*, *SSIMULACRA2 80* (when a quality target was used) or *copied back*
+  (clipboard images);
+- a **format chip** for images (e.g. `PNG ▾`): click it to **convert** that file
+  to another format;
+- **Reveal** (show it in Finder) and **Copy** (put it on the clipboard).
+
+**Right-click** a card for the same actions plus **Crop…**:
+*Convert to ▸*, *Crop…*, *Show in Finder*, *Copy*.
+
+**Clear** removes all cards (it doesn't touch the files). Drag-*out* of a card
+into another app isn't supported yet — use *Copy* or *Reveal* and drag from
+Finder.
+
+## Crop image…
+
+Opens an image, shows it full-window, and lets you **drag a rectangle** over the
+part to keep. **Apply crop** crops (and optimises) it in place, with a backup;
+**Cancel** goes back. The crop tool handles still images, including HEIC and
+AVIF. You can also start it from a result card's right-click menu.
+
+For crops to an exact size or aspect ratio, or batches, use
+[`xpress crop`](resizing-and-cropping.md).
+
+## Preferences
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| Keep a backup | on | Save the original as `.<name>.orig` next to it. |
+| Strip metadata | off | Remove EXIF and XMP (camera, date, location). The colour profile is always kept. |
+| Remove location | off | Remove only *where* a photo or video was taken (GPS); keep everything else. See [Sharing and privacy](sharing-and-privacy.md). |
+| Quality target | Off | For images: instead of the compression slider, find the **smallest file that still looks** visually lossless / high / medium / low. See [quality targets](optimising.md#quality-targets). |
+| Skip already-optimised files | on | Leave files xpress already optimised with these settings (instant, no extra quality loss). |
+| Aggressive by default | off | Start with the aggressive preset. |
+| Float on top | off | Keep the window above other windows. |
+| Default pipeline | `crop(longEdge: 2000) -> convert(to: webp)` | Used when *Pipeline* is switched on. |
+
+> **Note:** settings currently apply until you quit the app; they are not yet
+> saved between launches.
+
+## About and updates
+
+**About** shows the version and links. When a newer version is published, a
+banner appears at the top: **Update & Restart** downloads it, replaces the app
+and relaunches — or dismiss it with ✕. The app checks every six hours, and on
+demand via *Check for updates*.
+
+## Accessibility
+
+Buttons, toggles and sidebar items are exposed to VoiceOver.
+
+---
+
+## Building the app
+
+For developers — building the `.app`/`.dmg` yourself:
 
 ```sh
 cargo build --release -p xpress-gui -p xpress-cli
-scripts/make-app.sh                 # -> dist/xpress.app  (ad-hoc signed)
-scripts/make-app.sh --tools         # also bundle ffmpeg/pngquant/... inside
-scripts/make-dmg.sh                 # -> dist/xpress.dmg  (drag-to-Applications)
+scripts/fetch-static-tools.sh aarch64-apple-darwin bundle-tools   # a portable ffmpeg
+scripts/make-app.sh --gui target/release/xpress-gui --bin-dir bundle-tools   # -> dist/xpress.app
+scripts/make-dmg.sh                                                # -> dist/xpress.dmg
 ```
 
-The bundle is signed (Developer ID when available) and includes the app icon from
-`assets/AppIcon.icns`. It also **bundles a self-contained `ffmpeg`** in
-`Contents/Resources/bin`, so video/audio work with nothing to install (images are
-pure Rust; PDF still uses an external `ghostscript`). Tagged releases publish a
-notarised `xpress-*-app.zip` and `xpress-*.dmg`.
+`make-app.sh` signs with the first *Developer ID Application* identity in your
+keychain (otherwise ad-hoc), and notarises when `XPRESS_NOTARIZE=1` and Apple
+credentials are set — see [Code signing](signing.md). Tagged releases build,
+sign and notarise everything in CI.
 
-```sh
-scripts/fetch-static-tools.sh aarch64-apple-darwin bundle-tools
-scripts/make-app.sh --gui target/release/xpress-gui --bin-dir bundle-tools
-```
+### App icon
 
-### Distribution (Developer ID + notarisation)
-
-For sharing outside your own machine, sign and notarise (commands are at the
-bottom of `scripts/make-app.sh`):
-
-```sh
-codesign --force --options runtime --timestamp \
-  --sign "Developer ID Application: Your Name (TEAMID)" dist/xpress.app
-ditto -c -k --keepParent dist/xpress.app xpress.zip
-xcrun notarytool submit xpress.zip --apple-id you@example.com \
-  --team-id TEAMID --password APP_SPECIFIC_PWD --wait
-xcrun stapler staple dist/xpress.app
-```
-
-## App icon
-
-The icon is defined as vector art in `assets/icon.svg` and rendered to
-`assets/AppIcon.icns`. To regenerate after editing the SVG:
+The icon is vector art in `assets/icon.svg`, rendered to `assets/AppIcon.icns`:
 
 ```sh
 cargo run --manifest-path tools/icon-gen/Cargo.toml --release -- \
