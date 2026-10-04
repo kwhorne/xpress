@@ -32,6 +32,8 @@ pub enum Tool {
     HeifEnc,
     Cjxl,
     Exiftool,
+    /// Apple Intelligence helper bundled with the app (see `intelligence`).
+    XpressAi,
 }
 
 impl Tool {
@@ -51,6 +53,7 @@ impl Tool {
             Tool::HeifEnc => "heif-enc",
             Tool::Cjxl => "cjxl",
             Tool::Exiftool => "exiftool",
+            Tool::XpressAi => "xpress-ai",
         }
     }
 }

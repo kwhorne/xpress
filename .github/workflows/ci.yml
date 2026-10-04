@@ -52,6 +52,9 @@ jobs:
             libxkbcommon-dev libgl1-mesa-dev
       - name: Build workspace
         run: cargo build --workspace --all-targets
+      - name: Build the Apple Intelligence helper (Swift)
+        if: runner.os == 'macOS'
+        run: scripts/build-xpress-ai.sh
       - name: Test workspace
         run: cargo test --workspace
 

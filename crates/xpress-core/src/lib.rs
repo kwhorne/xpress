@@ -15,6 +15,7 @@ pub mod effects;
 pub mod filetype;
 pub mod history;
 pub mod image;
+pub mod intelligence;
 pub mod ocr;
 pub mod pdf;
 pub mod pipeline;
