@@ -251,6 +251,7 @@ mod imp {
 
 /// A cheap fingerprint of an image: its size and a sample of its pixels
 /// (hashing every byte of a large screenshot twice a second would be wasteful).
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub fn image_signature(width: usize, height: usize, rgba: &[u8]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
