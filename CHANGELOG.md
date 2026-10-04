@@ -6,6 +6,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Updates work when GitHub's API rate limit is reached** (60 anonymous
+  requests an hour per network address): the update check falls back to the
+  public releases page, and uses `GITHUB_TOKEN`/`GH_TOKEN` when set. Previously
+  `xpress update` failed with `status code 403`.
+- The `cargo audit` CI job failed on every push to `main` because it couldn't
+  report its result.
+
+### Changed
+- `xpress update` and the app's *Update & Restart* verify the download against
+  the release's SHA-256 checksum before replacing anything. The CLI no longer
+  depends on `self_update`.
+
 ## [0.5.2] - 2026-10-04
 
 ### Added

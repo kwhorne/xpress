@@ -75,6 +75,11 @@ be put in the per-user folder with
 - **Command line:** `xpress update` downloads and installs the new version in
   place; `xpress update --check` only reports.
 
+Downloads are checked against the release's SHA-256 checksums before anything
+is replaced. The update check uses GitHub's API (60 anonymous requests an hour
+per network address) and falls back to the public releases page when that
+limit is reached; set `GITHUB_TOKEN` to use your own quota.
+
 ## Shell completions and man page
 
 ```sh

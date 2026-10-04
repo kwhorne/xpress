@@ -235,7 +235,10 @@ and colour profile). Needs `exiftool`. Alternative without extra tools:
 xpress update [--check]
 ```
 
-Downloads and installs the latest release in place; `--check` only reports.
+Downloads and installs the latest release in place, after checking it against
+the release's SHA-256 checksum; `--check` only reports. Uses `GITHUB_TOKEN` (or
+`GH_TOKEN`) for the GitHub API when set, and the public releases page when the
+API's rate limit is reached.
 
 ## Exit status
 

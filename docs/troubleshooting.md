@@ -103,7 +103,14 @@ you passed a folder without `-r` and the files are in subfolders.
 **`xpress update` fails.**
 Download the `.tar.gz` from the releases page and replace the binary. (Versions
 before 0.5.0 on macOS could pick the wrong download; updating to 0.5.0 or later
-fixes this.)
+fixes this.) Versions before 0.5.3 fail with `status code 403` when GitHub's
+API rate limit (60 requests an hour per network address) is reached: wait an
+hour, or download manually. Later versions fall back to the releases page.
+
+**"checksum mismatch".**
+The download didn't match the release's published SHA-256 checksum, so nothing
+was replaced. Try again; if it keeps happening, download manually and
+[report it](https://github.com/kwhorne/xpress/issues).
 
 **Scripting.**
 `--json` prints machine-readable results; `-q` prints only errors and the
