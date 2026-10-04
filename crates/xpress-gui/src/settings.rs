@@ -35,6 +35,8 @@ pub struct Settings {
     pub history_days: u32,
     /// Paste a chosen clip into the previous app (needs Accessibility).
     pub paste_directly: bool,
+    /// Sync the history between Macs through iCloud Drive.
+    pub history_sync: bool,
 }
 
 impl Default for Settings {
@@ -63,6 +65,7 @@ impl Settings {
             history_ocr: true,
             history_days: 30,
             paste_directly: false,
+            history_sync: false,
         }
     }
 

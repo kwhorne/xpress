@@ -25,6 +25,7 @@ pub mod result;
 pub mod scale;
 pub mod share;
 pub mod store;
+pub mod sync;
 pub mod template;
 pub mod tools;
 pub mod update;

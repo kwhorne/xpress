@@ -16,8 +16,11 @@
 //! together; its items stay clips of their own. **Categories** group clips by
 //! hand or automatically, through a rule (source app, kind, words).
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use crate::sync::Op;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
@@ -278,8 +281,12 @@ pub struct Retention {
 }
 
 pub struct History {
-    conn: Connection,
-    dir: PathBuf,
+    pub(crate) conn: Connection,
+    pub(crate) dir: PathBuf,
+    /// Record changes for syncing (see [`crate::sync`]).
+    journal: Cell<bool>,
+    /// Applying changes from elsewhere (or rule-driven ones): don't record.
+    quiet: Cell<bool>,
 }
 
 impl History {
@@ -360,12 +367,62 @@ impl History {
                  category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
                  PRIMARY KEY (clip_id, category_id)
              );
-             PRAGMA user_version = 2;",
+             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY, op TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS tombstones (hash TEXT PRIMARY KEY, at INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS sync_progress (
+                 device TEXT NOT NULL,
+                 file TEXT NOT NULL,
+                 lines INTEGER NOT NULL,
+                 PRIMARY KEY (device, file)
+             );
+             PRAGMA user_version = 3;",
         )?;
         Ok(History {
             conn,
             dir: dir.to_path_buf(),
+            journal: Cell::new(false),
+            quiet: Cell::new(false),
         })
+    }
+
+    /// Record changes in the outbox so [`crate::sync`] can share them.
+    pub fn set_journal(&self, on: bool) {
+        self.journal.set(on);
+    }
+
+    pub fn journal(&self) -> bool {
+        self.journal.get()
+    }
+
+    pub(crate) fn emit(&self, op: Op) -> rusqlite::Result<()> {
+        if self.journal.get() && !self.quiet.get() {
+            let json = serde_json::to_string(&op)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+            self.conn
+                .execute("INSERT INTO outbox (op) VALUES (?1)", [json])?;
+        }
+        Ok(())
+    }
+
+    /// Run `f` without recording its changes.
+    pub(crate) fn quietly<T>(&self, f: impl FnOnce() -> T) -> T {
+        let before = self.quiet.replace(true);
+        let out = f();
+        self.quiet.set(before);
+        out
+    }
+
+    pub(crate) fn hash_of(&self, id: i64) -> rusqlite::Result<Option<String>> {
+        self.conn
+            .query_row("SELECT hash FROM clips WHERE id = ?1", [id], |r| r.get(0))
+            .optional()
+    }
+
+    pub(crate) fn id_of(&self, hash: &str) -> rusqlite::Result<Option<i64>> {
+        self.conn
+            .query_row("SELECT id FROM clips WHERE hash = ?1", [hash], |r| r.get(0))
+            .optional()
     }
 
     pub fn dir(&self) -> &Path {
@@ -398,6 +455,7 @@ impl History {
                  WHERE id = ?1",
                 params![id, at, clip.source_app, clip.source_bundle],
             )?;
+            self.emit(Op::Touch { hash, used: at })?;
             return Ok(Added { id, new: false });
         }
 
@@ -422,6 +480,18 @@ impl History {
             ],
         )?;
         let id = self.conn.last_insert_rowid();
+        self.emit(Op::Add {
+            hash,
+            kind: clip.kind.as_str().into(),
+            text: clip.text,
+            ocr: String::new(),
+            image: clip.image.map(|(_, ext)| ext),
+            app: clip.source_app,
+            bundle: clip.source_bundle,
+            created: at,
+            used: at,
+            pinned: false,
+        })?;
         self.apply_rules(id)?;
         Ok(Added { id, new: true })
     }
@@ -463,7 +533,31 @@ impl History {
             )?;
         }
         self.refresh_multi(multi)?;
+        self.emit_multi(multi)?;
         Ok(multi)
+    }
+
+    /// Share a multi-clip's current items.
+    fn emit_multi(&self, multi: i64) -> rusqlite::Result<()> {
+        if !self.journal.get() || self.quiet.get() {
+            return Ok(());
+        }
+        let Some(clip) = self.get(multi)? else {
+            return Ok(());
+        };
+        let hash = self.hash_of(multi)?.unwrap_or_default();
+        let items = self
+            .items(multi)?
+            .into_iter()
+            .filter_map(|c| self.hash_of(c.id).ok().flatten())
+            .collect();
+        self.emit(Op::Multi {
+            hash,
+            items,
+            created: clip.created,
+            used: clip.last_used,
+            pinned: clip.pinned,
+        })
     }
 
     /// Add `clip` to the end of `multi`, or start a new multi-clip with it
@@ -493,6 +587,7 @@ impl History {
             self.refresh_multi(multi.id)?;
         }
         self.touch(multi.id)?;
+        self.emit_multi(multi.id)?;
         Ok(multi.id)
     }
 
@@ -507,7 +602,7 @@ impl History {
     }
 
     /// Keep a multi-clip's searchable text in step with its items.
-    fn refresh_multi(&self, multi: i64) -> rusqlite::Result<()> {
+    pub(crate) fn refresh_multi(&self, multi: i64) -> rusqlite::Result<()> {
         let text: Vec<String> = self
             .items(multi)?
             .iter()
@@ -583,6 +678,23 @@ impl History {
                 .filter(|v| !v.is_empty())
         };
         let color = format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]);
+        let previous: Option<String> = match id {
+            Some(id) => self
+                .conn
+                .query_row("SELECT name FROM categories WHERE id = ?1", [id], |r| {
+                    r.get(0)
+                })
+                .optional()?,
+            None => None,
+        };
+        self.emit(Op::Category {
+            name: name.to_string(),
+            previous: previous.filter(|p| p != name),
+            color: color.clone(),
+            app: clean(&rule.app),
+            kind: rule.kind.map(|k| k.as_str().to_string()),
+            contains: clean(&rule.contains),
+        })?;
         let values = params![
             name,
             color,
@@ -616,17 +728,30 @@ impl History {
                     limit: usize::MAX >> 1,
                     ..Default::default()
                 };
-                for clip in self.search(&everything)? {
-                    if category.rule.matches(&clip) {
-                        self.set_category(clip.id, id, true)?;
+                // Other Macs apply the rule themselves.
+                self.quietly(|| -> rusqlite::Result<()> {
+                    for clip in self.search(&everything)? {
+                        if category.rule.matches(&clip) {
+                            self.set_category(clip.id, id, true)?;
+                        }
                     }
-                }
+                    Ok(())
+                })?;
             }
         }
         Ok(id)
     }
 
     pub fn delete_category(&self, id: i64) -> rusqlite::Result<()> {
+        let name: Option<String> = self
+            .conn
+            .query_row("SELECT name FROM categories WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if let Some(name) = name {
+            self.emit(Op::CategoryDelete { name })?;
+        }
         self.conn
             .execute("DELETE FROM categories WHERE id = ?1", [id])
             .map(|_| ())
@@ -639,25 +764,42 @@ impl History {
         } else {
             "DELETE FROM clip_categories WHERE clip_id = ?1 AND category_id = ?2"
         };
-        self.conn.execute(sql, params![clip, category]).map(|_| ())
-    }
-
-    /// Add a clip to every category whose rule it matches.
-    fn apply_rules(&self, clip: i64) -> rusqlite::Result<()> {
-        let Some(clip) = self.get(clip)? else {
-            return Ok(());
-        };
-        for category in self.categories()? {
-            if category.rule.matches(&clip) {
-                self.set_category(clip.id, category.id, true)?;
+        self.conn.execute(sql, params![clip, category])?;
+        if self.journal.get() && !self.quiet.get() {
+            let name: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT name FROM categories WHERE id = ?1",
+                    [category],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let (Some(hash), Some(category)) = (self.hash_of(clip)?, name) {
+                self.emit(Op::Categorize { hash, category, on })?;
             }
         }
         Ok(())
     }
 
+    /// Add a clip to every category whose rule it matches.
+    pub(crate) fn apply_rules(&self, clip: i64) -> rusqlite::Result<()> {
+        let Some(clip) = self.get(clip)? else {
+            return Ok(());
+        };
+        // Every Mac applies its own rules.
+        self.quietly(|| {
+            for category in self.categories()? {
+                if category.rule.matches(&clip) {
+                    self.set_category(clip.id, category.id, true)?;
+                }
+            }
+            Ok(())
+        })
+    }
+
     /// Write the image (PNGs losslessly recompressed) and its preview.
     /// Returns relative paths and the stored size.
-    fn store_image(
+    pub(crate) fn store_image(
         &self,
         hash: &str,
         data: &[u8],
@@ -698,6 +840,12 @@ impl History {
     pub fn set_ocr(&self, id: i64, text: &str) -> rusqlite::Result<()> {
         self.conn
             .execute("UPDATE clips SET ocr = ?2 WHERE id = ?1", params![id, text])?;
+        if let Some(hash) = self.hash_of(id)? {
+            self.emit(Op::Ocr {
+                hash,
+                text: text.to_string(),
+            })?;
+        }
         // Rules on words can match now.
         self.apply_rules(id)?;
         for parent in self.parents_of(id)? {
@@ -708,21 +856,26 @@ impl History {
 
     /// Mark a clip as just used (copied back), moving it to the top.
     pub fn touch(&self, id: i64) -> rusqlite::Result<()> {
-        self.conn
-            .execute(
-                "UPDATE clips SET last_used = ?2 WHERE id = ?1",
-                params![id, now_ms()],
-            )
-            .map(|_| ())
+        let at = now_ms();
+        self.conn.execute(
+            "UPDATE clips SET last_used = ?2 WHERE id = ?1",
+            params![id, at],
+        )?;
+        if let Some(hash) = self.hash_of(id)? {
+            self.emit(Op::Touch { hash, used: at })?;
+        }
+        Ok(())
     }
 
     pub fn set_pinned(&self, id: i64, pinned: bool) -> rusqlite::Result<()> {
-        self.conn
-            .execute(
-                "UPDATE clips SET pinned = ?2 WHERE id = ?1",
-                params![id, pinned],
-            )
-            .map(|_| ())
+        self.conn.execute(
+            "UPDATE clips SET pinned = ?2 WHERE id = ?1",
+            params![id, pinned],
+        )?;
+        if let Some(hash) = self.hash_of(id)? {
+            self.emit(Op::Pin { hash, pinned })?;
+        }
+        Ok(())
     }
 
     pub fn get(&self, id: i64) -> rusqlite::Result<Option<Clip>> {
@@ -784,7 +937,23 @@ impl History {
         )
     }
 
+    /// Delete a clip (on every Mac, when syncing).
     pub fn delete(&self, id: i64) -> rusqlite::Result<()> {
+        if let Some(hash) = self.hash_of(id)? {
+            let at = now_ms();
+            if self.journal.get() || self.quiet.get() {
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO tombstones (hash, at) VALUES (?1, ?2)",
+                    params![hash, at],
+                )?;
+            }
+            self.emit(Op::Delete { hash, at })?;
+        }
+        self.remove(id)
+    }
+
+    /// Delete a clip here only (retention).
+    fn remove(&self, id: i64) -> rusqlite::Result<()> {
         let parents = self.parents_of(id)?;
         let files: Option<(Option<String>, Option<String>)> = self
             .conn
@@ -837,7 +1006,7 @@ impl History {
             let filter = format!("pinned = 0 AND last_used < ?1 AND {NOT_IN_MULTI}");
             for id in self.ids_where(&filter, [cutoff])? {
                 if self.get(id)?.is_some() {
-                    self.delete(id)?;
+                    self.remove(id)?;
                     removed += 1;
                 }
             }
@@ -856,7 +1025,7 @@ impl History {
                     if total <= max {
                         break;
                     }
-                    self.delete(id)?;
+                    self.remove(id)?;
                     total = total.saturating_sub(bytes as u64);
                     removed += 1;
                 }
@@ -873,7 +1042,7 @@ impl History {
         rows.collect()
     }
 
-    fn row(&self, r: &rusqlite::Row) -> rusqlite::Result<Clip> {
+    pub(crate) fn row(&self, r: &rusqlite::Row) -> rusqlite::Result<Clip> {
         let kind: String = r.get(1)?;
         let abs = |rel: Option<String>| rel.map(|p| self.dir.join(p));
         Ok(Clip {
@@ -897,7 +1066,7 @@ impl History {
     }
 }
 
-const COLUMNS: &str = "clips.id, kind, text, ocr, image, thumb, bytes, source_app, \
+pub(crate) const COLUMNS: &str = "clips.id, kind, text, ocr, image, thumb, bytes, source_app, \
      source_bundle, created, last_used, pinned, \
      (SELECT GROUP_CONCAT(category_id) FROM clip_categories WHERE clip_id = clips.id)";
 
@@ -910,7 +1079,7 @@ fn hex16(digest: &[u8]) -> String {
     digest[..16].iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn now_ms() -> i64 {
+pub fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
