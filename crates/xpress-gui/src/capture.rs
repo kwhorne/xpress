@@ -175,7 +175,43 @@ pub fn is_link(text: &str) -> bool {
     xpress_core::history::classify_text(text) == xpress_core::history::ClipKind::Link
 }
 
-/// Where macOS saves screenshots: the user's choice, or the Desktop.
+/// Where screenshots are saved: on macOS the user's choice, or the Desktop;
+/// elsewhere the Pictures folder's `Screenshots` (GNOME, KDE).
+#[cfg(not(target_os = "macos"))]
+pub fn screenshot_dir() -> PathBuf {
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let pictures = std::process::Command::new("xdg-user-dir")
+        .arg("PICTURES")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()))
+        .filter(|p| p.is_dir());
+    linux_screenshot_dir(&home, pictures)
+}
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn linux_screenshot_dir(home: &Path, pictures: Option<PathBuf>) -> PathBuf {
+    pictures
+        .unwrap_or_else(|| home.join("Pictures"))
+        .join("Screenshots")
+}
+
+/// GNOME ("Screenshot from 2026-10-04 12-00-00.png") and KDE Spectacle
+/// ("Screenshot_20261004_120000.png") names.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn looks_like_screenshot(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    !name.starts_with('.')
+        && lower.starts_with("screenshot")
+        && [".png", ".jpg", ".jpeg", ".webp"]
+            .iter()
+            .any(|ext| lower.ends_with(ext))
+}
+
+#[cfg(target_os = "macos")]
 pub fn screenshot_dir() -> PathBuf {
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -211,8 +247,10 @@ pub fn is_screenshot(path: &Path) -> bool {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn is_screenshot(_path: &Path) -> bool {
-    false
+pub fn is_screenshot(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(looks_like_screenshot)
 }
 
 /// New, finished screenshots in `dir`: made after `since`, untouched for a
@@ -461,6 +499,25 @@ mod tests {
             Some(Duration::from_secs(7 * 86_400))
         );
         assert_eq!(flags.retention().max_bytes, Some(MAX_HISTORY_BYTES));
+    }
+
+    #[test]
+    fn linux_screenshots_by_name_and_folder() {
+        assert!(looks_like_screenshot(
+            "Screenshot from 2026-10-04 12-00-00.png"
+        ));
+        assert!(looks_like_screenshot("Screenshot_20261004_120000.png"));
+        assert!(!looks_like_screenshot("photo.png"));
+        assert!(!looks_like_screenshot("Screenshot notes.txt"));
+        assert!(!looks_like_screenshot(".Screenshot.png"));
+        assert_eq!(
+            linux_screenshot_dir(Path::new("/home/a"), None),
+            Path::new("/home/a/Pictures/Screenshots")
+        );
+        assert_eq!(
+            linux_screenshot_dir(Path::new("/home/a"), Some("/home/a/Bilder".into())),
+            Path::new("/home/a/Bilder/Screenshots")
+        );
     }
 
     #[test]

@@ -249,26 +249,83 @@ mod imp {
     }
 }
 
+/// A cheap fingerprint of an image: its size and a sample of its pixels
+/// (hashing every byte of a large screenshot twice a second would be wasteful).
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub fn image_signature(width: usize, height: usize, rgba: &[u8]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (width, height, rgba.len()).hash(&mut h);
+    let step = (rgba.len() / 4096).max(1);
+    for byte in rgba.iter().step_by(step) {
+        byte.hash(&mut h);
+    }
+    h.finish()
+}
+
+/// Encode RGBA pixels as PNG.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn rgba_png(width: usize, height: usize, rgba: Vec<u8>) -> Option<Vec<u8>> {
+    let img = image::RgbaImage::from_raw(width as u32, height as u32, rgba)?;
+    let mut out = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .ok()?;
+    Some(out)
+}
+
+/// Linux and others, through `arboard` (X11, and Wayland compositors with the
+/// data-control protocol). There's no change counter, so the clipboard's
+/// content is fingerprinted; images only every second check, and only when
+/// there's no text or files.
 #[cfg(not(target_os = "macos"))]
 mod imp {
     use super::*;
     use std::hash::{Hash, Hasher};
+    use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
-    /// A hash of the clipboard text stands in for a change counter.
+    static CHECKS: AtomicU32 = AtomicU32::new(0);
+    static IMAGE: AtomicU64 = AtomicU64::new(0);
+
     pub fn change_count() -> isize {
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            return 0;
+        };
+        let text = clipboard.get_text().ok();
+        let files = clipboard.get().file_list().ok().filter(|f| !f.is_empty());
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        text().hash(&mut h);
+        (&text, &files).hash(&mut h);
+        if text.is_none() && files.is_none() {
+            if CHECKS.fetch_add(1, Ordering::Relaxed).is_multiple_of(2) {
+                let signature = clipboard
+                    .get_image()
+                    .map(|img| image_signature(img.width, img.height, &img.bytes))
+                    .unwrap_or(0);
+                IMAGE.store(signature, Ordering::Relaxed);
+            }
+            IMAGE.load(Ordering::Relaxed).hash(&mut h);
+        }
         h.finish() as isize
     }
 
-    fn text() -> Option<String> {
-        arboard::Clipboard::new().ok()?.get_text().ok()
-    }
-
     pub fn read() -> Snapshot {
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            return Snapshot::default();
+        };
+        let text = clipboard.get_text().ok();
+        let files = clipboard.get().file_list().unwrap_or_default();
+        let image_png = if text.is_none() && files.is_empty() {
+            clipboard
+                .get_image()
+                .ok()
+                .and_then(|img| rgba_png(img.width, img.height, img.bytes.into_owned()))
+        } else {
+            None
+        };
         Snapshot {
-            text: text(),
-            ..Default::default()
+            concealed: false,
+            files,
+            text,
+            image_png,
         }
     }
 
@@ -276,23 +333,21 @@ mod imp {
         (None, None)
     }
 
-    /// Text only here (images as text would be wrong; files have no path form).
     pub fn write(parts: &[Part]) -> bool {
         let composed = xpress_core::clipboard::compose(parts);
-        let text = if composed.files.is_empty() {
-            composed.text
-        } else {
-            composed
-                .files
-                .iter()
-                .map(|f| f.display().to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            return false;
         };
-        if !text.is_empty() {
-            return arboard::Clipboard::new()
-                .and_then(|mut c| c.set_text(text))
-                .is_ok();
+        if !composed.files.is_empty() {
+            return clipboard.set().file_list(&composed.files).is_ok();
+        }
+        if let Some(html) = composed.html {
+            // Both the same type, as arboard wants.
+            let alt = (!composed.text.is_empty()).then(|| composed.text.clone());
+            return clipboard.set().html(html, alt).is_ok();
+        }
+        if !composed.text.is_empty() {
+            return clipboard.set_text(composed.text).is_ok();
         }
         let Some(png) = composed.png else {
             return false;
@@ -306,10 +361,35 @@ mod imp {
             height: rgba.height() as usize,
             bytes: rgba.into_raw().into(),
         };
-        arboard::Clipboard::new()
-            .and_then(|mut c| c.set_image(data))
-            .is_ok()
+        clipboard.set_image(data).is_ok()
     }
 }
 
 pub use imp::{change_count, frontmost_app, read, write};
+
+#[cfg(test)]
+mod portable_tests {
+    use super::*;
+
+    #[test]
+    fn image_fingerprints() {
+        let a = vec![7u8; 400 * 300 * 4];
+        let mut b = a.clone();
+        assert_eq!(image_signature(400, 300, &a), image_signature(400, 300, &b));
+        b[0] = 8;
+        assert_ne!(image_signature(400, 300, &a), image_signature(400, 300, &b));
+        assert_ne!(
+            image_signature(400, 300, &a),
+            image_signature(300, 400, &a),
+            "same bytes, other shape"
+        );
+    }
+
+    #[test]
+    fn pixels_to_png() {
+        let png = rgba_png(2, 1, vec![255, 0, 0, 255, 0, 0, 255, 255]).unwrap();
+        let img = image::load_from_memory(&png).unwrap().to_rgba8();
+        assert_eq!(img.get_pixel(1, 0).0, [0, 0, 255, 255]);
+        assert!(rgba_png(2, 2, vec![0; 4]).is_none(), "wrong size");
+    }
+}

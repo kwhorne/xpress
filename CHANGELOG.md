@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Linux: the clipboard history records images and files** (not only text),
+  and new screenshots from `~/Pictures/Screenshots`; copying back restores
+  images, files and multi-clips (text with HTML). Wayland compositors with the
+  data-control protocol are supported as well as X11.
+
 ## [0.8.1] - 2026-10-04
 
 ### Added

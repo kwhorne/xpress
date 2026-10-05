@@ -312,7 +312,10 @@ All in **Preferences → Clipboard history**:
 
 ## Platforms
 
-Everything above is for **macOS**. On Linux the app records copied **text**
-only, without the source app; there's no text recognition, a multi-clip is
-pasted as text, and *Paste directly*, Apple Intelligence and iCloud sync
-aren't available.
+Everything above is for **macOS**. On **Linux** (X11, and Wayland compositors
+with the data-control protocol) the app records copied text, images and files,
+and new screenshots in `~/Pictures/Screenshots` (GNOME and KDE names); copying
+a clip back puts text, images, files or — for a multi-clip — text with HTML on
+the clipboard. Not on Linux: the source app (so no app filter, *Ignore apps*
+by name only), text recognition, *Paste directly*, Apple Intelligence and
+iCloud sync. Images are checked every second rather than continuously.
