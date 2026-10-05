@@ -10,6 +10,8 @@ use std::path::PathBuf;
 pub struct Snapshot {
     /// Marked as private or temporary (passwords, one-time codes): never record.
     pub concealed: bool,
+    /// Put there by xpress itself (the app or the command line).
+    pub from_xpress: bool,
     pub files: Vec<PathBuf>,
     pub text: Option<String>,
     /// The image, normalised to PNG (so the same picture always hashes the same).
@@ -91,6 +93,9 @@ mod imp {
                     ..Default::default()
                 };
             }
+            let from_xpress = types
+                .iter()
+                .any(|t| t == xpress_core::clipboard::XPRESS_MARKER);
 
             let files: Vec<PathBuf> = pb
                 .pasteboardItems()
@@ -115,6 +120,7 @@ mod imp {
             .and_then(|data| normalise_png(&data.to_vec()));
             Snapshot {
                 concealed: false,
+                from_xpress,
                 files,
                 text,
                 image_png,
@@ -232,6 +238,20 @@ mod imp {
         }
 
         #[test]
+        fn what_xpress_copied_is_recognised() {
+            let pb = private();
+            assert!(write_to(&pb.0, &[Part::Text("from xpress".into())]));
+            assert!(read_from(&pb.0).from_xpress);
+            assert!(write_to(&pb.0, &[Part::File("/tmp".into())]));
+            assert!(read_from(&pb.0).from_xpress, "files too");
+            pb.0.clearContents();
+            pb.0.setString_forType(&NSString::from_str("typed"), unsafe {
+                NSPasteboardTypeString
+            });
+            assert!(!read_from(&pb.0).from_xpress);
+        }
+
+        #[test]
         fn concealed_content_is_flagged() {
             let pb = private();
             pb.0.clearContents();
@@ -322,10 +342,10 @@ mod imp {
             None
         };
         Snapshot {
-            concealed: false,
             files,
             text,
             image_png,
+            ..Default::default()
         }
     }
 

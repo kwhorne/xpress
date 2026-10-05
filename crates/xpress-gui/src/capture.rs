@@ -150,6 +150,7 @@ pub fn clip_from_snapshot(
     ignored: &[IgnoredApp],
 ) -> Option<NewClip> {
     if snap.concealed
+        || snap.from_xpress
         || bundle.as_deref().is_some_and(|b| IGNORED_APPS.contains(&b))
         || ignored
             .iter()
@@ -431,6 +432,18 @@ mod tests {
         assert_eq!(
             kind(Snapshot {
                 text: text("   \n"),
+                ..Default::default()
+            }),
+            None
+        );
+    }
+
+    #[test]
+    fn copies_made_by_xpress_are_not_recorded_again() {
+        assert_eq!(
+            kind(Snapshot {
+                from_xpress: true,
+                text: Some("copied back".into()),
                 ..Default::default()
             }),
             None
