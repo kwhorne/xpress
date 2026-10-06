@@ -2,6 +2,7 @@
 //! stored as `global_hotkey` strings (`control+super+KeyV`); an empty string
 //! turns a shortcut off.
 
+use crate::i18n::tr;
 use eframe::egui;
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 
@@ -65,7 +66,7 @@ pub fn display(hotkey: &HotKey) -> String {
 
 /// A stored shortcut for display ("Off" when there's none).
 pub fn display_str(s: &str) -> String {
-    parse(s).map_or_else(|| "Off".into(), |h| display(&h))
+    parse(s).map_or_else(|| tr("Off").into(), |h| display(&h))
 }
 
 fn key_label(code: Code) -> String {
@@ -77,7 +78,7 @@ fn key_label(code: Code) -> String {
         return digit.to_string();
     }
     let symbol = match code {
-        Code::Space => "Space",
+        Code::Space => tr("Space"),
         Code::Enter => "↩",
         Code::Tab => "⇥",
         Code::ArrowLeft => "←",

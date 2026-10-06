@@ -28,7 +28,10 @@ mod imp {
 
     pub fn set(on: bool) -> Result<(), String> {
         if !supported() {
-            return Err("Opening at login needs macOS 13 or later and the installed app.".into());
+            return Err(crate::i18n::tr(
+                "Opening at login needs macOS 13 or later and the installed app.",
+            )
+            .into());
         }
         let service = unsafe { SMAppService::mainAppService() };
         let result = unsafe {

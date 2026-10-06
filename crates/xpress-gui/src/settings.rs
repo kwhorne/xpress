@@ -60,6 +60,8 @@ pub struct Settings {
     pub history_ignored: Vec<IgnoredApp>,
     /// The welcome tour has been seen.
     pub onboarded: bool,
+    /// `auto` (the system's), `en` or `nb`.
+    pub language: String,
     /// Global shortcuts (`global_hotkey` strings; empty = off).
     pub shortcut_clipboard: String,
     pub shortcut_show: String,
@@ -95,6 +97,7 @@ impl Settings {
             history_sync: false,
             history_ignored: Vec::new(),
             onboarded: false,
+            language: "auto".into(),
             shortcut_clipboard: crate::shortcuts::Action::Clipboard
                 .default_shortcut()
                 .into(),

@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Norwegian** (bokmål) in the desktop app: Preferences → Language
+  (*System* follows macOS, or choose English / Norsk), including the menu-bar
+  menu. Error messages from the engine stay English.
+
 ## [0.9.0] - 2026-10-06
 
 ### Added
