@@ -744,6 +744,10 @@ impl History {
                     return Ok(Applied::Skipped);
                 };
                 let (image_rel, thumb, bytes) = match image {
+                    // Names from another Mac's log must stay file names.
+                    Some(ext) if !crate::history::safe_file_name(hash, ext) => {
+                        return Ok(Applied::Skipped);
+                    }
                     Some(ext) => {
                         let blob = root.join("blobs").join(format!("{hash}.{ext}"));
                         match fs::read(&blob) {
@@ -1249,6 +1253,52 @@ mod tests {
         assert_eq!(c.texts().len(), LOG_LINES + 9);
         assert_eq!(b.texts().len(), LOG_LINES + 9);
         assert!(!c.texts().contains(&"clip 3".to_string()));
+    }
+
+    #[test]
+    fn file_names_from_other_macs_cannot_escape() {
+        let cloud = tempfile::tempdir().unwrap();
+        let b = mac();
+        fs::create_dir_all(cloud.path().join("blobs")).unwrap();
+        // A tampered log: names meant to write outside the history folder.
+        for (hash, ext) in [
+            ("../../escaped", "png"),
+            ("0123456789abcdef0123456789abcdef", "png/../../../escaped"),
+            ("0123456789abcdef0123456789abcdef", "png\0"),
+        ] {
+            let op = Op::Add {
+                hash: hash.into(),
+                kind: "image".into(),
+                text: String::new(),
+                ocr: String::new(),
+                image: Some(ext.into()),
+                app: None,
+                bundle: None,
+                created: now_ms(),
+                used: now_ms(),
+                pinned: false,
+            };
+            assert_eq!(
+                b.h().apply(&op, cloud.path(), KEEP).unwrap(),
+                Applied::Skipped,
+                "{hash}.{ext}"
+            );
+        }
+        let dir = b.h().dir().to_path_buf();
+        assert_eq!(fs::read_dir(dir.join("images")).unwrap().count(), 0);
+        assert_eq!(b.h().stats().unwrap().0, 0);
+    }
+
+    #[test]
+    fn safe_file_names() {
+        use crate::history::safe_file_name as ok;
+        assert!(ok("0123456789abcdef0123456789abcdef", "png"));
+        assert!(ok("0123456789ABCDEF", "jpeg"));
+        assert!(!ok("../x", "png"));
+        assert!(!ok("0123456789abcdef", "png/.."));
+        assert!(!ok("0123456789abcdef", ""));
+        assert!(!ok("0123456789abcdef", "toolong"));
+        assert!(!ok("abc", "png"), "too short");
     }
 
     #[test]
