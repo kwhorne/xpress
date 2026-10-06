@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+- History sync: image file names in changes from other Macs are validated, so
+  a tampered log in iCloud Drive can't write files outside the history folder.
+
 ## [0.9.1] - 2026-10-06
 
 ### Added

@@ -232,6 +232,15 @@ impl Clip {
     }
 }
 
+/// Whether `<hash>.<ext>` is a plain file name: a hex hash and a short
+/// alphanumeric extension (names also arrive from other Macs when syncing).
+pub(crate) fn safe_file_name(hash: &str, ext: &str) -> bool {
+    (8..=64).contains(&hash.len())
+        && hash.bytes().all(|b| b.is_ascii_hexdigit())
+        && (1..=5).contains(&ext.len())
+        && ext.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
 /// The first non-empty line, at most `max` characters (then "…").
 pub fn first_line(s: &str, max: usize) -> String {
     let line = s
@@ -904,6 +913,9 @@ impl History {
         data: &[u8],
         ext: &str,
     ) -> (Option<String>, Option<String>, u64) {
+        if !safe_file_name(hash, ext) {
+            return (None, None, 0);
+        }
         let stored = if ext == "png" {
             oxipng::optimize_from_memory(data, &oxipng::Options::from_preset(2))
                 .ok()
