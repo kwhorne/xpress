@@ -42,6 +42,9 @@ jobs:
           # Intel Macs, built and checked natively.
           - os: macos-15-intel
             target: x86_64-apple-darwin
+          # The command line for Windows (the app is macOS/Linux only).
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
     steps:
@@ -62,9 +65,12 @@ jobs:
             libxkbcommon-dev libgl1-mesa-dev
 
       - name: Build release binaries
+        shell: bash
         run: |
           cargo build --release --target ${{ matrix.target }} -p xpress-cli
-          cargo build --release --target ${{ matrix.target }} -p xpress-gui
+          if [[ "$RUNNER_OS" != "Windows" ]]; then
+            cargo build --release --target ${{ matrix.target }} -p xpress-gui
+          fi
 
       - name: Import signing certificate
         if: runner.os == 'macOS' && env.MACOS_CERT_P12 != ''
@@ -95,6 +101,12 @@ jobs:
           dist="xpress-${TAG}-${{ matrix.target }}"
           mkdir -p "$dist"
           bin_dir="target/${{ matrix.target }}/release"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp "$bin_dir/xpress.exe" README.md LICENSE NOTICE.md "$dist/"
+            7z a -tzip "$dist.zip" "$dist" > /dev/null
+            sha256sum "$dist.zip" > "$dist.zip.sha256"
+            exit 0
+          fi
           cp "$bin_dir/xpress" "$dist/"
           cp "$bin_dir/xpress-gui" "$dist/"
           # Developer ID sign + notarise the standalone binaries too, so a
@@ -140,7 +152,7 @@ jobs:
           name: xpress-${{ matrix.target }}
           path: |
             xpress-*.tar.gz*
-            xpress-*-app.zip*
+            xpress-*.zip*
             xpress-*.dmg*
 
       - name: Upload to release
@@ -152,6 +164,8 @@ jobs:
             xpress-*.tar.gz.sha256
             xpress-*-app.zip
             xpress-*-app.zip.sha256
+            xpress-*-windows-msvc.zip
+            xpress-*-windows-msvc.zip.sha256
             xpress-*.dmg
             xpress-*.dmg.sha256
           generate_release_notes: true

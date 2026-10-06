@@ -679,24 +679,41 @@ fn install_release(url: &str, version: &str) -> Result<()> {
     println!("    downloading {url}");
     let archive = xpress_core::update::download_verified(url).map_err(anyhow::Error::msg)?;
 
-    let inner = PathBuf::from(format!("xpress-v{version}-{target}")).join("xpress");
-    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive.as_slice()));
+    let exe = format!("xpress{}", std::env::consts::EXE_SUFFIX);
+    let inner = format!("xpress-v{version}-{target}/{exe}");
     let staging = tempfile::tempdir()?;
-    let new_exe = staging.path().join("xpress");
-    let mut found = false;
-    for entry in tar.entries()? {
-        let mut entry = entry?;
-        if entry.path()? == inner {
-            entry.unpack(&new_exe)?;
-            found = true;
-            break;
-        }
-    }
-    if !found {
-        anyhow::bail!("{} not found in the release archive", inner.display());
+    let new_exe = staging.path().join(&exe);
+    if !unpack(&archive, &inner, &new_exe)? {
+        anyhow::bail!("{inner} not found in the release archive");
     }
     self_replace::self_replace(&new_exe)?;
     Ok(())
+}
+
+/// Take the file at `inner` out of a release archive (a `.zip` on Windows,
+/// a `.tar.gz` elsewhere). Returns whether it was there.
+#[cfg(not(windows))]
+fn unpack(archive: &[u8], inner: &str, to: &Path) -> Result<bool> {
+    let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(archive));
+    for entry in tar.entries()? {
+        let mut entry = entry?;
+        if entry.path()? == Path::new(inner) {
+            entry.unpack(to)?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+#[cfg(windows)]
+fn unpack(archive: &[u8], inner: &str, to: &Path) -> Result<bool> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))?;
+    let Ok(mut file) = zip.by_name(inner) else {
+        return Ok(false);
+    };
+    let mut out = std::fs::File::create(to)?;
+    std::io::copy(&mut file, &mut out)?;
+    Ok(true)
 }
 
 fn run_bundle() -> Result<()> {

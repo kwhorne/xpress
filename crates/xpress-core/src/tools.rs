@@ -152,7 +152,8 @@ fn bin_dirs() -> Vec<PathBuf> {
 pub fn resolve(tool: Tool) -> Result<PathBuf, ToolError> {
     let name = tool.binary_name();
     for dir in bin_dirs() {
-        let candidate = dir.join(name);
+        // `ffmpeg.exe` on Windows.
+        let candidate = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
         if candidate.is_file() {
             return Ok(candidate);
         }
