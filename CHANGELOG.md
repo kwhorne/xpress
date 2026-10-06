@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-06
+
 ### Security
 - History sync: image file names in changes from other Macs are validated, so
   a tampered log in iCloud Drive can't write files outside the history folder.
@@ -508,7 +510,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/kwhorne/xpress/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/kwhorne/xpress/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/kwhorne/xpress/compare/v0.8.4...v0.9.0
 [0.8.4]: https://github.com/kwhorne/xpress/compare/v0.8.3...v0.8.4
