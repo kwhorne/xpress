@@ -3,6 +3,7 @@
 //! see scripts/make-app.sh); this provides the object that receives the files
 //! and hands them to the app, as if they had been dropped on the window.
 
+#[cfg(target_os = "macos")]
 use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
