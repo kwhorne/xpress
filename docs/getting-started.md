@@ -5,6 +5,9 @@ what xpress does to your files so there are no surprises.
 
 ## 1. Install
 
+**With Homebrew:** `brew install --cask kwhorne/tap/xpress` for the app,
+`brew install kwhorne/tap/xpress` for the command line. Or download them:
+
 **macOS (recommended): the desktop app.** Download the latest
 `xpress-<version>-macos-aarch64-apple-darwin.dmg` from the
 [releases page](https://github.com/kwhorne/xpress/releases/latest), open it and
