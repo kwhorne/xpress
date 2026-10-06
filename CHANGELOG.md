@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-10-06
+
 ### Fixed
 - Copies made by xpress itself (`xpress history copy`, `xpress watch
   --clipboard`, *Optimise clipboard*) are no longer recorded again by the
@@ -478,7 +480,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/kwhorne/xpress/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/kwhorne/xpress/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/kwhorne/xpress/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/kwhorne/xpress/compare/v0.7.1...v0.8.0
