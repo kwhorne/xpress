@@ -12,6 +12,7 @@ mod history_ui;
 mod i18n;
 mod login;
 mod pasteboard;
+mod services;
 mod settings;
 mod shortcuts;
 mod work;

@@ -113,6 +113,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>LSApplicationCategoryType</key> <string>public.app-category.utilities</string>
     <!-- Menu-bar (agent) app: no Dock icon. -->
     <key>LSUIElement</key>             <true/>
+    <!-- Finder → right-click → Quick Actions / Services → Optimise with xpress -->
+    <key>NSServices</key>
+    <array>
+      <dict>
+        <key>NSMenuItem</key>
+        <dict><key>default</key><string>Optimise with xpress</string></dict>
+        <key>NSMessage</key>        <string>optimiseFiles</string>
+        <key>NSPortName</key>       <string>xpress</string>
+        <key>NSRequiredContext</key><dict/>
+        <key>NSSendFileTypes</key>
+        <array>
+          <string>public.image</string>
+          <string>public.movie</string>
+          <string>public.audio</string>
+          <string>com.adobe.pdf</string>
+        </array>
+      </dict>
+    </array>
 PLIST
 
 # Reference an icon only if one was provided.
@@ -125,6 +143,8 @@ cat >> "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+plutil -lint "$APP/Contents/Info.plist" >/dev/null
+echo "    ✓ Info.plist ($(/usr/libexec/PlistBuddy -c 'Print :NSServices:0:NSMenuItem:default' "$APP/Contents/Info.plist") service)"
 
 # Sign with a Developer ID if available (from $XPRESS_SIGN_ID or the keychain),
 # otherwise fall back to an ad-hoc signature for local use.

@@ -3,6 +3,13 @@
 xpress is a CLI + engine, so it composes with the OS rather than embedding
 platform frameworks. Here is how to wire it into common workflows.
 
+## Finder right-click
+
+With the app installed, Finder offers **Optimise with xpress** for images,
+videos, audio and PDFs (right-click → Quick Actions / Services) — see
+[The desktop app → From Finder](gui.md#from-finder). For other steps (a
+pipeline, a conversion), build your own Quick Action as below.
+
 ## macOS Shortcuts
 
 xpress integrates with the **Shortcuts** app via the **“Run Shell Script”**

@@ -20,6 +20,9 @@ pub enum Msg {
     Done(Box<Done>),
     /// The clipboard history changed (something was copied or captured).
     HistoryChanged,
+    /// Files sent from Finder ("Optimise with xpress"; macOS).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    OpenFiles(Vec<PathBuf>),
     /// An Apple Intelligence answer (for the request with this number).
     Ai {
         request: u64,

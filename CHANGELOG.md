@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Optimise with xpress** in Finder: right-click images, videos, audio or
+  PDFs → Quick Actions / Services. The app optimises them with the current
+  settings, as if they were dropped on the window.
+
 ## [0.9.3] - 2026-10-06
 
 ### Added
