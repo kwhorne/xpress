@@ -14,6 +14,17 @@ dropping files, the menu-bar icon, the shortcuts — and lets you turn on the
 clipboard history, *Paste directly* and *Open at login* straight away. Skip it
 any time; **About → Show the welcome tour** brings it back.
 
+## From Finder
+
+Right-click images, videos, audio files or PDFs in Finder → **Quick Actions**
+(or **Services**) → **Optimise with xpress**. xpress opens (or comes to the
+front) and optimises them with your current settings, exactly as if you had
+dropped them on the window.
+
+The item appears once the app has been opened from *Applications*. If it's
+missing, switch it on in **System Settings → Keyboard → Keyboard Shortcuts… →
+Services → Files and Folders**; you can also give it a keyboard shortcut there.
+
 ## The menu bar and hotkeys
 
 xpress has no Dock icon — look for the **✕** in the menu bar. Its menu has:

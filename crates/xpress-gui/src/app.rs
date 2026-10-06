@@ -185,6 +185,10 @@ pub struct XpressApp {
     update_status: Arc<Mutex<Option<String>>>,
 
     _tray: Option<TrayIcon>,
+    /// "Optimise with xpress" in Finder.
+    _services: Option<crate::services::Services>,
+    /// Files from Finder waiting to be optimised.
+    pending_open: Vec<PathBuf>,
     tray_open_id: String,
     tray_clip_id: String,
     tray_history_id: String,
@@ -287,6 +291,13 @@ impl XpressApp {
             None => Settings::default(),
         };
 
+        // "Optimise with xpress" in Finder.
+        let services = if integrations {
+            crate::services::install(tx.clone(), ctx.clone())
+        } else {
+            None
+        };
+
         let mut app = Self {
             tab: Tab::Optimise,
             factor: xpress_core::compression::COMPRESSION_FACTOR_NORMAL,
@@ -347,6 +358,8 @@ impl XpressApp {
             updating: Arc::new(AtomicBool::new(false)),
             update_status: Arc::new(Mutex::new(None)),
             _tray: tray,
+            _services: services,
+            pending_open: Vec::new(),
             tray_open_id: open_id,
             tray_clip_id: clip_id,
             tray_history_id: history_id,
@@ -657,6 +670,22 @@ impl XpressApp {
                 c.sync_fresh.store(true, Ordering::Relaxed);
             }
             self.journal_on = sync;
+        }
+    }
+
+    /// Optimise files sent from Finder, like files dropped on the window.
+    fn open_pending(&mut self, ctx: &egui::Context) {
+        if self.pending_open.is_empty() {
+            return;
+        }
+        if self.integrations {
+            Self::show_window(ctx);
+        }
+        self.welcome_step = None;
+        self.crop = None;
+        self.tab = Tab::Optimise;
+        for path in std::mem::take(&mut self.pending_open) {
+            self.submit(path, ctx);
         }
     }
 
@@ -1087,6 +1116,10 @@ impl XpressApp {
                     self.history_panel.dirty = true;
                     continue;
                 }
+                Msg::OpenFiles(files) => {
+                    self.pending_open.extend(files);
+                    continue;
+                }
                 Msg::Ai { request, result } => {
                     if let (true, Some(view)) =
                         (request == self.ai_request, &mut self.history_panel.ai)
@@ -1264,6 +1297,7 @@ impl eframe::App for XpressApp {
         }
 
         self.drain_results();
+        self.open_pending(ctx);
         self.sync_capture();
         self.persist_settings(false);
 
@@ -3845,6 +3879,29 @@ mod tests {
         h.run();
         assert!(h.query_by_label("Keep a backup").is_some(), "switches back");
         crate::i18n::set(crate::i18n::Lang::English);
+    }
+
+    #[test]
+    fn files_from_finder_are_optimised_like_dropped_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("from finder.png");
+        image::RgbImage::from_pixel(64, 48, image::Rgb([200, 100, 50]))
+            .save(&png)
+            .unwrap();
+        let mut h = harness();
+        h.state_mut().tab = Tab::About;
+        h.state()
+            .tx
+            .send(Msg::OpenFiles(vec![png.clone()]))
+            .unwrap();
+        h.state_mut().drain_results();
+        let ctx = h.ctx.clone();
+        h.state_mut().open_pending(&ctx);
+        assert_eq!(h.state().tab, Tab::Optimise);
+        assert_eq!(h.state().in_flight, 1);
+        wait_for_card(&mut h, 1);
+        assert!(h.state().cards[0].ok, "{}", h.state().cards[0].detail);
+        assert_eq!(h.state().cards[0].title, "from finder.png");
     }
 
     #[test]
