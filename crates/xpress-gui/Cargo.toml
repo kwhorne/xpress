@@ -37,3 +37,5 @@ objc2-app-kit = { version = "0.3", features = ["NSApplication", "NSResponder"] }
 objc2-foundation = "0.3"
 # Recognising screenshots by their Finder metadata.
 xattr = "1"
+# Open at login (SMAppService).
+objc2-service-management = "0.3"

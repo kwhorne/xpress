@@ -7,6 +7,13 @@ The xpress app is a small **menu-bar app** for macOS: drag files onto its window
 do to a single file is a click away; batch automation lives in
 [pipelines](pipelines.md) and the [watcher](daemon.md).
 
+## First launch
+
+The first time you open xpress, a short **welcome tour** shows the basics —
+dropping files, the menu-bar icon, the shortcuts — and lets you turn on the
+clipboard history, *Paste directly* and *Open at login* straight away. Skip it
+any time; **About → Show the welcome tour** brings it back.
+
 ## The menu bar and hotkeys
 
 xpress has no Dock icon — look for the **✕** in the menu bar. Its menu has:
@@ -97,6 +104,7 @@ For crops to an exact size or aspect ratio, or batches, use
 | Quality target | Off | For images: instead of the compression slider, find the **smallest file that still looks** visually lossless / high / medium / low. See [quality targets](optimising.md#quality-targets). |
 | Skip already-optimised files | on | Leave files xpress already optimised with these settings (instant, no extra quality loss). |
 | Aggressive by default | off | Start with the aggressive preset. |
+| Open at login | off | Start xpress in the menu bar when you log in (macOS 13+; it appears in System Settings → General → Login Items). |
 | Float on top | off | Keep the window above other windows. |
 | Default pipeline | `crop(longEdge: 2000) -> convert(to: webp)` | Used when *Pipeline* is switched on. |
 | Shortcuts | ⇧⌘O, ⇧⌘X, ⌃⌘V | Click one and press the new keys (with ⌘, ⌃ or ⌥); ⌫ turns it off, esc cancels, *Reset* brings the default back. The menu-bar menu shows the current ones. |
