@@ -614,6 +614,10 @@ fn run_update(check_only: bool) -> Result<()> {
     );
     println!("    {}", info.url);
 
+    if installed_with_homebrew() {
+        println!("    installed with Homebrew — run `brew upgrade xpress`");
+        return Ok(());
+    }
     if check_only {
         println!("    run `xpress update` to install it");
         return Ok(());
@@ -640,6 +644,21 @@ fn run_update(check_only: bool) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Homebrew keeps its copy in `…/Cellar/xpress/<version>/bin`; replacing it
+/// in place would leave Homebrew out of step.
+fn installed_with_homebrew() -> bool {
+    std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .is_ok_and(|exe| is_homebrew_path(&exe))
+}
+
+fn is_homebrew_path(exe: &Path) -> bool {
+    exe.components()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .any(|w| w[0].as_os_str() == "Cellar" && w[1].as_os_str() == "xpress")
 }
 
 /// Ask a yes/no question on the terminal; Enter means yes.
@@ -1334,4 +1353,23 @@ fn run_strip_exif(args: FilesArg) -> Result<()> {
         println!("{} stripped metadata from {}", render::CHECK, f.display());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn homebrew_installs_are_recognised() {
+        assert!(is_homebrew_path(Path::new(
+            "/opt/homebrew/Cellar/xpress/0.8.3/bin/xpress"
+        )));
+        assert!(is_homebrew_path(Path::new(
+            "/home/linuxbrew/.linuxbrew/Cellar/xpress/0.8.3/bin/xpress"
+        )));
+        assert!(!is_homebrew_path(Path::new("/usr/local/bin/xpress")));
+        assert!(!is_homebrew_path(Path::new(
+            "/opt/homebrew/Cellar/other/1/bin/xpress"
+        )));
+    }
 }

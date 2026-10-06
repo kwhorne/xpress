@@ -1,6 +1,18 @@
 # Installation
 
-## macOS app (recommended)
+## Homebrew
+
+```sh
+brew install --cask kwhorne/tap/xpress    # the menu-bar app (macOS, Apple silicon)
+brew install kwhorne/tap/xpress           # the command line (macOS Apple silicon, Linux x86-64)
+```
+
+The formula also installs shell completions and the man page. Video and audio
+on the command line need ffmpeg (`brew install ffmpeg`); the app bundles its
+own. The [tap](https://github.com/kwhorne/homebrew-tap) follows new releases
+within a few hours.
+
+## macOS app (download)
 
 1. Download `xpress-<version>-macos-aarch64-apple-darwin.dmg` from the
    [latest release](https://github.com/kwhorne/xpress/releases/latest).
@@ -73,7 +85,10 @@ be put in the per-user folder with
   can also choose *Check for updates* from the menu-bar icon or the About page.
   The app checks every six hours.
 - **Command line:** `xpress update` downloads and installs the new version in
-  place; `xpress update --check` only reports.
+  place; `xpress update --check` only reports. Installed with Homebrew, use
+  `brew upgrade xpress` instead (`xpress update` tells you so).
+- **Homebrew:** `brew upgrade` updates the command line; the app (cask) also
+  updates itself.
 
 Downloads are checked against the release's SHA-256 checksums before anything
 is replaced. The update check uses GitHub's API (60 anonymous requests an hour
@@ -90,8 +105,10 @@ xpress man | sudo tee /usr/local/share/man/man1/xpress.1 >/dev/null
 
 ## Uninstalling
 
-- Quit xpress from its menu-bar icon and move `xpress.app` to the Bin.
-- Remove the command line tool: `sudo rm /usr/local/bin/xpress`.
+- Quit xpress from its menu-bar icon and move `xpress.app` to the Bin (Homebrew:
+  `brew uninstall --cask kwhorne/tap/xpress`).
+- Remove the command line tool: `sudo rm /usr/local/bin/xpress` (Homebrew:
+  `brew uninstall kwhorne/tap/xpress`).
 - Optional: delete settings and saved pipelines in
   `~/Library/Application Support/xpress` (Linux: `~/.config/xpress` and
   `~/.local/share/xpress`), and optimised clipboard images in `~/Pictures/xpress`.

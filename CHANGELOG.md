@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Homebrew**: `brew install --cask kwhorne/tap/xpress` (app) and
+  `brew install kwhorne/tap/xpress` (command line, with completions and man
+  page). The tap follows releases automatically.
+- `xpress update` points to `brew upgrade` when the command line was installed
+  with Homebrew, instead of replacing Homebrew's copy.
+
 ## [0.8.3] - 2026-10-06
 
 ### Fixed

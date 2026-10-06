@@ -62,6 +62,17 @@ consistent, percentage-based compression model.
 
 xpress is free and open source under the [MIT License](LICENSE).
 
+## Install
+
+```sh
+brew install --cask kwhorne/tap/xpress    # the menu-bar app (macOS, Apple silicon)
+brew install kwhorne/tap/xpress           # the command line (macOS, Linux)
+```
+
+Or download the signed `.dmg` / `.tar.gz` from the
+[releases page](https://github.com/kwhorne/xpress/releases/latest) — see
+[Installation](docs/installation.md).
+
 ## Documentation
 
 The **[user guide](docs/README.md)** covers everything:
