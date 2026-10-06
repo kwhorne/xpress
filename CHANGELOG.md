@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-10-06
+
 ### Added
 - **Intel Macs**: every release now includes the app (`.dmg`, `.zip`) and the
   command line for `x86_64-apple-darwin`, built and tested on Intel. Updates
@@ -516,7 +518,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/kwhorne/xpress/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/kwhorne/xpress/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/kwhorne/xpress/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/kwhorne/xpress/compare/v0.8.4...v0.9.0
