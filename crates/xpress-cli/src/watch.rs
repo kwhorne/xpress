@@ -101,7 +101,7 @@ pub fn run(
             if a.source == "clipboard" {
                 continue;
             }
-            let folder = PathBuf::from(shellexpand_home(&a.source));
+            let folder = PathBuf::from(xpress_core::expand_home(&a.source));
             if !folder.is_dir() {
                 eprintln!(
                     "{} automation folder missing, skipping: {}",
@@ -312,15 +312,6 @@ fn process_path(
     }
 }
 
-fn shellexpand_home(s: &str) -> String {
-    if let Some(rest) = s.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return format!("{}/{}", home.to_string_lossy(), rest);
-        }
-    }
-    s.to_string()
-}
-
 // ---------------------------------------------------------------------------
 // Clipboard watcher
 // ---------------------------------------------------------------------------
@@ -419,8 +410,8 @@ fn handle_clipboard_image(
 
 #[cfg(feature = "clipboard")]
 fn clipboard_drop_dir() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        PathBuf::from(home).join("Pictures/xpress")
+    if let Some(home) = xpress_core::home_dir() {
+        home.join("Pictures").join("xpress")
     } else {
         std::env::temp_dir().join("xpress-clipboard")
     }

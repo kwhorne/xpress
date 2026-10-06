@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Windows command line**: every release now includes
+  `xpress-<version>-x86_64-pc-windows-msvc.zip` with `xpress.exe`, built and
+  tested on Windows. `xpress update` installs new versions in place. (The
+  desktop app stays macOS and Linux.)
+
 ## [0.9.4] - 2026-10-06
 
 ### Added

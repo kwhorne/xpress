@@ -73,17 +73,8 @@ pub fn expand(template: &str, source: &Path, counter: &mut u64) -> PathBuf {
         }
     }
 
-    let expanded = shellexpand_home(&out);
+    let expanded = crate::expand_home(&out);
     PathBuf::from(expanded)
-}
-
-fn shellexpand_home(s: &str) -> String {
-    if let Some(rest) = s.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return format!("{}/{}", home.to_string_lossy(), rest);
-        }
-    }
-    s.to_string()
 }
 
 /// Best-effort local date/time. Falls back to UTC-from-epoch math (no chrono dep).

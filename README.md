@@ -69,7 +69,8 @@ brew install --cask kwhorne/tap/xpress    # the menu-bar app (macOS)
 brew install kwhorne/tap/xpress           # the command line (macOS, Linux)
 ```
 
-Or download the signed `.dmg` / `.tar.gz` from the
+Or download the signed `.dmg` / `.tar.gz` (or the Windows `.zip` of the
+command line) from the
 [releases page](https://github.com/kwhorne/xpress/releases/latest) — see
 [Installation](docs/installation.md).
 
