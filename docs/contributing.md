@@ -77,7 +77,7 @@ The [Homebrew tap](https://github.com/kwhorne/homebrew-tap) picks the release up
 within six hours (or run its *Update* workflow by hand) and tests the new formula
 and cask.
 
-`.github/workflows/release.yml` then builds macOS (Apple silicon) and Linux
+`.github/workflows/release.yml` then builds macOS (Apple silicon and Intel) and Linux
 binaries, signs and notarises the macOS binaries, `.app` and `.dmg` (see
 [Code signing](signing.md)), and attaches everything to the GitHub Release.
 

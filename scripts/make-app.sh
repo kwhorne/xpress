@@ -83,10 +83,15 @@ if [[ -n "$BIN_DIR" && -d "$BIN_DIR" ]]; then
   chmod +x "$APP/Contents/Resources/bin/"* 2>/dev/null || true
 fi
 
-# The Apple Intelligence helper (macOS 26+; skipped without a suitable SDK).
+# The Apple Intelligence helper (macOS 26+, Apple silicon; skipped without a
+# suitable SDK, and for an Intel build of the app).
 echo "==> Apple Intelligence helper"
-"$ROOT/scripts/build-xpress-ai.sh"
-if [[ -x "$ROOT/target/xpress-ai/xpress-ai" ]]; then
+if lipo -archs "$GUI_BIN" 2>/dev/null | grep -q arm64; then
+  "$ROOT/scripts/build-xpress-ai.sh"
+else
+  echo "    (xpress-ai skipped: Apple Intelligence needs Apple silicon)"
+fi
+if lipo -archs "$GUI_BIN" 2>/dev/null | grep -q arm64 && [[ -x "$ROOT/target/xpress-ai/xpress-ai" ]]; then
   mkdir -p "$APP/Contents/Resources/bin"
   cp -f "$ROOT/target/xpress-ai/xpress-ai" "$APP/Contents/Resources/bin/xpress-ai"
 fi

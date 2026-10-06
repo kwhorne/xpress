@@ -82,7 +82,8 @@ The action downloads the xpress release for the runner and runs
 | `exclude` | `node_modules .git` | Directory names to skip |
 | `version` | `latest` | xpress release, e.g. `v0.9.2` |
 
-It runs on `ubuntu-latest` and `macos-latest` (Apple silicon). Images and PDFs
+It runs on `ubuntu-latest` and `macos-latest` (Apple silicon; Intel runners
+work too). Images and PDFs
 need nothing else; checking **videos or audio** needs ffmpeg on the runner
 (e.g. a step `sudo apt-get install -y ffmpeg`).
 

@@ -3,8 +3,8 @@
 ## Homebrew
 
 ```sh
-brew install --cask kwhorne/tap/xpress    # the menu-bar app (macOS, Apple silicon)
-brew install kwhorne/tap/xpress           # the command line (macOS Apple silicon, Linux x86-64)
+brew install --cask kwhorne/tap/xpress    # the menu-bar app (macOS)
+brew install kwhorne/tap/xpress           # the command line (macOS, Linux x86-64)
 ```
 
 The formula also installs shell completions and the man page. Video and audio
@@ -14,14 +14,17 @@ within a few hours.
 
 ## macOS app (download)
 
-1. Download `xpress-<version>-macos-aarch64-apple-darwin.dmg` from the
+1. Download `xpress-<version>-macos-aarch64-apple-darwin.dmg` (Apple silicon) or
+   `xpress-<version>-macos-x86_64-apple-darwin.dmg` (Intel) from the
    [latest release](https://github.com/kwhorne/xpress/releases/latest).
 2. Open it and drag **xpress** to *Applications*.
 3. Start it from *Applications* or Spotlight. It runs as a **menu-bar app**
    (no Dock icon); closing the window hides it to the menu bar.
 
-The app is Developer ID-signed and notarised, needs **Apple silicon**
-(M1 or later), and is self-contained: `ffmpeg` for video and audio is bundled.
+The app is Developer ID-signed and notarised, runs on **Apple silicon and
+Intel** Macs (macOS 11 or later; download the `aarch64` file for Apple silicon,
+`x86_64` for Intel), and is self-contained: `ffmpeg` for video and audio is
+bundled. Apple Intelligence needs Apple silicon.
 A `-app.zip` with the same app is also published if you prefer a zip.
 
 ## Command line
@@ -32,6 +35,7 @@ platform on the [releases page](https://github.com/kwhorne/xpress/releases/lates
 | Platform | File |
 |----------|------|
 | macOS, Apple silicon | `xpress-<version>-aarch64-apple-darwin.tar.gz` |
+| macOS, Intel | `xpress-<version>-x86_64-apple-darwin.tar.gz` |
 | Linux, x86-64 | `xpress-<version>-x86_64-unknown-linux-gnu.tar.gz` |
 
 ```sh

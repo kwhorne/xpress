@@ -3,6 +3,19 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # A dry run — by hand, or for pull requests that change the packaging:
+  # builds, signs and packages everything, named v0.0.0-dev, and keeps the
+  # files as workflow artifacts instead of publishing a release.
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/make-app.sh
+      - scripts/make-dmg.sh
+      - scripts/sign-binaries.sh
+      - scripts/notarize.sh
+      - scripts/fetch-static-tools.sh
+      - scripts/build-xpress-ai.sh
 
 permissions:
   contents: write
@@ -17,6 +30,7 @@ jobs:
     # Map secrets to env so they can be referenced in `if:` (secrets context
     # isn't allowed there directly).
     env:
+      TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.0.0-dev' }}
       MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
       APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
     strategy:
@@ -25,6 +39,9 @@ jobs:
         include:
           - os: macos-latest
             target: aarch64-apple-darwin
+          # Intel Macs, built and checked natively.
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
     steps:
@@ -75,7 +92,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
-          dist="xpress-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          dist="xpress-${TAG}-${{ matrix.target }}"
           mkdir -p "$dist"
           bin_dir="target/${{ matrix.target }}/release"
           cp "$bin_dir/xpress" "$dist/"
@@ -103,20 +120,31 @@ jobs:
           # Download self-contained tools (ffmpeg) to bundle inside the .app.
           scripts/fetch-static-tools.sh "${{ matrix.target }}" bundle-tools
           scripts/make-app.sh --gui "$bin_dir/xpress-gui" --bin-dir bundle-tools \
-            --out dist-app --version "${GITHUB_REF_NAME#v}"
+            --out dist-app --version "${TAG#v}"
           # Keep "-macos-" before the target: `xpress update` (self_update) takes
           # the first asset, alphabetically, containing the target triple, and
           # that must be the CLI tarball. "-macos-" sorts after "-aarch64…",
           # while the name still contains the target and ends in -app.zip,
           # which the desktop app's updater looks for.
-          app_zip="xpress-${GITHUB_REF_NAME}-macos-${{ matrix.target }}-app.zip"
+          app_zip="xpress-${TAG}-macos-${{ matrix.target }}-app.zip"
           ditto -c -k --keepParent dist-app/xpress.app "$app_zip"
           shasum -a 256 "$app_zip" > "$app_zip.sha256"
-          dmg="xpress-${GITHUB_REF_NAME}-macos-${{ matrix.target }}.dmg"
-          scripts/make-dmg.sh --app dist-app/xpress.app --out "$dmg" --version "${GITHUB_REF_NAME#v}"
+          dmg="xpress-${TAG}-macos-${{ matrix.target }}.dmg"
+          scripts/make-dmg.sh --app dist-app/xpress.app --out "$dmg" --version "${TAG#v}"
           shasum -a 256 "$dmg" > "$dmg.sha256"
 
+      - name: Keep the files (dry run)
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: xpress-${{ matrix.target }}
+          path: |
+            xpress-*.tar.gz*
+            xpress-*-app.zip*
+            xpress-*.dmg*
+
       - name: Upload to release
+        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: |
