@@ -1,6 +1,7 @@
 //! Isolated test for the external-tool timeout. Lives in its own test binary so
 //! its `set_bin_dir_override` / `set_timeout` process state doesn't interfere
-//! with the shared stub harness in `integration.rs`.
+//! with the shared stub harness in `integration.rs`. The stub is a bash script.
+#![cfg(unix)]
 
 use std::time::{Duration, Instant};
 
