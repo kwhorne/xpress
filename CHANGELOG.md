@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Copies made by xpress itself (`xpress history copy`, `xpress watch
+  --clipboard`, *Optimise clipboard*) are no longer recorded again by the
+  app's history — which also changed a clip's source app to Terminal.
+- The first sync with many images no longer makes the app hang: images are
+  copied to iCloud Drive without holding the history.
+- Apple Intelligence shows up without restarting xpress once it's turned on
+  (or has finished getting ready).
+
 ## [0.8.2] - 2026-10-05
 
 ### Added

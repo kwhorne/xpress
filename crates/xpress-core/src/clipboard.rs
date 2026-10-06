@@ -14,6 +14,11 @@ pub fn set_clipboard_png(path: &Path) -> bool {
     }
 }
 
+/// A pasteboard type xpress adds to everything it puts on the clipboard, so
+/// the app's history doesn't record copies made by xpress itself (from the
+/// app, `xpress history copy` or `xpress watch --clipboard`).
+pub const XPRESS_MARKER: &str = "com.kwhorne.xpress.copy";
+
 /// One piece of what goes on the clipboard.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Part {
@@ -143,6 +148,7 @@ pub fn write_to(pb: &objc2_app_kit::NSPasteboard, parts: &[Part]) -> bool {
     use objc2_foundation::{NSArray, NSData, NSString, NSURL};
 
     let composed = compose(parts);
+    let marker = NSString::from_str(XPRESS_MARKER);
     pb.clearContents();
     if !composed.files.is_empty() {
         let items: Vec<Retained<ProtocolObject<dyn NSPasteboardWriting>>> = composed
@@ -152,6 +158,7 @@ pub fn write_to(pb: &objc2_app_kit::NSPasteboard, parts: &[Part]) -> bool {
                 let url = NSURL::fileURLWithPath(&NSString::from_str(&p.to_string_lossy()));
                 let link = url.absoluteString()?;
                 let item = NSPasteboardItem::new();
+                item.setString_forType(&NSString::from_str(""), &marker);
                 item.setString_forType(&link, unsafe { NSPasteboardTypeFileURL })
                     .then(|| ProtocolObject::from_retained(item))
             })
@@ -159,6 +166,7 @@ pub fn write_to(pb: &objc2_app_kit::NSPasteboard, parts: &[Part]) -> bool {
         return !items.is_empty() && pb.writeObjects(&NSArray::from_retained_slice(&items));
     }
     let mut ok = false;
+    pb.setString_forType(&NSString::from_str(""), &marker);
     if !composed.text.is_empty() {
         ok |= pb.setString_forType(&NSString::from_str(&composed.text), unsafe {
             NSPasteboardTypeString

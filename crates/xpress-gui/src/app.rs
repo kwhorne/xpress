@@ -124,6 +124,9 @@ pub struct XpressApp {
     ai_status: Arc<Mutex<Option<AiStatus>>>,
     /// The latest Apple Intelligence request (older answers are dropped).
     ai_request: u64,
+    /// A status check is running, and when the last one started.
+    ai_checking: Arc<AtomicBool>,
+    ai_checked_at: Instant,
     /// Press ⌘V in the previous app after choosing a clip.
     paste_directly: bool,
     /// Sync the history through iCloud Drive.
@@ -241,6 +244,7 @@ impl XpressApp {
         });
         let capture = Arc::new(CaptureFlags::default());
         let ai_status = Arc::new(Mutex::new(None));
+        let ai_checking = Arc::new(AtomicBool::new(false));
         let sync_status = Arc::new(Mutex::new(SyncStatus::default()));
         if let (true, Some(history)) = (integrations, &history) {
             let (tx, ctx) = (tx.clone(), ctx.clone());
@@ -255,11 +259,7 @@ impl XpressApp {
             );
         }
         if integrations {
-            let (slot, ctx) = (ai_status.clone(), ctx.clone());
-            std::thread::spawn(move || {
-                *slot.lock().unwrap() = Some(xpress_core::intelligence::status());
-                ctx.request_repaint();
-            });
+            spawn_ai_check(ai_status.clone(), ai_checking.clone(), ctx.clone());
         }
         if let (true, Some(history)) = (integrations, &history) {
             let (tx, ctx) = (tx.clone(), ctx.clone());
@@ -301,6 +301,8 @@ impl XpressApp {
             collecting: false,
             ai_status,
             ai_request: 0,
+            ai_checking,
+            ai_checked_at: Instant::now(),
             paste_directly: false,
             history_sync: false,
             history_ignored: Vec::new(),
@@ -1535,7 +1537,21 @@ impl XpressApp {
         if self.history_panel.dirty {
             self.history_panel.refresh(&history.lock().unwrap());
         }
-        self.history_panel.ai_status = *self.ai_status.lock().unwrap();
+        let ai = *self.ai_status.lock().unwrap();
+        self.history_panel.ai_status = ai;
+        // Apple Intelligence may have been turned on (or finished getting
+        // ready) since: look again now and then.
+        if self.integrations
+            && !matches!(ai, Some(AiStatus::Available) | Some(AiStatus::Missing))
+            && self.ai_checked_at.elapsed() >= Duration::from_secs(30)
+        {
+            self.ai_checked_at = Instant::now();
+            spawn_ai_check(
+                self.ai_status.clone(),
+                self.ai_checking.clone(),
+                ctx.clone(),
+            );
+        }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
@@ -2503,6 +2519,22 @@ fn hide_app(_ctx: &egui::Context) {
 #[cfg(not(target_os = "macos"))]
 fn hide_app(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+}
+
+/// Ask the Apple Intelligence helper whether the model can be used.
+fn spawn_ai_check(
+    slot: Arc<Mutex<Option<AiStatus>>>,
+    checking: Arc<AtomicBool>,
+    ctx: egui::Context,
+) {
+    if checking.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(move || {
+        *slot.lock().unwrap() = Some(xpress_core::intelligence::status());
+        checking.store(false, Ordering::SeqCst);
+        ctx.request_repaint();
+    });
 }
 
 /// Pick an app in /Applications to ignore.

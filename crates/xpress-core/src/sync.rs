@@ -313,13 +313,38 @@ fn append(own: &Path, lines: &[String]) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Copy a clip's image to the shared blobs, once.
-fn share_blob(history: &History, root: &Path, hash: &str, ext: &str) -> std::io::Result<()> {
-    let blob = root.join("blobs").join(format!("{hash}.{ext}"));
-    if blob.exists() {
-        return Ok(());
+/// An image to share: its blob name and where it is here.
+type Blob = (String, PathBuf);
+
+/// The images `ops` need, looked up while the history is locked.
+fn blobs_for<'a>(
+    history: &History,
+    ops: impl Iterator<Item = &'a Op>,
+) -> std::io::Result<Vec<Blob>> {
+    let mut blobs = Vec::new();
+    for op in ops {
+        if let Op::Add {
+            hash,
+            image: Some(ext),
+            ..
+        } = op
+        {
+            if let Some(src) = history.image_path(hash).map_err(io)? {
+                blobs.push((format!("{hash}.{ext}"), src));
+            }
+        }
     }
-    if let Some(src) = history.image_path(hash).map_err(io)? {
+    Ok(blobs)
+}
+
+/// Copy images to the shared blobs, once each — without holding the history
+/// lock, since a first sync can copy a lot.
+fn share_blobs(root: &Path, blobs: &[Blob]) -> std::io::Result<()> {
+    for (name, src) in blobs {
+        let blob = root.join("blobs").join(name);
+        if blob.exists() || !src.exists() {
+            continue;
+        }
         let tmp = blob.with_extension("part");
         fs::copy(src, &tmp)?;
         fs::rename(tmp, blob)?;
@@ -329,52 +354,48 @@ fn share_blob(history: &History, root: &Path, hash: &str, ext: &str) -> std::io:
 
 /// Write the outbox to this Mac's log.
 fn flush(history: &Mutex<History>, root: &Path, own: &Path) -> std::io::Result<usize> {
-    let h = history.lock().unwrap();
-    let pending = h.outbox().map_err(io)?;
+    let (pending, blobs) = {
+        let h = history.lock().unwrap();
+        let pending = h.outbox().map_err(io)?;
+        let ops: Vec<Op> = pending
+            .iter()
+            .filter_map(|(_, json)| serde_json::from_str(json).ok())
+            .collect();
+        let blobs = blobs_for(&h, ops.iter())?;
+        (pending, blobs)
+    };
     if pending.is_empty() {
         return Ok(0);
     }
-    let mut lines = Vec::with_capacity(pending.len());
-    for (_, json) in &pending {
-        if let Ok(Op::Add {
-            hash,
-            image: Some(ext),
-            ..
-        }) = serde_json::from_str::<Op>(json)
-        {
-            share_blob(&h, root, &hash, &ext)?;
-        }
-        lines.push(json.clone());
-    }
+    share_blobs(root, &blobs)?;
+    let lines: Vec<String> = pending.iter().map(|(_, json)| json.clone()).collect();
     append(own, &lines)?;
-    h.clear_outbox(pending.last().map(|(id, _)| *id).unwrap_or(0))
+    // Only what was written; newer changes go next time.
+    history
+        .lock()
+        .unwrap()
+        .clear_outbox(pending.last().map(|(id, _)| *id).unwrap_or(0))
         .map_err(io)?;
     Ok(pending.len())
 }
 
 /// Replace this Mac's logs with one snapshot of everything.
 fn compact(history: &Mutex<History>, root: &Path, own: &Path) -> std::io::Result<()> {
-    let h = history.lock().unwrap();
-    let ops = h.snapshot().map_err(io)?;
-    for op in &ops {
-        if let Op::Add {
-            hash,
-            image: Some(ext),
-            ..
-        } = op
-        {
-            share_blob(&h, root, hash, ext)?;
-        }
-    }
+    let (ops, blobs) = {
+        let h = history.lock().unwrap();
+        let ops = h.snapshot().map_err(io)?;
+        let blobs = blobs_for(&h, ops.iter())?;
+        // The snapshot covers what's waiting too.
+        h.clear_outbox(i64::MAX).map_err(io)?;
+        (ops, blobs)
+    };
+    share_blobs(root, &blobs)?;
     let old = log_files(own)?;
     let next = old.last().map_or(1, |l| log_number(l) + 1);
     let lines: Vec<String> = ops
         .iter()
         .map(|op| serde_json::to_string(op).map_err(io))
         .collect::<std::io::Result<_>>()?;
-    // The snapshot covers what's waiting too.
-    h.clear_outbox(i64::MAX).map_err(io)?;
-    drop(h);
     let first = log_path(own, next);
     append_from(own, &first, &lines)?;
     for file in old {
