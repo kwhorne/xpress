@@ -58,6 +58,8 @@ pub struct Settings {
     pub history_sync: bool,
     /// Apps whose copies aren't recorded.
     pub history_ignored: Vec<IgnoredApp>,
+    /// The welcome tour has been seen.
+    pub onboarded: bool,
     /// Global shortcuts (`global_hotkey` strings; empty = off).
     pub shortcut_clipboard: String,
     pub shortcut_show: String,
@@ -92,6 +94,7 @@ impl Settings {
             paste_directly: false,
             history_sync: false,
             history_ignored: Vec::new(),
+            onboarded: false,
             shortcut_clipboard: crate::shortcuts::Action::Clipboard
                 .default_shortcut()
                 .into(),

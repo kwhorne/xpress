@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Welcome tour** on first launch: what xpress does, the menu-bar icon and
+  shortcuts, and switches for the clipboard history, *Paste directly* and
+  *Open at login*. Skip it, or bring it back from About.
+- **Open at login** in Preferences (macOS 13+).
+
 ## [0.8.4] - 2026-10-06
 
 ### Added

@@ -135,6 +135,11 @@ pub struct XpressApp {
     history_ignored: Vec<IgnoredApp>,
     /// "Delete its clips" asks once more (the app's index in the list).
     confirm_delete_app: Option<usize>,
+    /// The welcome tour was seen; the step it's on while showing.
+    onboarded: bool,
+    welcome_step: Option<usize>,
+    /// Why "Open at login" couldn't be changed.
+    login_error: Option<String>,
     /// Whether the history records changes for syncing right now.
     journal_on: bool,
     sync_status: Arc<Mutex<SyncStatus>>,
@@ -307,6 +312,9 @@ impl XpressApp {
             history_sync: false,
             history_ignored: Vec::new(),
             confirm_delete_app: None,
+            onboarded: false,
+            welcome_step: None,
+            login_error: None,
             journal_on: false,
             sync_status,
             integrations,
@@ -342,6 +350,9 @@ impl XpressApp {
         app.apply_settings(&settings);
         app.sync_capture();
         app.apply_shortcuts();
+        if integrations && !app.onboarded {
+            app.welcome_step = Some(0);
+        }
         if app.always_on_top {
             ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
                 egui::WindowLevel::AlwaysOnTop,
@@ -370,6 +381,7 @@ impl XpressApp {
             paste_directly: self.paste_directly,
             history_sync: self.history_sync,
             history_ignored: self.history_ignored.clone(),
+            onboarded: self.onboarded,
             shortcut_clipboard: self.shortcuts[Action::Clipboard.index()].clone(),
             shortcut_show: self.shortcuts[Action::Show.index()].clone(),
             shortcut_history: self.shortcuts[Action::History.index()].clone(),
@@ -398,6 +410,7 @@ impl XpressApp {
         self.paste_directly = s.paste_directly;
         self.history_sync = s.history_sync;
         self.history_ignored = s.history_ignored.clone();
+        self.onboarded = s.onboarded;
         self.shortcuts = [
             s.shortcut_clipboard.clone(),
             s.shortcut_show.clone(),
@@ -1252,6 +1265,11 @@ impl XpressApp {
             self.submit(path, &ctx);
         }
 
+        if let Some(step) = self.welcome_step {
+            self.draw_welcome(ui, step);
+            return;
+        }
+
         self.draw_update_banner(ui);
 
         if self.crop.is_some() {
@@ -1697,6 +1715,224 @@ impl XpressApp {
         });
     }
 
+    // ---- Welcome tour --------------------------------------------------------
+
+    const WELCOME_STEPS: usize = 3;
+
+    fn finish_welcome(&mut self) {
+        self.welcome_step = None;
+        self.onboarded = true;
+        self.tab = Tab::Optimise;
+        self.persist_settings(true);
+    }
+
+    fn draw_welcome(&mut self, root: &mut egui::Ui, step: usize) {
+        let ctx = root.ctx().clone();
+        let mut go_to = None;
+        let mut finish = false;
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::central_panel(&ctx.global_style())
+                    .fill(BG)
+                    .inner_margin(egui::Margin::same(28)),
+            )
+            .show(root, |ui| {
+                ui.horizontal(|ui| {
+                    for i in 0..Self::WELCOME_STEPS {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(14.0, 14.0), Sense::hover());
+                        let color = if i == step { ACCENT } else { BORDER };
+                        ui.painter().circle_filled(rect.center(), 4.0, color);
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.link("Skip").clicked() {
+                            finish = true;
+                        }
+                    });
+                });
+                ui.add_space(24.0);
+                ui.vertical_centered(|ui| {
+                    ui.set_max_width(580.0);
+                    match step {
+                        0 => self.welcome_intro(ui),
+                        1 => self.welcome_history(ui),
+                        _ => self.welcome_finish(ui),
+                    }
+                    ui.add_space(24.0);
+                    ui.horizontal(|ui| {
+                        if step > 0 && ui.button("← Back").clicked() {
+                            go_to = Some(step - 1);
+                        }
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if step + 1 < Self::WELCOME_STEPS {
+                                if ui.button("Next →").clicked() {
+                                    go_to = Some(step + 1);
+                                }
+                            } else if ui.button("Start using xpress").clicked() {
+                                finish = true;
+                            }
+                        });
+                    });
+                });
+            });
+        if finish {
+            self.finish_welcome();
+        } else if let Some(step) = go_to {
+            self.welcome_step = Some(step);
+        }
+    }
+
+    fn welcome_intro(&mut self, ui: &mut egui::Ui) {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(64.0, 64.0), Sense::hover());
+        draw_x_logo(ui.painter(), rect.center(), 64.0);
+        ui.add_space(8.0);
+        ui.heading("Welcome to xpress");
+        ui.label(
+            RichText::new(
+                "Make images, video, PDFs and audio smaller — without them looking or sounding worse.",
+            )
+            .weak(),
+        );
+        ui.add_space(18.0);
+        let key = |a| {
+            self.shortcut_label(a)
+                .map_or_else(String::new, |k| format!(" or press {k}"))
+        };
+        let show = key(Action::Show);
+        let clip = match self.shortcut_label(Action::Clipboard) {
+            Some(k) => format!("Copy an image and press {k}: the smaller one is ready to paste."),
+            None => {
+                "Copy an image and choose Optimise clipboard: the smaller one is ready to paste."
+                    .into()
+            }
+        };
+        card(ui, |ui| {
+            welcome_row(
+                ui,
+                "↓",
+                ACCENT,
+                "Drop files onto the window",
+                "They come out smaller; the originals are kept as backups.",
+            );
+            ui.separator();
+            welcome_row(
+                ui,
+                "≡",
+                Color32::from_rgb(120, 120, 130),
+                "Lives in the menu bar",
+                &format!(
+                    "Click the xpress icon in the menu bar{show}. Closing the window keeps it running."
+                ),
+            );
+            ui.separator();
+            welcome_row(
+                ui,
+                "⌘",
+                Color32::from_rgb(90, 180, 140),
+                "Copy large, paste small",
+                &clip,
+            );
+        });
+    }
+
+    fn welcome_history(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Your clipboard, remembered");
+        let key = self
+            .shortcut_label(Action::History)
+            .map_or_else(String::new, |k| format!(" with {k}"));
+        ui.label(
+            RichText::new(format!(
+                "Keep everything you copy and every screenshot, and find it again{key} — \
+                 also by the words inside images. It stays on this Mac, and passwords are \
+                 never saved."
+            ))
+            .weak(),
+        );
+        ui.add_space(18.0);
+        card(ui, |ui| {
+            setting_row(ui, "Clipboard history", "Record what you copy", |ui| {
+                toggle(ui, &mut self.history_enabled);
+            });
+            ui.separator();
+            ui.add_enabled_ui(self.history_enabled, |ui| {
+                setting_row(
+                    ui,
+                    "Include screenshots",
+                    "Add new screenshots to the history",
+                    |ui| {
+                        toggle(ui, &mut self.history_screenshots);
+                    },
+                );
+                if crate::autopaste::supported() {
+                    ui.separator();
+                    setting_row(
+                        ui,
+                        "Paste directly",
+                        "Paste a chosen clip into the app you were using (macOS asks for permission)",
+                        |ui| {
+                            if toggle(ui, &mut self.paste_directly).changed()
+                                && self.paste_directly
+                                && self.integrations
+                                && !crate::autopaste::allowed()
+                            {
+                                crate::autopaste::ask();
+                            }
+                        },
+                    );
+                }
+            });
+        });
+        self.sync_capture();
+        ui.add_space(8.0);
+        ui.hyperlink_to(
+            "More about the history",
+            "https://github.com/kwhorne/xpress/blob/main/docs/history.md",
+        );
+    }
+
+    fn welcome_finish(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Ready to go");
+        ui.label(
+            RichText::new("A few last things — all of them can be changed in Preferences.").weak(),
+        );
+        ui.add_space(18.0);
+        card(ui, |ui| {
+            if crate::login::supported() {
+                self.login_row(ui);
+                ui.separator();
+            }
+            setting_row(
+                ui,
+                "Command line",
+                "Scripts, folders and CI: brew install kwhorne/tap/xpress",
+                |ui| {
+                    ui.hyperlink_to(
+                        "Learn more",
+                        "https://github.com/kwhorne/xpress/blob/main/docs/cli.md",
+                    );
+                },
+            );
+        });
+    }
+
+    /// "Open at login" (macOS 13+, installed app).
+    fn login_row(&mut self, ui: &mut egui::Ui) {
+        let mut on = crate::login::enabled();
+        setting_row(
+            ui,
+            "Open at login",
+            "Start xpress in the menu bar when you log in",
+            |ui| {
+                if toggle(ui, &mut on).changed() {
+                    self.login_error = crate::login::set(on).err();
+                }
+            },
+        );
+        if let Some(error) = &self.login_error {
+            ui.label(RichText::new(error).small().color(ERR_RED));
+        }
+    }
+
     // ---- Settings view -----------------------------------------------------
 
     fn settings_view(&mut self, ui: &mut egui::Ui) {
@@ -1778,6 +2014,10 @@ impl XpressApp {
                     toggle(ui, &mut self.aggressive);
                 },
             );
+            if crate::login::supported() {
+                ui.separator();
+                self.login_row(ui);
+            }
             ui.separator();
             setting_row(ui, "Float on top", "Keep the window above others", |ui| {
                 if toggle(ui, &mut self.always_on_top).changed() {
@@ -1840,6 +2080,10 @@ impl XpressApp {
             );
             ui.add_space(6.0);
             ui.label(RichText::new("Developed by Knut W. Horne").strong());
+            ui.add_space(6.0);
+            if ui.link("Show the welcome tour").clicked() {
+                self.welcome_step = Some(0);
+            }
             ui.add_space(18.0);
 
             let checking = self.update_checking.load(Ordering::Relaxed);
@@ -2534,6 +2778,26 @@ fn spawn_ai_check(
         *slot.lock().unwrap() = Some(xpress_core::intelligence::status());
         checking.store(false, Ordering::SeqCst);
         ctx.request_repaint();
+    });
+}
+
+/// A row of the welcome tour: a coloured icon tile, a title and a line.
+fn welcome_row(ui: &mut egui::Ui, icon: &str, tile: Color32, title: &str, desc: &str) {
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), Sense::hover());
+        ui.painter().rect_filled(rect, 8.0, tile);
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            icon,
+            FontId::proportional(17.0),
+            Color32::WHITE,
+        );
+        ui.add_space(6.0);
+        ui.vertical(|ui| {
+            ui.label(RichText::new(title).strong());
+            ui.label(RichText::new(desc).weak().small());
+        });
     });
 }
 
@@ -3400,6 +3664,59 @@ mod tests {
         h.run();
         assert!(h.state().history_ignored.is_empty());
         assert!(h.state().capture.ignored.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn welcome_tour_walks_through_and_is_remembered() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gui.json");
+        {
+            let mut h = harness_with_settings(&path);
+            assert_eq!(h.state().welcome_step, None, "tests start without it");
+            h.state_mut().welcome_step = Some(0);
+            h.run();
+            assert!(h.query_by_label("Welcome to xpress").is_some());
+            assert!(
+                h.query_by_label_contains("press ⇧⌘X").is_some(),
+                "uses the shortcuts"
+            );
+            h.get_by_label("Next →").click();
+            h.run();
+            assert!(h.query_by_label("Your clipboard, remembered").is_some());
+            assert!(!h.state().history_enabled);
+            // What's chosen here is kept (the switches are plain toggles).
+            h.state_mut().history_enabled = true;
+            h.run();
+            h.get_by_label("← Back").click();
+            h.run();
+            assert_eq!(h.state().welcome_step, Some(0));
+            h.get_by_label("Next →").click();
+            h.run();
+            h.get_by_label("Next →").click();
+            h.run();
+            assert!(h.query_by_label("Ready to go").is_some());
+            h.get_by_label("Start using xpress").click();
+            h.run();
+            assert_eq!(h.state().welcome_step, None);
+            assert!(h.state().onboarded);
+            assert!(h.query_by_label("Optimise clipboard").is_some());
+        }
+        let mut h = harness_with_settings(&path);
+        assert!(h.state().onboarded);
+        assert!(
+            h.state().history_enabled,
+            "what was chosen in the tour stays"
+        );
+
+        // About can show it again; Skip ends it.
+        h.state_mut().tab = Tab::About;
+        h.run();
+        h.get_by_label("Show the welcome tour").click();
+        h.run();
+        assert_eq!(h.state().welcome_step, Some(0));
+        h.get_by_label("Skip").click();
+        h.run();
+        assert_eq!(h.state().welcome_step, None);
     }
 
     #[test]

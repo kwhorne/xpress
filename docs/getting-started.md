@@ -13,7 +13,7 @@ what xpress does to your files so there are no surprises.
 [releases page](https://github.com/kwhorne/xpress/releases/latest), open it and
 drag **xpress** into *Applications*. It is signed and notarised by Apple, needs
 Apple silicon, and includes everything it needs (also `ffmpeg` for video and
-audio).
+audio). The first time it opens, a short welcome tour shows the basics.
 
 **Command line (macOS or Linux).** Download the `.tar.gz` for your platform from
 the same page, unpack it and put `xpress` somewhere on your `PATH`:
