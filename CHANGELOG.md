@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Intel Macs**: every release now includes the app (`.dmg`, `.zip`) and the
+  command line for `x86_64-apple-darwin`, built and tested on Intel. Updates
+  pick the right one automatically. (Apple Intelligence still needs Apple
+  silicon.)
+
 ## [0.9.2] - 2026-10-06
 
 ### Security

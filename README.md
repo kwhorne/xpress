@@ -65,7 +65,7 @@ xpress is free and open source under the [MIT License](LICENSE).
 ## Install
 
 ```sh
-brew install --cask kwhorne/tap/xpress    # the menu-bar app (macOS, Apple silicon)
+brew install --cask kwhorne/tap/xpress    # the menu-bar app (macOS)
 brew install kwhorne/tap/xpress           # the command line (macOS, Linux)
 ```
 
