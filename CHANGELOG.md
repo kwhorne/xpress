@@ -6,6 +6,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-10-06
+
 ### Added
 - **Optimise with xpress** in Finder: right-click images, videos, audio or
   PDFs → Quick Actions / Services. The app optimises them with the current
@@ -523,7 +525,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/kwhorne/xpress/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/kwhorne/xpress/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/kwhorne/xpress/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/kwhorne/xpress/compare/v0.9.0...v0.9.1

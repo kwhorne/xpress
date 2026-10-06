@@ -8,7 +8,7 @@ members = [
 exclude = ["tools/icon-gen"]
 
 [workspace.package]
-version = "0.9.3"
+version = "0.9.4"
 edition = "2021"
 rust-version = "1.90"
 license = "MIT"
