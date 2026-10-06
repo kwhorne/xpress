@@ -1,6 +1,7 @@
 //! The History view: search, filters, categories and the list of clips —
 //! with several clips selected at once, multi-clips and collecting.
 
+use crate::i18n::{tr, trf};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -252,15 +253,15 @@ impl HistoryPanel {
     ) -> Option<HistoryAction> {
         let mut action = None;
         ui.horizontal(|ui| {
-            ui.heading("History");
+            ui.heading(tr("History"));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if enabled
                     && ui
-                        .add(egui::Button::selectable(collecting, "⧉ Collect"))
-                        .on_hover_text(
+                        .add(egui::Button::selectable(collecting, tr("⧉ Collect")))
+                        .on_hover_text(tr(
                             "Put everything you copy from now on into one multi-clip, \
                              to paste all of it at once",
-                        )
+                        ))
                         .clicked()
                 {
                     action = Some(HistoryAction::SetCollecting(!collecting));
@@ -268,25 +269,27 @@ impl HistoryPanel {
             });
         });
         ui.label(
-            RichText::new("Everything you copy and every screenshot — search, then copy it back.")
-                .weak(),
+            RichText::new(tr(
+                "Everything you copy and every screenshot — search, then copy it back.",
+            ))
+            .weak(),
         );
         ui.add_space(12.0);
 
         if !enabled {
             crate::app::card(ui, |ui| {
-                ui.label(RichText::new("Clipboard history is off").strong());
+                ui.label(RichText::new(tr("Clipboard history is off")).strong());
                 ui.label(
-                    RichText::new(
+                    RichText::new(tr(
                         "Turn it on to keep what you copy and your screenshots, and find them \
                          again — also by the text inside images. Everything stays on this Mac; \
                          passwords and other private clipboard content are never saved.",
-                    )
+                    ))
                     .weak()
                     .small(),
                 );
                 ui.add_space(8.0);
-                if ui.button("Turn on clipboard history").clicked() {
+                if ui.button(tr("Turn on clipboard history")).clicked() {
                     action = Some(HistoryAction::Enable);
                 }
             });
@@ -300,11 +303,13 @@ impl HistoryPanel {
             crate::app::card(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new("Collecting — everything you copy goes into one multi-clip.")
-                            .strong(),
+                        RichText::new(tr(
+                            "Collecting — everything you copy goes into one multi-clip.",
+                        ))
+                        .strong(),
                     );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("Done").clicked() {
+                        if ui.button(tr("Done")).clicked() {
                             action = Some(HistoryAction::SetCollecting(false));
                         }
                     });
@@ -315,16 +320,16 @@ impl HistoryPanel {
 
         if let Some(parent) = self.parent {
             ui.horizontal(|ui| {
-                if ui.button("← Back").clicked() {
+                if ui.button(tr("← Back")).clicked() {
                     self.parent = None;
                     self.selected = 0;
                     self.dirty = true;
                 }
                 ui.label(
-                    RichText::new(format!("Multi-clip · {} items", self.results.len())).strong(),
+                    RichText::new(trf("Multi-clip · {} items", &[&self.results.len()])).strong(),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("Copy all").clicked() {
+                    if ui.button(tr("Copy all")).clicked() {
                         action = Some(HistoryAction::Copy {
                             id: parent,
                             hide: false,
@@ -425,19 +430,18 @@ impl HistoryPanel {
             ui.add_space(30.0);
             ui.vertical_centered(|ui| {
                 let empty = if self.stats.0 == 0 {
-                    "Nothing yet — copy something or take a screenshot."
+                    tr("Nothing yet — copy something or take a screenshot.")
                 } else {
-                    "No clips match."
+                    tr("No clips match.")
                 };
                 ui.label(RichText::new(empty).weak());
             });
             return action;
         }
 
-        let footer = format!(
+        let footer = trf(
             "{} clips · {}   ↑↓ choose · ⏎ copy · ⌘1–9 · ⌘-click to pick several · esc",
-            self.stats.0,
-            crate::app::human(self.stats.1)
+            &[&self.stats.0, &crate::app::human(self.stats.1)],
         );
         let list_height = ui.available_height() - 22.0;
         let modifiers = ui.input(|i| i.modifiers);
@@ -519,17 +523,17 @@ impl HistoryPanel {
             search = Some(
                 ui.add(
                     egui::TextEdit::singleline(&mut self.query)
-                        .hint_text("Search text, links, files and words in images…")
+                        .hint_text(tr("Search text, links, files and words in images…"))
                         .desired_width(ui.available_width() - app_filter_width),
                 ),
             );
             if !self.apps.is_empty() {
                 egui::ComboBox::from_id_salt("history_app")
-                    .selected_text(self.app.as_deref().unwrap_or("All apps"))
+                    .selected_text(self.app.as_deref().unwrap_or(tr("All apps")))
                     .width(app_filter_width - 16.0)
                     .show_ui(ui, |ui| {
                         if ui
-                            .selectable_label(self.app.is_none(), "All apps")
+                            .selectable_label(self.app.is_none(), tr("All apps"))
                             .clicked()
                         {
                             self.app = None;
@@ -566,18 +570,18 @@ impl HistoryPanel {
                 ui.add(egui::Button::selectable(on, label)).clicked()
             };
             let everything = self.kind.is_none() && !self.pinned_only && self.category.is_none();
-            if chip(ui, everything, "All") {
+            if chip(ui, everything, tr("All")) {
                 self.kind = None;
                 self.pinned_only = false;
                 self.category = None;
                 self.dirty = true;
             }
-            if chip(ui, self.pinned_only, "Pinned") {
+            if chip(ui, self.pinned_only, tr("Pinned")) {
                 self.pinned_only = !self.pinned_only;
                 self.dirty = true;
             }
             for kind in ClipKind::ALL {
-                if chip(ui, self.kind == Some(kind), kind.label()) {
+                if chip(ui, self.kind == Some(kind), tr(kind.label())) {
                     self.kind = (self.kind != Some(kind)).then_some(kind);
                     self.dirty = true;
                 }
@@ -599,19 +603,21 @@ impl HistoryPanel {
                     self.dirty = true;
                 }
                 resp.context_menu(|ui| {
-                    if ui.button("Edit…").clicked() {
+                    if ui.button(tr("Edit…")).clicked() {
                         self.editor = Some(CategoryEditor::edit(&category));
                         ui.close();
                     }
-                    if ui.button("Delete category").clicked() {
+                    if ui.button(tr("Delete category")).clicked() {
                         *action = Some(HistoryAction::DeleteCategory(category.id));
                         ui.close();
                     }
                 });
             }
             if ui
-                .add(egui::Button::new("+ Category").small())
-                .on_hover_text("Group clips by hand, or automatically by app, kind or words")
+                .add(egui::Button::new(tr("+ Category")).small())
+                .on_hover_text(tr(
+                    "Group clips by hand, or automatically by app, kind or words",
+                ))
                 .clicked()
             {
                 self.editor = Some(CategoryEditor::new(self.categories.len()));
@@ -624,11 +630,11 @@ impl HistoryPanel {
         let ids = self.marked.clone();
         crate::app::card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new(format!("{} selected", ids.len())).strong());
+                ui.label(RichText::new(trf("{} selected", &[&ids.len()])).strong());
                 ui.add_space(8.0);
                 if ui
-                    .button("Copy together")
-                    .on_hover_text("Combine into a multi-clip and copy it (⏎)")
+                    .button(tr("Copy together"))
+                    .on_hover_text(tr("Combine into a multi-clip and copy it (⏎)"))
                     .clicked()
                 {
                     *action = Some(HistoryAction::Combine {
@@ -637,8 +643,8 @@ impl HistoryPanel {
                     });
                 }
                 if ui
-                    .button("Combine")
-                    .on_hover_text("Keep them together as one multi-clip")
+                    .button(tr("Combine"))
+                    .on_hover_text(tr("Keep them together as one multi-clip"))
                     .clicked()
                 {
                     *action = Some(HistoryAction::Combine {
@@ -647,7 +653,7 @@ impl HistoryPanel {
                     });
                 }
                 if !self.categories.is_empty() {
-                    ui.menu_button("Add to category", |ui| {
+                    ui.menu_button(tr("Add to category"), |ui| {
                         for category in &self.categories {
                             if ui.button(category_label(ui, category, None)).clicked() {
                                 *action = Some(HistoryAction::SetCategory {
@@ -660,16 +666,16 @@ impl HistoryPanel {
                         }
                     });
                 }
-                if ui.button("Pin").clicked() {
+                if ui.button(tr("Pin")).clicked() {
                     *action = Some(HistoryAction::Pin(ids.clone()));
                 }
-                if ui.button("Delete").clicked() {
+                if ui.button(tr("Delete")).clicked() {
                     *action = Some(HistoryAction::Delete(ids.clone()));
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui
                         .small_button("×")
-                        .on_hover_text("Clear selection")
+                        .on_hover_text(tr("Clear selection"))
                         .clicked()
                     {
                         self.marked.clear();
@@ -688,14 +694,14 @@ impl HistoryPanel {
         let modal = egui::Modal::new(egui::Id::new("category_editor")).show(ctx, |ui| {
             ui.set_width(380.0);
             ui.heading(if editor.id.is_some() {
-                "Edit category"
+                tr("Edit category")
             } else {
-                "New category"
+                tr("New category")
             });
             ui.add_space(8.0);
             let name = ui.add(
                 egui::TextEdit::singleline(&mut editor.name)
-                    .hint_text("Name, e.g. Receipts")
+                    .hint_text(tr("Name, e.g. Receipts"))
                     .desired_width(f32::INFINITY),
             );
             if editor.name.is_empty() && editor.id.is_none() {
@@ -720,45 +726,51 @@ impl HistoryPanel {
                 }
             });
             ui.add_space(10.0);
-            ui.label(RichText::new("Add clips automatically").strong());
+            ui.label(RichText::new(tr("Add clips automatically")).strong());
             ui.label(
-                RichText::new("New clips that match everything set here join by themselves.")
-                    .weak()
-                    .small(),
+                RichText::new(tr(
+                    "New clips that match everything set here join by themselves.",
+                ))
+                .weak()
+                .small(),
             );
             ui.add_space(4.0);
             egui::Grid::new("category_rule")
                 .num_columns(2)
                 .spacing([10.0, 6.0])
                 .show(ui, |ui| {
-                    ui.label("Copied in");
+                    ui.label(tr("Copied in"));
                     egui::ComboBox::from_id_salt("rule_app")
-                        .selected_text(editor.app.as_deref().unwrap_or("Any app"))
+                        .selected_text(editor.app.as_deref().unwrap_or(tr("Any app")))
                         .width(220.0)
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut editor.app, None, "Any app");
+                            ui.selectable_value(&mut editor.app, None, tr("Any app"));
                             for app in &apps {
                                 ui.selectable_value(&mut editor.app, Some(app.clone()), app);
                             }
                         });
                     ui.end_row();
-                    ui.label("Kind");
+                    ui.label(tr("Kind"));
                     egui::ComboBox::from_id_salt("rule_kind")
-                        .selected_text(editor.kind.map_or("Any kind", |k| k.label()))
+                        .selected_text(editor.kind.map_or(tr("Any kind"), |k| tr(k.label())))
                         .width(220.0)
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut editor.kind, None, "Any kind");
+                            ui.selectable_value(&mut editor.kind, None, tr("Any kind"));
                             for kind in ClipKind::ALL {
                                 if kind != ClipKind::Multi {
-                                    ui.selectable_value(&mut editor.kind, Some(kind), kind.label());
+                                    ui.selectable_value(
+                                        &mut editor.kind,
+                                        Some(kind),
+                                        tr(kind.label()),
+                                    );
                                 }
                             }
                         });
                     ui.end_row();
-                    ui.label("Containing");
+                    ui.label(tr("Containing"));
                     ui.add(
                         egui::TextEdit::singleline(&mut editor.contains)
-                            .hint_text("words, also in images")
+                            .hint_text(tr("words, also in images"))
                             .desired_width(220.0),
                     );
                     ui.end_row();
@@ -771,7 +783,7 @@ impl HistoryPanel {
             ui.horizontal(|ui| {
                 let can_save = !editor.name.trim().is_empty();
                 if ui
-                    .add_enabled(can_save, egui::Button::new("Save"))
+                    .add_enabled(can_save, egui::Button::new(tr("Save")))
                     .clicked()
                 {
                     action = Some(HistoryAction::SaveCategory {
@@ -781,12 +793,12 @@ impl HistoryPanel {
                         rule: editor.rule(),
                     });
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.button(tr("Cancel")).clicked() {
                     close = true;
                 }
                 if let Some(id) = editor.id {
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.button("Delete").clicked() {
+                        if ui.button(tr("Delete")).clicked() {
                             action = Some(HistoryAction::DeleteCategory(id));
                         }
                     });
@@ -805,9 +817,9 @@ impl HistoryPanel {
         let mut close = false;
         let modal = egui::Modal::new(egui::Id::new("ai_result")).show(ctx, |ui| {
             ui.set_width(460.0);
-            ui.heading(view.task.result_title());
+            ui.heading(tr(view.task.result_title()));
             ui.label(
-                RichText::new(format!("Apple Intelligence · {}", view.source))
+                RichText::new(trf("Apple Intelligence · {}", &[&view.source]))
                     .weak()
                     .small(),
             );
@@ -816,10 +828,10 @@ impl HistoryPanel {
                 AiState::Working => {
                     ui.horizontal(|ui| {
                         ui.add(egui::Spinner::new());
-                        ui.label(format!("{}…", view.task.label()));
+                        ui.label(format!("{}…", tr(view.task.label())));
                     });
                     ui.add_space(10.0);
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         close = true;
                     }
                 }
@@ -831,19 +843,19 @@ impl HistoryPanel {
                         });
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
-                        if ui.button("Copy").clicked() {
+                        if ui.button(tr("Copy")).clicked() {
                             action = Some(HistoryAction::CopyText(text.clone()));
                             close = true;
                         }
                         if ui
-                            .button("Save to history")
-                            .on_hover_text("Keep it as a new clip")
+                            .button(tr("Save to history"))
+                            .on_hover_text(tr("Keep it as a new clip"))
                             .clicked()
                         {
                             action = Some(HistoryAction::SaveText(text.clone()));
                             close = true;
                         }
-                        if ui.button("Close").clicked() {
+                        if ui.button(tr("Close")).clicked() {
                             close = true;
                         }
                     });
@@ -851,7 +863,7 @@ impl HistoryPanel {
                 AiState::Failed(error) => {
                     ui.colored_label(crate::app::ERR_RED, error);
                     ui.add_space(10.0);
-                    if ui.button("Close").clicked() {
+                    if ui.button(tr("Close")).clicked() {
                         close = true;
                     }
                 }
@@ -927,11 +939,11 @@ impl HistoryPanel {
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui
-                        .small_button("Copy")
+                        .small_button(tr("Copy"))
                         .on_hover_text(if index < 9 {
-                            format!("Copy to the clipboard (⌘{})", index + 1)
+                            trf("Copy to the clipboard (⌘{})", &[&(index + 1)])
                         } else {
-                            "Copy to the clipboard".into()
+                            tr("Copy to the clipboard").into()
                         })
                         .clicked()
                     {
@@ -944,9 +956,9 @@ impl HistoryPanel {
                     if ui
                         .small_button(star)
                         .on_hover_text(if clip.pinned {
-                            "Unpin"
+                            tr("Unpin")
                         } else {
-                            "Pin — keep forever"
+                            tr("Pin — keep forever")
                         })
                         .clicked()
                     {
@@ -970,20 +982,20 @@ impl HistoryPanel {
 
     fn context_menu(&mut self, ui: &mut egui::Ui, clip: &Clip) -> Option<HistoryAction> {
         let mut action = None;
-        if ui.button("Copy").clicked() {
+        if ui.button(tr("Copy")).clicked() {
             action = Some(HistoryAction::Copy {
                 id: clip.id,
                 hide: false,
             });
         }
-        if clip.kind == ClipKind::Multi && ui.button("Show items").clicked() {
+        if clip.kind == ClipKind::Multi && ui.button(tr("Show items")).clicked() {
             self.parent = Some(clip.id);
             self.selected = 0;
             self.marked.clear();
             self.dirty = true;
             ui.close();
         }
-        if !clip.ocr.is_empty() && ui.button("Copy text in image").clicked() {
+        if !clip.ocr.is_empty() && ui.button(tr("Copy text in image")).clicked() {
             action = Some(HistoryAction::CopyText(clip.ocr.clone()));
         }
         if ai_text(clip).is_some() {
@@ -991,7 +1003,7 @@ impl HistoryPanel {
                 Some(AiStatus::Available) => {
                     ui.menu_button("Apple Intelligence", |ui| {
                         for task in Task::ALL {
-                            if ui.button(task.label()).clicked() {
+                            if ui.button(tr(task.label())).clicked() {
                                 action = Some(HistoryAction::Intelligence { id: clip.id, task });
                                 ui.close();
                             }
@@ -1002,11 +1014,11 @@ impl HistoryPanel {
                 None | Some(AiStatus::Missing) => {}
                 Some(status) => {
                     ui.add_enabled(false, egui::Button::new("Apple Intelligence"))
-                        .on_disabled_hover_text(status.explain().unwrap_or_default());
+                        .on_disabled_hover_text(tr(status.explain().unwrap_or_default()));
                 }
             }
         }
-        if clip.kind == ClipKind::Link && ui.button("Open link").clicked() {
+        if clip.kind == ClipKind::Link && ui.button(tr("Open link")).clicked() {
             action = Some(HistoryAction::Open(clip.text.trim().to_string()));
         }
         let reveal = clip
@@ -1015,20 +1027,20 @@ impl HistoryPanel {
             .next()
             .or_else(|| clip.image.clone());
         if let Some(path) = reveal {
-            if ui.button("Show in Finder").clicked() {
+            if ui.button(tr("Show in Finder")).clicked() {
                 action = Some(HistoryAction::Reveal(path));
             }
         }
         if ui
-            .button(if clip.pinned { "Unpin" } else { "Pin" })
+            .button(if clip.pinned { tr("Unpin") } else { tr("Pin") })
             .clicked()
         {
             action = Some(HistoryAction::TogglePin(clip.id));
         }
         if let (Some(app), false) = (&clip.source_app, clip.kind == ClipKind::Screenshot) {
             if ui
-                .button(format!("Don't record from {app}"))
-                .on_hover_text("Add it to Preferences → Ignore apps")
+                .button(trf("Don't record from {}", &[app]))
+                .on_hover_text(tr("Add it to Preferences → Ignore apps"))
                 .clicked()
             {
                 action = Some(HistoryAction::IgnoreApp {
@@ -1037,7 +1049,7 @@ impl HistoryPanel {
                 });
             }
         }
-        ui.menu_button("Categories", |ui| {
+        ui.menu_button(tr("Categories"), |ui| {
             for category in &self.categories {
                 let mut on = clip.categories.contains(&category.id);
                 if ui
@@ -1054,13 +1066,13 @@ impl HistoryPanel {
             if !self.categories.is_empty() {
                 ui.separator();
             }
-            if ui.button("New category…").clicked() {
+            if ui.button(tr("New category…")).clicked() {
                 self.editor = Some(CategoryEditor::new(self.categories.len()));
                 ui.close();
             }
         });
         ui.separator();
-        if ui.button("Delete").clicked() {
+        if ui.button(tr("Delete")).clicked() {
             action = Some(HistoryAction::Delete(vec![clip.id]));
         }
         if action.is_some() {
@@ -1182,7 +1194,18 @@ use xpress_core::history::first_line;
 
 /// The main line of a row.
 pub fn title(clip: &Clip) -> String {
-    clip.title()
+    let title = clip.title();
+    // Only the placeholders are translated, never what was copied.
+    let placeholder = match clip.kind {
+        ClipKind::Image | ClipKind::Screenshot => clip.ocr.is_empty() && title == "Image",
+        ClipKind::Multi => clip.text.is_empty(),
+        _ => false,
+    };
+    if placeholder {
+        tr(&title).to_string()
+    } else {
+        title
+    }
 }
 
 /// A multi-clip's main line: its items, short.
@@ -1192,24 +1215,23 @@ pub fn multi_title(items: &[Clip]) -> String {
 }
 
 pub fn multi_subtitle(clip: &Clip, items: &[Clip], now_ms: i64) -> String {
-    format!(
+    trf(
         "Multi-clip  ·  {}  ·  {} items",
-        ago(now_ms, clip.last_used),
-        items.len()
+        &[&crate::i18n::ago(now_ms, clip.last_used), &items.len()],
     )
 }
 
 /// The detail line: kind · app · when · size.
 pub fn subtitle(clip: &Clip, now_ms: i64) -> String {
     let kind = match clip.kind {
-        ClipKind::Text => "Text",
-        ClipKind::Link => "Link",
-        ClipKind::Code => "Code",
-        ClipKind::Color => "Colour",
-        ClipKind::Image => "Image",
-        ClipKind::Screenshot => "Screenshot",
-        ClipKind::Files => "Files",
-        ClipKind::Multi => "Multi-clip",
+        ClipKind::Text => tr("Text"),
+        ClipKind::Link => tr("Link"),
+        ClipKind::Code => tr("Code"),
+        ClipKind::Color => tr("Colour"),
+        ClipKind::Image => tr("Image"),
+        ClipKind::Screenshot => tr("Screenshot"),
+        ClipKind::Files => tr("Files"),
+        ClipKind::Multi => tr("Multi-clip"),
     };
     let mut parts = vec![kind.to_string()];
     if let Some(app) = &clip.source_app {
@@ -1217,20 +1239,18 @@ pub fn subtitle(clip: &Clip, now_ms: i64) -> String {
             parts.push(app.clone());
         }
     }
-    parts.push(ago(now_ms, clip.last_used));
+    parts.push(crate::i18n::ago(now_ms, clip.last_used));
     if clip.kind.is_image() {
         parts.push(crate::app::human(clip.bytes));
     }
     if clip.kind == ClipKind::Files {
         let n = clip.paths().len();
         if n > 1 {
-            parts.push(format!("{n} items"));
+            parts.push(trf("{} items", &[&n]));
         }
     }
     parts.join("  ·  ")
 }
-
-pub use xpress_core::history::ago;
 
 #[cfg(test)]
 mod tests {

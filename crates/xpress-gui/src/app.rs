@@ -1,6 +1,7 @@
 //! The egui application: a sidebar-driven UI with an Optimise view, Settings,
 //! an About view, an interactive crop tool, and a global hotkey.
 
+use crate::i18n::{tr, trf};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -140,6 +141,10 @@ pub struct XpressApp {
     welcome_step: Option<usize>,
     /// Why "Open at login" couldn't be changed.
     login_error: Option<String>,
+    /// `auto`, `en` or `nb`.
+    language: String,
+    /// Menu-bar items to translate when the language changes.
+    tray_texts: Vec<(TrayText, &'static str)>,
     /// Whether the history records changes for syncing right now.
     journal_on: bool,
     sync_status: Arc<Mutex<SyncStatus>>,
@@ -226,10 +231,11 @@ impl XpressApp {
             [open_id, clip_id, history_id, collect_id, update_id, quit_id],
             collect_item,
             tray_items,
+            tray_texts,
         ) = if integrations {
             build_tray()
         } else {
-            (None, Default::default(), None, None)
+            (None, Default::default(), None, None, Vec::new())
         };
         let manager = if integrations {
             GlobalHotKeyManager::new().ok()
@@ -315,6 +321,8 @@ impl XpressApp {
             onboarded: false,
             welcome_step: None,
             login_error: None,
+            language: "auto".into(),
+            tray_texts,
             journal_on: false,
             sync_status,
             integrations,
@@ -348,6 +356,7 @@ impl XpressApp {
             tray_quit_id: quit_id,
         };
         app.apply_settings(&settings);
+        app.apply_language();
         app.sync_capture();
         app.apply_shortcuts();
         if integrations && !app.onboarded {
@@ -382,6 +391,7 @@ impl XpressApp {
             history_sync: self.history_sync,
             history_ignored: self.history_ignored.clone(),
             onboarded: self.onboarded,
+            language: self.language.clone(),
             shortcut_clipboard: self.shortcuts[Action::Clipboard.index()].clone(),
             shortcut_show: self.shortcuts[Action::Show.index()].clone(),
             shortcut_history: self.shortcuts[Action::History.index()].clone(),
@@ -411,11 +421,28 @@ impl XpressApp {
         self.history_sync = s.history_sync;
         self.history_ignored = s.history_ignored.clone();
         self.onboarded = s.onboarded;
+        self.language = s.language.clone();
         self.shortcuts = [
             s.shortcut_clipboard.clone(),
             s.shortcut_show.clone(),
             s.shortcut_history.clone(),
         ];
+    }
+
+    /// Use the chosen language. "System" follows macOS — except in tests,
+    /// which stay English.
+    fn apply_language(&mut self) {
+        let lang = match self.language.as_str() {
+            "auto" if !self.integrations => crate::i18n::Lang::English,
+            setting => crate::i18n::resolve(setting),
+        };
+        crate::i18n::set(lang);
+        for (item, text) in &self.tray_texts {
+            match item {
+                TrayText::Item(i) => i.set_text(tr(text)),
+                TrayText::Check(i) => i.set_text(tr(text)),
+            }
+        }
     }
 
     /// Register the shortcuts as set (none while recording a new one, so its
@@ -439,9 +466,9 @@ impl XpressApp {
                 Some(manager) => match manager.register(hotkey) {
                     Ok(()) => self.registered[i] = Some(hotkey),
                     Err(_) => {
-                        self.shortcut_errors[i] = Some(format!(
+                        self.shortcut_errors[i] = Some(trf(
                             "{} couldn't be set up — another app may be using it.",
-                            shortcuts::display(&hotkey)
+                            &[&shortcuts::display(&hotkey)],
                         ))
                     }
                 },
@@ -452,8 +479,8 @@ impl XpressApp {
         if let Some(items) = &self.tray_items {
             for (item, action) in items.iter().zip(Action::ALL) {
                 item.set_text(match shortcuts::parse(&self.shortcuts[action.index()]) {
-                    Some(hk) => format!("{}\t{}", action.label(), shortcuts::display(&hk)),
-                    None => action.label().to_string(),
+                    Some(hk) => format!("{}\t{}", tr(action.label()), shortcuts::display(&hk)),
+                    None => tr(action.label()).to_string(),
                 });
             }
         }
@@ -461,11 +488,14 @@ impl XpressApp {
 
     /// The drop zone's second line, with the shortcuts that are on.
     fn drop_hint(&self) -> String {
-        let mut hint = "images · video · PDF · audio".to_string();
-        let keys: Vec<String> = [(Action::Clipboard, "clipboard"), (Action::Show, "show")]
-            .into_iter()
-            .filter_map(|(a, what)| self.shortcut_label(a).map(|k| format!("{k} {what}")))
-            .collect();
+        let mut hint = tr("images · video · PDF · audio").to_string();
+        let keys: Vec<String> = [
+            (Action::Clipboard, "{} clipboard"),
+            (Action::Show, "{} show"),
+        ]
+        .into_iter()
+        .filter_map(|(a, what)| self.shortcut_label(a).map(|k| trf(what, &[&k])))
+        .collect();
         if !keys.is_empty() {
             hint.push_str("      ");
             hint.push_str(&keys.join("  ·  "));
@@ -511,7 +541,7 @@ impl XpressApp {
                     match taken {
                         Some(other) => {
                             self.shortcut_errors[i] =
-                                Some(format!("Already used for “{}”.", other.label()));
+                                Some(trf("Already used for “{}”.", &[&tr(other.label())]));
                             return;
                         }
                         None => {
@@ -521,7 +551,7 @@ impl XpressApp {
                     }
                 }
                 Err(refused) => {
-                    self.shortcut_errors[i] = Some(refused.message().to_string());
+                    self.shortcut_errors[i] = Some(tr(refused.message()).to_string());
                     return;
                 }
             }
@@ -532,9 +562,9 @@ impl XpressApp {
     fn shortcut_settings(&mut self, ui: &mut egui::Ui) {
         self.record_shortcut(ui);
         card(ui, |ui| {
-            ui.label(RichText::new("Shortcuts").strong());
+            ui.label(RichText::new(tr("Shortcuts")).strong());
             ui.label(
-                RichText::new("Work in every app. Click one to change it.")
+                RichText::new(tr("Work in every app. Click one to change it."))
                     .weak()
                     .small(),
             );
@@ -542,16 +572,16 @@ impl XpressApp {
             for action in Action::ALL {
                 let i = action.index();
                 let desc = match action {
-                    Action::Clipboard => "Optimise the image you copied",
-                    Action::Show => "Bring the window to the front",
-                    Action::History => "Search what you copied and paste it again",
+                    Action::Clipboard => tr("Optimise the image you copied"),
+                    Action::Show => tr("Bring the window to the front"),
+                    Action::History => tr("Search what you copied and paste it again"),
                 };
                 let mut start = false;
                 let mut reset = false;
-                setting_row(ui, action.label(), desc, |ui| {
+                setting_row(ui, tr(action.label()), tr(desc), |ui| {
                     let recording = self.recording == Some(action);
                     let label = if recording {
-                        "Press keys…".to_string()
+                        tr("Press keys…").to_string()
                     } else {
                         shortcuts::display_str(&self.shortcuts[i])
                     };
@@ -560,20 +590,20 @@ impl XpressApp {
                             egui::Button::selectable(recording, label)
                                 .min_size(egui::vec2(96.0, 0.0)),
                         )
-                        .on_hover_text("Click, then press the new shortcut")
+                        .on_hover_text(tr("Click, then press the new shortcut"))
                         .clicked()
                     {
                         start = true;
                     }
                     if self.shortcuts[i] != action.default_shortcut()
-                        && ui.small_button("Reset").clicked()
+                        && ui.small_button(tr("Reset")).clicked()
                     {
                         reset = true;
                     }
                 });
                 if self.recording == Some(action) {
                     ui.label(
-                        RichText::new("Press the new shortcut · ⌫ turns it off · esc cancels")
+                        RichText::new(tr("Press the new shortcut · ⌫ turns it off · esc cancels"))
                             .weak()
                             .small(),
                     );
@@ -808,10 +838,10 @@ impl XpressApp {
         let mut add = None;
         setting_row(
             ui,
-            "Ignore apps",
-            "Don't record what you copy in these apps — password managers are always left out",
+            tr("Ignore apps"),
+            tr("Don't record what you copy in these apps — password managers are always left out"),
             |ui| {
-                ui.menu_button("Add app…", |ui| {
+                ui.menu_button(tr("Add app…"), |ui| {
                     let mut listed = false;
                     for (name, bundle, count) in &sources {
                         let ignored = self
@@ -832,7 +862,7 @@ impl XpressApp {
                     if listed {
                         ui.separator();
                     }
-                    if ui.button("Choose from Applications…").clicked() {
+                    if ui.button(tr("Choose from Applications…")).clicked() {
                         add = pick_app();
                         ui.close();
                     }
@@ -858,19 +888,20 @@ impl XpressApp {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if ui
                         .small_button("×")
-                        .on_hover_text("Record it again")
+                        .on_hover_text(tr("Record it again"))
                         .clicked()
                     {
                         remove = Some(i);
                     }
                     if count > 0 {
                         let label = if self.confirm_delete_app == Some(i) {
-                            "Click again to delete".to_string()
+                            tr("Click again to delete").to_string()
                         } else {
-                            format!(
-                                "Delete its {count} clip{}",
-                                if count == 1 { "" } else { "s" }
-                            )
+                            if count == 1 {
+                                tr("Delete its 1 clip").to_string()
+                            } else {
+                                trf("Delete its {} clips", &[&count])
+                            }
                         };
                         if ui.small_button(label).clicked() {
                             if self.confirm_delete_app == Some(i) {
@@ -944,12 +975,12 @@ impl XpressApp {
         if self.updating.swap(true, Ordering::SeqCst) {
             return;
         }
-        *self.update_status.lock().unwrap() = Some("Downloading update…".into());
+        *self.update_status.lock().unwrap() = Some(tr("Downloading update…").into());
         let updating = self.updating.clone();
         let status = self.update_status.clone();
         std::thread::spawn(move || {
             if let Err(e) = perform_self_update(&url, &status) {
-                *status.lock().unwrap() = Some(format!("Update failed: {e}"));
+                *status.lock().unwrap() = Some(trf("Update failed: {}", &[&e]));
                 updating.store(false, Ordering::SeqCst);
             }
             // On success the process re-launches and exits; nothing to do here.
@@ -1013,7 +1044,7 @@ impl XpressApp {
                 Err(e) => {
                     self.in_flight -= 1;
                     self.push_card(Card {
-                        title: "Invalid pipeline".into(),
+                        title: tr("Invalid pipeline").into(),
                         detail: e,
                         saved_pct: 0.0,
                         ok: false,
@@ -1032,7 +1063,7 @@ impl XpressApp {
         match clipboard_image_to_file() {
             Ok(path) => self.submit(path, ctx),
             Err(e) => self.push_card(Card {
-                title: "Clipboard".into(),
+                title: tr("Clipboard").into(),
                 detail: e,
                 saved_pct: 0.0,
                 ok: false,
@@ -1089,13 +1120,17 @@ impl XpressApp {
                         name
                     };
                     let mut detail = if r.cached {
-                        format!("{}  ·  already optimised — skipped", human(r.old_size))
+                        trf("{}  ·  already optimised — skipped", &[&human(r.old_size)])
                     } else {
                         format!(
                             "{} → {}{}",
                             human(r.old_size),
                             human(r.new_size),
-                            if r.aggressive { "  ·  aggressive" } else { "" }
+                            if r.aggressive {
+                                tr("  ·  aggressive")
+                            } else {
+                                ""
+                            }
                         )
                     };
                     if let Some(score) = r.score {
@@ -1327,8 +1362,8 @@ impl XpressApp {
                 });
 
                 ui.add_space(16.0);
-                section_header(ui, "WORKSPACE");
-                if nav_item(ui, self.tab == Tab::Optimise, ACCENT, "⤓", "Optimise") {
+                section_header(ui, tr("WORKSPACE"));
+                if nav_item(ui, self.tab == Tab::Optimise, ACCENT, "⤓", tr("Optimise")) {
                     self.tab = Tab::Optimise;
                 }
                 if nav_item(
@@ -1336,7 +1371,7 @@ impl XpressApp {
                     self.tab == Tab::History,
                     Color32::from_rgb(90, 180, 140),
                     "≡",
-                    "History",
+                    tr("History"),
                 ) {
                     self.tab = Tab::History;
                     self.history_panel.dirty = true;
@@ -1347,7 +1382,7 @@ impl XpressApp {
                     false,
                     Color32::from_rgb(90, 140, 240),
                     "⛶",
-                    "Crop image…",
+                    tr("Crop image…"),
                 ) {
                     if let Some(p) = rfd::FileDialog::new()
                         .add_filter(
@@ -1364,25 +1399,25 @@ impl XpressApp {
                 }
 
                 ui.add_space(14.0);
-                section_header(ui, "SETTINGS");
+                section_header(ui, tr("SETTINGS"));
                 if nav_item(
                     ui,
                     self.tab == Tab::Settings,
                     Color32::from_rgb(120, 120, 130),
                     "⚙",
-                    "Preferences",
+                    tr("Preferences"),
                 ) {
                     self.tab = Tab::Settings;
                 }
 
                 ui.add_space(14.0);
-                section_header(ui, "SUPPORT");
+                section_header(ui, tr("SUPPORT"));
                 if nav_item(
                     ui,
                     self.tab == Tab::About,
                     Color32::from_rgb(230, 90, 110),
                     "i",
-                    "About",
+                    tr("About"),
                 ) {
                     self.tab = Tab::About;
                 }
@@ -1394,7 +1429,7 @@ impl XpressApp {
                         ui.horizontal(|ui| {
                             ui.add(egui::Spinner::new().size(14.0));
                             ui.label(
-                                RichText::new(format!("{} working…", self.in_flight))
+                                RichText::new(trf("{} working…", &[&self.in_flight]))
                                     .weak()
                                     .small(),
                             );
@@ -1408,8 +1443,8 @@ impl XpressApp {
 
     fn optimise_view(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        ui.heading("Optimise");
-        ui.label(RichText::new("Make images, video, PDF and audio smaller.").weak());
+        ui.heading(tr("Optimise"));
+        ui.label(RichText::new(tr("Make images, video, PDF and audio smaller.")).weak());
         ui.add_space(16.0);
 
         // Drop zone.
@@ -1433,7 +1468,7 @@ impl XpressApp {
         ui.painter().text(
             rect.center() - egui::vec2(0.0, 12.0),
             Align2::CENTER_CENTER,
-            "Drop files here",
+            tr("Drop files here"),
             FontId::proportional(18.0),
             ui.visuals().text_color(),
         );
@@ -1448,17 +1483,17 @@ impl XpressApp {
 
         ui.add_space(14.0);
         ui.horizontal(|ui| {
-            if ui.button("  Open files…  ").clicked() {
+            if ui.button(tr("  Open files…  ")).clicked() {
                 if let Some(paths) = rfd::FileDialog::new().pick_files() {
                     for p in paths {
                         self.submit(p, &ctx);
                     }
                 }
             }
-            if ui.button("Optimise clipboard").clicked() {
+            if ui.button(tr("Optimise clipboard")).clicked() {
                 self.optimise_clipboard(&ctx);
             }
-            if !self.cards.is_empty() && ui.button("Clear").clicked() {
+            if !self.cards.is_empty() && ui.button(tr("Clear")).clicked() {
                 self.cards.clear();
             }
         });
@@ -1467,7 +1502,7 @@ impl XpressApp {
         // Quick compression control.
         card(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Compression").strong());
+                ui.label(RichText::new(tr("Compression")).strong());
                 let quality = self.quality();
                 ui.add_enabled(
                     !self.aggressive && quality.is_none(),
@@ -1476,24 +1511,24 @@ impl XpressApp {
                 if quality.is_some() {
                     let (name, _) = QUALITY_TARGETS[self.quality_target];
                     ui.label(
-                        RichText::new(format!("images: quality target “{name}”"))
+                        RichText::new(trf("images: quality target “{}”", &[&tr(name)]))
                             .weak()
                             .small(),
                     );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    toggle_labeled(ui, &mut self.aggressive, "Aggressive");
+                    toggle_labeled(ui, &mut self.aggressive, tr("Aggressive"));
                 });
             });
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Convert to").strong());
+                ui.label(RichText::new(tr("Convert to")).strong());
                 convert_picker(ui, &mut self.convert_to);
                 if let Some(format) = self.convert_to {
                     ui.label(RichText::new(convert_note(format)).weak().small());
                 }
             });
             ui.horizontal(|ui| {
-                toggle_labeled(ui, &mut self.use_pipeline, "Pipeline");
+                toggle_labeled(ui, &mut self.use_pipeline, tr("Pipeline"));
                 ui.add_enabled(
                     self.use_pipeline,
                     egui::TextEdit::singleline(&mut self.pipeline_dsl)
@@ -1507,7 +1542,7 @@ impl XpressApp {
         if self.cards.is_empty() {
             return;
         }
-        ui.label(RichText::new("RESULTS").size(11.0).weak());
+        ui.label(RichText::new(tr("RESULTS")).size(11.0).weak());
         ui.add_space(6.0);
         let mut action = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1548,7 +1583,7 @@ impl XpressApp {
     fn history_view(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let Some(history) = self.history.clone() else {
-            ui.heading("History");
+            ui.heading(tr("History"));
             ui.label(RichText::new("The history could not be opened.").color(ERR_RED));
             return;
         };
@@ -1586,10 +1621,10 @@ impl XpressApp {
         card(ui, |ui| {
             setting_row(
                 ui,
-                "Clipboard history",
+                tr("Clipboard history"),
                 &match self.shortcut_label(Action::History) {
-                    Some(k) => format!("Keep what you copy, searchable under History ({k})"),
-                    None => "Keep what you copy, searchable under History".to_string(),
+                    Some(k) => trf("Keep what you copy, searchable under History ({})", &[&k]),
+                    None => tr("Keep what you copy, searchable under History").to_string(),
                 },
                 |ui| {
                     toggle(ui, &mut self.history_enabled);
@@ -1599,8 +1634,8 @@ impl XpressApp {
             ui.add_enabled_ui(self.history_enabled, |ui| {
                 setting_row(
                     ui,
-                    "Include screenshots",
-                    "Add new screenshots to the history",
+                    tr("Include screenshots"),
+                    tr("Add new screenshots to the history"),
                     |ui| {
                         toggle(ui, &mut self.history_screenshots);
                     },
@@ -1609,8 +1644,8 @@ impl XpressApp {
                     ui.separator();
                     setting_row(
                         ui,
-                        "Find text in images",
-                        "Recognise words in screenshots and images, on this Mac",
+                        tr("Find text in images"),
+                        tr("Recognise words in screenshots and images, on this Mac"),
                         |ui| {
                             toggle(ui, &mut self.history_ocr);
                         },
@@ -1620,8 +1655,8 @@ impl XpressApp {
                 if crate::autopaste::supported() {
                     setting_row(
                         ui,
-                        "Paste directly",
-                        "After you choose a clip, paste it into the app you were using",
+                        tr("Paste directly"),
+                        tr("After you choose a clip, paste it into the app you were using"),
                         |ui| {
                             if toggle(ui, &mut self.paste_directly).changed()
                                 && self.paste_directly
@@ -1635,14 +1670,14 @@ impl XpressApp {
                     if self.paste_directly && self.integrations && !crate::autopaste::allowed() {
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new(
+                                RichText::new(tr(
                                     "Needs permission: System Settings → Privacy & Security → \
                                      Accessibility → xpress",
-                                )
+                                ))
                                 .color(ERR_RED)
                                 .small(),
                             );
-                            if ui.small_button("Open Settings").clicked() {
+                            if ui.small_button(tr("Open Settings")).clicked() {
                                 ui.ctx().open_url(egui::OpenUrl::new_tab(
                                     crate::autopaste::SETTINGS_URL,
                                 ));
@@ -1653,8 +1688,8 @@ impl XpressApp {
                 }
                 setting_row(
                     ui,
-                    "Sync with iCloud",
-                    "Share the history between your Macs through iCloud Drive",
+                    tr("Sync with iCloud"),
+                    tr("Share the history between your Macs through iCloud Drive"),
                     |ui| {
                         toggle(ui, &mut self.history_sync);
                     },
@@ -1671,34 +1706,41 @@ impl XpressApp {
                 ui.separator();
                 self.ignored_apps_settings(ui);
                 ui.separator();
-                setting_row(ui, "Keep history", "Pinned clips are always kept", |ui| {
-                    let current = HISTORY_DAYS
-                        .iter()
-                        .find(|(d, _)| *d == self.history_days)
-                        .map(|(_, l)| *l)
-                        .unwrap_or("1 month");
-                    egui::ComboBox::from_id_salt("history_days")
-                        .selected_text(current)
-                        .width(140.0)
-                        .show_ui(ui, |ui| {
-                            for (days, label) in HISTORY_DAYS {
-                                ui.selectable_value(&mut self.history_days, days, label);
-                            }
-                        });
-                });
+                setting_row(
+                    ui,
+                    tr("Keep history"),
+                    tr("Pinned clips are always kept"),
+                    |ui| {
+                        let current = HISTORY_DAYS
+                            .iter()
+                            .find(|(d, _)| *d == self.history_days)
+                            .map_or(tr("1 month"), |(_, l)| tr(l));
+                        egui::ComboBox::from_id_salt("history_days")
+                            .selected_text(current)
+                            .width(140.0)
+                            .show_ui(ui, |ui| {
+                                for (days, label) in HISTORY_DAYS {
+                                    ui.selectable_value(&mut self.history_days, days, tr(label));
+                                }
+                            });
+                    },
+                );
             });
             if let Some(history) = self.history.clone() {
                 ui.separator();
                 let (count, bytes) = history.lock().unwrap().stats().unwrap_or_default();
                 setting_row(
                     ui,
-                    "Clear history",
-                    &format!("{count} clips · {} · pinned clips stay", human(bytes)),
+                    tr("Clear history"),
+                    &trf(
+                        "{} clips · {} · pinned clips stay",
+                        &[&count, &human(bytes)],
+                    ),
                     |ui| {
                         let label = if self.confirm_clear {
-                            "Click again to clear"
+                            tr("Click again to clear")
                         } else {
-                            "Clear…"
+                            tr("Clear…")
                         };
                         if ui.button(label).clicked() {
                             if self.confirm_clear {
@@ -1745,7 +1787,7 @@ impl XpressApp {
                         ui.painter().circle_filled(rect.center(), 4.0, color);
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.link("Skip").clicked() {
+                        if ui.link(tr("Skip")).clicked() {
                             finish = true;
                         }
                     });
@@ -1760,15 +1802,15 @@ impl XpressApp {
                     }
                     ui.add_space(24.0);
                     ui.horizontal(|ui| {
-                        if step > 0 && ui.button("← Back").clicked() {
+                        if step > 0 && ui.button(tr("← Back")).clicked() {
                             go_to = Some(step - 1);
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             if step + 1 < Self::WELCOME_STEPS {
-                                if ui.button("Next →").clicked() {
+                                if ui.button(tr("Next →")).clicked() {
                                     go_to = Some(step + 1);
                                 }
-                            } else if ui.button("Start using xpress").clicked() {
+                            } else if ui.button(tr("Start using xpress")).clicked() {
                                 finish = true;
                             }
                         });
@@ -1786,40 +1828,43 @@ impl XpressApp {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(64.0, 64.0), Sense::hover());
         draw_x_logo(ui.painter(), rect.center(), 64.0);
         ui.add_space(8.0);
-        ui.heading("Welcome to xpress");
+        ui.heading(tr("Welcome to xpress"));
         ui.label(
             RichText::new(
-                "Make images, video, PDFs and audio smaller — without them looking or sounding worse.",
+                tr("Make images, video, PDFs and audio smaller — without them looking or sounding worse."),
             )
             .weak(),
         );
         ui.add_space(18.0);
         let key = |a| {
             self.shortcut_label(a)
-                .map_or_else(String::new, |k| format!(" or press {k}"))
+                .map_or_else(String::new, |k| trf(" or press {}", &[&k]))
         };
         let show = key(Action::Show);
         let clip = match self.shortcut_label(Action::Clipboard) {
-            Some(k) => format!("Copy an image and press {k}: the smaller one is ready to paste."),
-            None => {
-                "Copy an image and choose Optimise clipboard: the smaller one is ready to paste."
-                    .into()
-            }
+            Some(k) => trf(
+                "Copy an image and press {}: the smaller one is ready to paste.",
+                &[&k],
+            ),
+            None => tr(
+                "Copy an image and choose Optimise clipboard: the smaller one is ready to paste.",
+            )
+            .into(),
         };
         card(ui, |ui| {
             welcome_row(
                 ui,
                 "↓",
                 ACCENT,
-                "Drop files onto the window",
-                "They come out smaller; the originals are kept as backups.",
+                tr("Drop files onto the window"),
+                tr("They come out smaller; the originals are kept as backups."),
             );
             ui.separator();
             welcome_row(
                 ui,
                 "≡",
                 Color32::from_rgb(120, 120, 130),
-                "Lives in the menu bar",
+                tr("Lives in the menu bar"),
                 &format!(
                     "Click the xpress icon in the menu bar{show}. Closing the window keeps it running."
                 ),
@@ -1829,36 +1874,42 @@ impl XpressApp {
                 ui,
                 "⌘",
                 Color32::from_rgb(90, 180, 140),
-                "Copy large, paste small",
+                tr("Copy large, paste small"),
                 &clip,
             );
         });
     }
 
     fn welcome_history(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Your clipboard, remembered");
+        ui.heading(tr("Your clipboard, remembered"));
         let key = self
             .shortcut_label(Action::History)
-            .map_or_else(String::new, |k| format!(" with {k}"));
+            .map_or_else(String::new, |k| trf(" with {}", &[&k]));
         ui.label(
-            RichText::new(format!(
-                "Keep everything you copy and every screenshot, and find it again{key} — \
+            RichText::new(trf(
+                "Keep everything you copy and every screenshot, and find it again{} — \
                  also by the words inside images. It stays on this Mac, and passwords are \
-                 never saved."
+                 never saved.",
+                &[&key],
             ))
             .weak(),
         );
         ui.add_space(18.0);
         card(ui, |ui| {
-            setting_row(ui, "Clipboard history", "Record what you copy", |ui| {
-                toggle(ui, &mut self.history_enabled);
-            });
+            setting_row(
+                ui,
+                tr("Clipboard history"),
+                tr("Record what you copy"),
+                |ui| {
+                    toggle(ui, &mut self.history_enabled);
+                },
+            );
             ui.separator();
             ui.add_enabled_ui(self.history_enabled, |ui| {
                 setting_row(
                     ui,
-                    "Include screenshots",
-                    "Add new screenshots to the history",
+                    tr("Include screenshots"),
+                    tr("Add new screenshots to the history"),
                     |ui| {
                         toggle(ui, &mut self.history_screenshots);
                     },
@@ -1867,8 +1918,8 @@ impl XpressApp {
                     ui.separator();
                     setting_row(
                         ui,
-                        "Paste directly",
-                        "Paste a chosen clip into the app you were using (macOS asks for permission)",
+                        tr("Paste directly"),
+                        tr("Paste a chosen clip into the app you were using (macOS asks for permission)"),
                         |ui| {
                             if toggle(ui, &mut self.paste_directly).changed()
                                 && self.paste_directly
@@ -1885,15 +1936,18 @@ impl XpressApp {
         self.sync_capture();
         ui.add_space(8.0);
         ui.hyperlink_to(
-            "More about the history",
+            tr("More about the history"),
             "https://github.com/kwhorne/xpress/blob/main/docs/history.md",
         );
     }
 
     fn welcome_finish(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Ready to go");
+        ui.heading(tr("Ready to go"));
         ui.label(
-            RichText::new("A few last things — all of them can be changed in Preferences.").weak(),
+            RichText::new(tr(
+                "A few last things — all of them can be changed in Preferences.",
+            ))
+            .weak(),
         );
         ui.add_space(18.0);
         card(ui, |ui| {
@@ -1903,11 +1957,11 @@ impl XpressApp {
             }
             setting_row(
                 ui,
-                "Command line",
-                "Scripts, folders and CI: brew install kwhorne/tap/xpress",
+                tr("Command line"),
+                tr("Scripts, folders and CI: brew install kwhorne/tap/xpress"),
                 |ui| {
                     ui.hyperlink_to(
-                        "Learn more",
+                        tr("Learn more"),
                         "https://github.com/kwhorne/xpress/blob/main/docs/cli.md",
                     );
                 },
@@ -1920,8 +1974,8 @@ impl XpressApp {
         let mut on = crate::login::enabled();
         setting_row(
             ui,
-            "Open at login",
-            "Start xpress in the menu bar when you log in",
+            tr("Open at login"),
+            tr("Start xpress in the menu bar when you log in"),
             |ui| {
                 if toggle(ui, &mut on).changed() {
                     self.login_error = crate::login::set(on).err();
@@ -1936,11 +1990,11 @@ impl XpressApp {
     // ---- Settings view -----------------------------------------------------
 
     fn settings_view(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Preferences");
+        ui.heading(tr("Preferences"));
         ui.label(
-            RichText::new(
+            RichText::new(tr(
                 "Defaults applied to every optimisation. Changes are saved automatically.",
-            )
+            ))
             .weak(),
         );
         ui.add_space(16.0);
@@ -1948,8 +2002,8 @@ impl XpressApp {
         card(ui, |ui| {
             setting_row(
                 ui,
-                "Keep a backup",
-                "Save the original as .name.orig",
+                tr("Keep a backup"),
+                tr("Save the original as .name.orig"),
                 |ui| {
                     toggle(ui, &mut self.backup);
                 },
@@ -1957,8 +2011,8 @@ impl XpressApp {
             ui.separator();
             setting_row(
                 ui,
-                "Strip metadata",
-                "Remove EXIF (camera, location, date)",
+                tr("Strip metadata"),
+                tr("Remove EXIF (camera, location, date)"),
                 |ui| {
                     toggle(ui, &mut self.strip_metadata);
                 },
@@ -1966,8 +2020,8 @@ impl XpressApp {
             ui.separator();
             setting_row(
                 ui,
-                "Remove location",
-                "Drop GPS / where it was taken, keep the rest",
+                tr("Remove location"),
+                tr("Drop GPS / where it was taken, keep the rest"),
                 |ui| {
                     ui.add_enabled_ui(!self.strip_metadata, |ui| {
                         toggle(ui, &mut self.strip_location);
@@ -1980,11 +2034,11 @@ impl XpressApp {
         card(ui, |ui| {
             setting_row(
                 ui,
-                "Quality target",
-                "Images: the smallest file that still looks this good",
+                tr("Quality target"),
+                tr("Images: the smallest file that still looks this good"),
                 |ui| {
                     egui::ComboBox::from_id_salt("quality_target")
-                        .selected_text(QUALITY_TARGETS[self.quality_target].0)
+                        .selected_text(tr(QUALITY_TARGETS[self.quality_target].0))
                         .width(230.0)
                         .show_ui(ui, |ui| {
                             for (i, (name, _)) in QUALITY_TARGETS.iter().enumerate() {
@@ -1996,8 +2050,8 @@ impl XpressApp {
             ui.separator();
             setting_row(
                 ui,
-                "Skip already-optimised files",
-                "Leave files xpress already squeezed with these settings",
+                tr("Skip already-optimised files"),
+                tr("Leave files xpress already squeezed with these settings"),
                 |ui| {
                     toggle(ui, &mut self.skip_optimised);
                 },
@@ -2006,10 +2060,32 @@ impl XpressApp {
 
         ui.add_space(12.0);
         card(ui, |ui| {
+            let mut language = self.language.clone();
+            setting_row(ui, tr("Language"), tr("The app's language"), |ui| {
+                let shown = match language.as_str() {
+                    "en" => "English",
+                    "nb" => "Norsk",
+                    _ => tr("System"),
+                };
+                egui::ComboBox::from_id_salt("language")
+                    .selected_text(shown)
+                    .width(140.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut language, "auto".to_string(), tr("System"));
+                        ui.selectable_value(&mut language, "en".to_string(), "English");
+                        ui.selectable_value(&mut language, "nb".to_string(), "Norsk");
+                    });
+            });
+            if language != self.language {
+                self.language = language;
+                self.apply_language();
+                self.apply_shortcuts();
+            }
+            ui.separator();
             setting_row(
                 ui,
-                "Aggressive by default",
-                "Trade a little quality for smaller files",
+                tr("Aggressive by default"),
+                tr("Trade a little quality for smaller files"),
                 |ui| {
                     toggle(ui, &mut self.aggressive);
                 },
@@ -2019,17 +2095,22 @@ impl XpressApp {
                 self.login_row(ui);
             }
             ui.separator();
-            setting_row(ui, "Float on top", "Keep the window above others", |ui| {
-                if toggle(ui, &mut self.always_on_top).changed() {
-                    let level = if self.always_on_top {
-                        egui::WindowLevel::AlwaysOnTop
-                    } else {
-                        egui::WindowLevel::Normal
-                    };
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
-                }
-            });
+            setting_row(
+                ui,
+                tr("Float on top"),
+                tr("Keep the window above others"),
+                |ui| {
+                    if toggle(ui, &mut self.always_on_top).changed() {
+                        let level = if self.always_on_top {
+                            egui::WindowLevel::AlwaysOnTop
+                        } else {
+                            egui::WindowLevel::Normal
+                        };
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+                    }
+                },
+            );
         });
 
         ui.add_space(12.0);
@@ -2040,11 +2121,13 @@ impl XpressApp {
 
         ui.add_space(12.0);
         card(ui, |ui| {
-            ui.label(RichText::new("Default pipeline").strong());
+            ui.label(RichText::new(tr("Default pipeline")).strong());
             ui.label(
-                RichText::new("Runs when “Pipeline” is enabled on the Optimise screen.")
-                    .weak()
-                    .small(),
+                RichText::new(tr(
+                    "Runs when “Pipeline” is enabled on the Optimise screen.",
+                ))
+                .weak()
+                .small(),
             );
             ui.add_space(6.0);
             ui.add(
@@ -2066,22 +2149,24 @@ impl XpressApp {
             ui.add_space(10.0);
             ui.heading("xpress");
             ui.label(
-                RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                RichText::new(trf("Version {}", &[&env!("CARGO_PKG_VERSION")]))
                     .weak()
                     .monospace(),
             );
             ui.add_space(10.0);
-            ui.label("Make your media smaller — images, video, PDF and audio.");
+            ui.label(tr(
+                "Make your media smaller — images, video, PDF and audio.",
+            ));
             ui.add_space(16.0);
-            ui.hyperlink_to("Website · kwhorne.com", "https://kwhorne.com");
+            ui.hyperlink_to(tr("Website · kwhorne.com"), "https://kwhorne.com");
             ui.hyperlink_to(
                 "GitHub · github.com/kwhorne/xpress",
                 "https://github.com/kwhorne/xpress",
             );
             ui.add_space(6.0);
-            ui.label(RichText::new("Developed by Knut W. Horne").strong());
+            ui.label(RichText::new(tr("Developed by Knut W. Horne")).strong());
             ui.add_space(6.0);
-            if ui.link("Show the welcome tour").clicked() {
+            if ui.link(tr("Show the welcome tour")).clicked() {
                 self.welcome_step = Some(0);
             }
             ui.add_space(18.0);
@@ -2094,29 +2179,29 @@ impl XpressApp {
                 let s = self.update_status.lock().unwrap().clone();
                 ui.horizontal(|ui| {
                     ui.add(egui::Spinner::new().size(14.0));
-                    ui.label(s.unwrap_or_else(|| "Updating…".into()));
+                    ui.label(tr(&s.unwrap_or_else(|| "Updating…".into())));
                 });
             } else if checking {
-                ui.label(RichText::new("Checking for updates…").weak());
+                ui.label(RichText::new(tr("Checking for updates…")).weak());
             } else if let Some(info) = &info {
                 if info.newer {
                     ui.label(
-                        RichText::new(format!("Update available — v{}", info.latest)).color(ACCENT),
+                        RichText::new(trf("Update available — v{}", &[&info.latest])).color(ACCENT),
                     );
                     if can_self_update(info) {
-                        if ui.button("Update & Restart").clicked() {
+                        if ui.button(tr("Update & Restart")).clicked() {
                             start_update = info.download_url.clone();
                         }
                     } else {
-                        ui.hyperlink_to("Download", &info.url);
+                        ui.hyperlink_to(tr("Download"), &info.url);
                     }
                 } else {
-                    ui.label(RichText::new("You're on the latest version").weak());
+                    ui.label(RichText::new(tr("You're on the latest version")).weak());
                 }
             }
             if !updating
                 && ui
-                    .add_enabled(!checking, egui::Button::new("Check for updates"))
+                    .add_enabled(!checking, egui::Button::new(tr("Check for updates")))
                     .clicked()
             {
                 self.check_for_updates(&ctx);
@@ -2152,26 +2237,28 @@ impl XpressApp {
             .show(root, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
-                        RichText::new(format!("Update available — v{}", info.latest))
+                        RichText::new(trf("Update available — v{}", &[&info.latest]))
                             .color(Color32::WHITE)
                             .strong(),
                     );
                     if updating {
                         ui.add(egui::Spinner::new().size(14.0).color(Color32::WHITE));
                         ui.label(
-                            RichText::new(status.unwrap_or_else(|| "Updating…".into()))
+                            RichText::new(tr(&status.unwrap_or_else(|| "Updating…".into())))
                                 .color(Color32::WHITE),
                         );
                     } else if can_auto {
                         if ui
-                            .button(RichText::new("Update & Restart").strong())
+                            .button(RichText::new(tr("Update & Restart")).strong())
                             .clicked()
                         {
                             start_update = dl.clone();
                         }
                     } else {
                         ui.hyperlink_to(
-                            RichText::new("Download").color(Color32::WHITE).underline(),
+                            RichText::new(tr("Download"))
+                                .color(Color32::WHITE)
+                                .underline(),
                             &info.url,
                         );
                     }
@@ -2179,7 +2266,7 @@ impl XpressApp {
                         if !updating
                             && ui
                                 .button(RichText::new("✕").color(Color32::WHITE))
-                                .on_hover_text("Dismiss")
+                                .on_hover_text(tr("Dismiss"))
                                 .clicked()
                         {
                             self.update_dismissed = true;
@@ -2201,7 +2288,7 @@ impl XpressApp {
         egui::Panel::top("crop_top").show(root, |ui| {
             ui.add_space(6.0);
             ui.horizontal(|ui| {
-                ui.heading("Crop");
+                ui.heading(tr("Crop"));
                 if let Some(c) = &self.crop {
                     ui.label(
                         RichText::new(
@@ -2214,19 +2301,19 @@ impl XpressApp {
                     );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr("Cancel")).clicked() {
                         cancel = true;
                     }
                     let has_sel = self.crop.as_ref().and_then(|c| c.sel).is_some();
                     if ui
-                        .add_enabled(has_sel, egui::Button::new("Apply crop"))
+                        .add_enabled(has_sel, egui::Button::new(tr("Apply crop")))
                         .clicked()
                     {
                         apply = true;
                     }
                 });
             });
-            ui.label(RichText::new("Drag to select a region.").weak().small());
+            ui.label(RichText::new(tr("Drag to select a region.")).weak().small());
             ui.add_space(4.0);
         });
 
@@ -2311,21 +2398,31 @@ impl XpressApp {
 
 /// The menu-bar (status bar) icon and its menu; returns the menu item ids
 /// (open, clipboard, update, quit).
+/// A menu-bar item whose text follows the language.
+enum TrayText {
+    Item(MenuItem),
+    Check(CheckMenuItem),
+}
+
 #[allow(clippy::type_complexity)]
 fn build_tray() -> (
     Option<TrayIcon>,
     [String; 6],
     Option<CheckMenuItem>,
     Option<[MenuItem; 3]>,
+    Vec<(TrayText, &'static str)>,
 ) {
     let menu = Menu::new();
     // Their shortcuts are added by `apply_shortcuts`.
-    let open_item = MenuItem::new("Open xpress", true, None);
-    let clip_item = MenuItem::new("Optimise clipboard", true, None);
-    let history_item = MenuItem::new("Clipboard history", true, None);
-    let collect_item = CheckMenuItem::new("Collect clips", true, false, None);
-    let update_item = MenuItem::new("Check for updates", true, None);
-    let quit_item = MenuItem::new("Quit xpress", true, None);
+    let open_item = MenuItem::new(tr("Open xpress"), true, None);
+    let clip_item = MenuItem::new(tr("Optimise clipboard"), true, None);
+    let history_item = MenuItem::new(tr("Clipboard history"), true, None);
+    let collect_item = CheckMenuItem::new(tr("Collect clips"), true, false, None);
+    let update_item = MenuItem::new(tr("Check for updates"), true, None);
+    let quit_item = MenuItem::new(tr("Quit xpress"), true, None);
+    // Handles (they share the native item) for retranslating later.
+    let (collect_item_text, update_item_text, quit_item_text) =
+        (collect_item.clone(), update_item.clone(), quit_item.clone());
     let _ = menu.append_items(&[
         &open_item,
         &PredefinedMenuItem::separator(),
@@ -2359,6 +2456,11 @@ fn build_tray() -> (
         Some(collect_item),
         // In `Action` order.
         Some([clip_item, open_item, history_item]),
+        vec![
+            (TrayText::Check(collect_item_text), "Collect clips"),
+            (TrayText::Item(update_item_text), "Check for updates"),
+            (TrayText::Item(quit_item_text), "Quit xpress"),
+        ],
     )
 }
 
@@ -2571,7 +2673,7 @@ fn convert_menu(
         }
         if ui
             .button(format.label())
-            .on_hover_text(format.description())
+            .on_hover_text(tr(format.description()))
             .clicked()
         {
             *action = Some(CardAction::Convert(path.to_path_buf(), format));
@@ -2580,7 +2682,7 @@ fn convert_menu(
     }
     ui.separator();
     ui.label(
-        RichText::new("Saved next to it; the original is kept.")
+        RichText::new(tr("Saved next to it; the original is kept."))
             .weak()
             .small(),
     );
@@ -2635,18 +2737,18 @@ fn result_card(ui: &mut egui::Ui, card: &Card, index: usize) -> Option<CardActio
                                     ui.horizontal(|ui| {
                                         if let Some(img) = image_out {
                                             let label =
-                                                current.map(|f| f.label()).unwrap_or("Image");
+                                                current.map(|f| f.label()).unwrap_or(tr("Image"));
                                             ui.menu_button(format!("{label} ▾"), |ui| {
-                                                ui.label(RichText::new("Convert to").strong());
+                                                ui.label(RichText::new(tr("Convert to")).strong());
                                                 convert_menu(ui, img, current, &mut action);
                                             })
                                             .response
-                                            .on_hover_text("Convert to another format");
+                                            .on_hover_text(tr("Convert to another format"));
                                         }
-                                        if ui.small_button("Reveal").clicked() {
+                                        if ui.small_button(tr("Reveal")).clicked() {
                                             reveal_in_file_manager(out);
                                         }
-                                        if ui.small_button("Copy").clicked() {
+                                        if ui.small_button(tr("Copy")).clicked() {
                                             xpress_core::clipboard::set_clipboard_png(out);
                                         }
                                     });
@@ -2671,20 +2773,20 @@ fn result_card(ui: &mut egui::Ui, card: &Card, index: usize) -> Option<CardActio
     if let Some(out) = card.output.clone() {
         resp.context_menu(|ui| {
             if let Some(img) = image_out {
-                ui.menu_button("Convert to", |ui| {
+                ui.menu_button(tr("Convert to"), |ui| {
                     convert_menu(ui, img, current, &mut action);
                 });
-                if ui.button("Crop…").clicked() {
+                if ui.button(tr("Crop…")).clicked() {
                     action = Some(CardAction::Crop(img.to_path_buf()));
                     ui.close();
                 }
                 ui.separator();
             }
-            if ui.button("Show in Finder").clicked() {
+            if ui.button(tr("Show in Finder")).clicked() {
                 reveal_in_file_manager(&out);
                 ui.close();
             }
-            if ui.button("Copy").clicked() {
+            if ui.button(tr("Copy")).clicked() {
                 xpress_core::clipboard::set_clipboard_png(&out);
                 ui.close();
             }
@@ -2696,20 +2798,20 @@ fn result_card(ui: &mut egui::Ui, card: &Card, index: usize) -> Option<CardActio
 
 /// The "Convert to" picker on the Optimise screen.
 fn convert_picker(ui: &mut egui::Ui, value: &mut Option<ImageFormat>) {
-    let selected = value.map(|f| f.label()).unwrap_or("Keep format");
+    let selected = value.map(|f| f.label()).unwrap_or(tr("Keep format"));
     egui::ComboBox::from_id_salt("convert_to")
         .selected_text(selected)
         .width(150.0)
         // Tall enough to list every format without scrolling.
         .height(480.0)
         .show_ui(ui, |ui| {
-            ui.selectable_value(value, None, "Keep format — just optimise");
+            ui.selectable_value(value, None, tr("Keep format — just optimise"));
             ui.separator();
             for format in ImageFormat::convertible() {
                 ui.selectable_value(
                     value,
                     Some(format),
-                    format!("{}  ·  {}", format.label(), format.description()),
+                    format!("{}  ·  {}", format.label(), tr(format.description())),
                 );
             }
         });
@@ -2718,10 +2820,10 @@ fn convert_picker(ui: &mut egui::Ui, value: &mut Option<ImageFormat>) {
 /// What happens to images converted to `format` (shown next to the picker).
 fn convert_note(format: ImageFormat) -> String {
     let caveat = match format {
-        ImageFormat::Jpeg => " · transparent areas become white",
-        ImageFormat::Gif => " · limited to 256 colours",
-        ImageFormat::Bmp => " · uncompressed, large files",
-        ImageFormat::Png | ImageFormat::Tiff => " · lossless",
+        ImageFormat::Jpeg => tr(" · transparent areas become white"),
+        ImageFormat::Gif => tr(" · limited to 256 colours"),
+        ImageFormat::Bmp => tr(" · uncompressed, large files"),
+        ImageFormat::Png | ImageFormat::Tiff => tr(" · lossless"),
         _ => "",
     };
     format!(
@@ -2829,19 +2931,20 @@ fn bundle_id(_app: &Path) -> Option<String> {
 /// "Synced 2 min ago with MacBook Air", or what's wrong.
 fn sync_status_line(status: &SyncStatus, now: i64) -> (String, Color32) {
     if let Some(error) = &status.error {
-        return (error.clone(), ERR_RED);
+        // Made on the sync thread, in English.
+        return (tr(error).to_string(), ERR_RED);
     }
     let Some(last) = status.last else {
-        return ("Syncing…".into(), TEXT_DIM);
+        return (tr("Syncing…").into(), TEXT_DIM);
     };
-    let mut text = format!("Synced {}", crate::history_ui::ago(now, last));
+    let mut text = trf("Synced {}", &[&crate::i18n::ago(now, last)]);
     match status.devices.as_slice() {
-        [] => text.push_str(" — no other Mac yet"),
-        [one] => text.push_str(&format!(" with {one}")),
-        many => text.push_str(&format!(" with {} Macs", many.len())),
+        [] => text.push_str(tr(" — no other Mac yet")),
+        [one] => text.push_str(&trf(" with {}", &[one])),
+        many => text.push_str(&trf(" with {} Macs", &[&many.len()])),
     }
     if status.waiting > 0 {
-        text.push_str(&format!(" · {} changes waiting for iCloud", status.waiting));
+        text.push_str(&trf(" · {} changes waiting for iCloud", &[&status.waiting]));
     }
     (text, TEXT_DIM)
 }
@@ -2850,7 +2953,7 @@ fn sync_status_line(status: &SyncStatus, now: i64) -> (String, Color32) {
 fn category_error(e: &dyn std::fmt::Display, name: &str) -> String {
     let text = e.to_string();
     if text.contains("UNIQUE") {
-        format!("There's already a category called “{name}”.")
+        trf("There's already a category called “{}”.", &[&name])
     } else {
         text
     }
@@ -2908,7 +3011,7 @@ fn perform_self_update(url: &str, status: &Arc<Mutex<Option<String>>>) -> Result
     let old_app = app_bundle_path().ok_or("not running from an .app bundle")?;
 
     let bytes = xpress_core::update::download_verified(url)?;
-    *status.lock().unwrap() = Some("Installing update…".into());
+    *status.lock().unwrap() = Some(tr("Installing update…").into());
 
     let tmp = std::env::temp_dir().join(format!("xpress-update-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
@@ -2947,7 +3050,7 @@ rm -rf \"$OLD\"\nditto \"$NEW\" \"$OLD\"\nopen \"$OLD\"\n",
     );
     std::fs::write(&script, script_body).map_err(|e| e.to_string())?;
 
-    *status.lock().unwrap() = Some("Restarting…".into());
+    *status.lock().unwrap() = Some(tr("Restarting…").into());
     std::process::Command::new("/bin/bash")
         .arg(&script)
         .spawn()
@@ -3717,6 +3820,31 @@ mod tests {
         h.get_by_label("Skip").click();
         h.run();
         assert_eq!(h.state().welcome_step, None);
+    }
+
+    #[test]
+    fn the_app_speaks_norwegian() {
+        // The language is per thread, so this doesn't affect other tests.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("gui.json"), r#"{ "language": "nb" }"#).unwrap();
+        let mut h = harness_with_settings(&dir.path().join("gui.json"));
+        assert_eq!(crate::i18n::current(), crate::i18n::Lang::Norwegian);
+        assert!(h.query_by_label("Optimaliser utklippstavlen").is_some());
+        assert!(h.query_by_label("Innstillinger").is_some());
+        h.get_by_label("Innstillinger").click();
+        h.set_size(egui::vec2(960.0, 2400.0));
+        h.run();
+        assert!(h.query_by_label("Behold sikkerhetskopi").is_some());
+        assert!(h.query_by_label("Hurtigtaster").is_some());
+        assert!(
+            h.query_by_value("Norsk").is_some(),
+            "the language picker shows it"
+        );
+        h.state_mut().language = "en".into();
+        h.state_mut().apply_language();
+        h.run();
+        assert!(h.query_by_label("Keep a backup").is_some(), "switches back");
+        crate::i18n::set(crate::i18n::Lang::English);
     }
 
     #[test]

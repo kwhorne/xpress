@@ -9,6 +9,7 @@ mod app;
 mod autopaste;
 mod capture;
 mod history_ui;
+mod i18n;
 mod login;
 mod pasteboard;
 mod settings;

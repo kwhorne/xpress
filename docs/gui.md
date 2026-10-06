@@ -105,6 +105,7 @@ For crops to an exact size or aspect ratio, or batches, use
 | Skip already-optimised files | on | Leave files xpress already optimised with these settings (instant, no extra quality loss). |
 | Aggressive by default | off | Start with the aggressive preset. |
 | Open at login | off | Start xpress in the menu bar when you log in (macOS 13+; it appears in System Settings → General → Login Items). |
+| Language | System | **English** or **Norsk** (Norwegian bokmål); *System* follows macOS. Messages from the engine (errors) stay English. |
 | Float on top | off | Keep the window above other windows. |
 | Default pipeline | `crop(longEdge: 2000) -> convert(to: webp)` | Used when *Pipeline* is switched on. |
 | Shortcuts | ⇧⌘O, ⇧⌘X, ⌃⌘V | Click one and press the new keys (with ⌘, ⌃ or ⌥); ⌫ turns it off, esc cancels, *Reset* brings the default back. The menu-bar menu shows the current ones. |

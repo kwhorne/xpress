@@ -2,6 +2,7 @@
 //! thread. The clipboard is checked twice a second (macOS has no notification
 //! for it, only a change counter); the screenshot folder every two seconds.
 
+use crate::i18n::tr;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicIsize, AtomicU32, Ordering};
@@ -77,9 +78,9 @@ pub fn start_sync(
                             fresh,
                         )
                         .map_err(|e| e.to_string()),
-                        None => Err("iCloud Drive is off — turn it on in System Settings → \
-                                     Apple Account → iCloud."
-                            .into()),
+                        None => Err(tr("iCloud Drive is off — turn it on in System Settings → \
+                             Apple Account → iCloud.")
+                        .into()),
                     };
                     let mut s = status.lock().unwrap();
                     match result {
@@ -197,7 +198,7 @@ pub fn screenshot_dir() -> PathBuf {
 fn linux_screenshot_dir(home: &Path, pictures: Option<PathBuf>) -> PathBuf {
     pictures
         .unwrap_or_else(|| home.join("Pictures"))
-        .join("Screenshots")
+        .join(tr("Screenshots"))
 }
 
 /// GNOME ("Screenshot from 2026-10-04 12-00-00.png") and KDE Spectacle
