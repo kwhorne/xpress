@@ -1,4 +1,6 @@
 //! End-to-end tests of the optimisation engine using stub tools.
+//! The stubs are bash scripts, so these run on macOS and Linux.
+#![cfg(unix)]
 
 mod common;
 

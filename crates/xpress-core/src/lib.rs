@@ -37,6 +37,32 @@ use std::path::{Path, PathBuf};
 use filetype::{classify, MediaKind};
 use result::{OptimisationResult, OptimiseError, OptimiseOptions};
 
+/// The user's home folder: `$HOME`, or `%USERPROFILE%` on Windows (where `HOME`
+/// usually isn't set).
+pub fn home_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .or_else(|| {
+            if cfg!(windows) {
+                std::env::var_os("USERPROFILE")
+            } else {
+                None
+            }
+        })
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Expand a leading `~/` (or `~\` on Windows) to the home folder.
+pub fn expand_home(s: &str) -> String {
+    let rest = s
+        .strip_prefix("~/")
+        .or_else(|| s.strip_prefix("~\\").filter(|_| cfg!(windows)));
+    match (rest, home_dir()) {
+        (Some(rest), Some(home)) => home.join(rest).to_string_lossy().into_owned(),
+        _ => s.to_string(),
+    }
+}
+
 /// Optimise a single file, dispatching on its media kind.
 ///
 /// `audio_target` selects the audio output format (defaults to same-as-input).
@@ -124,4 +150,20 @@ pub fn optimise_many(
         .par_iter()
         .map(|f| (f.clone(), optimise_file(f, options, audio_target, pdf_dpi)))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_leading_tilde_is_the_home_folder() {
+        let home = home_dir().expect("a home folder");
+        assert_eq!(
+            PathBuf::from(expand_home("~/Pictures/xpress")),
+            home.join("Pictures/xpress")
+        );
+        assert_eq!(expand_home("/tmp/~/x"), "/tmp/~/x");
+        assert_eq!(expand_home("~user/x"), "~user/x");
+    }
 }

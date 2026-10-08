@@ -71,15 +71,28 @@ pub fn cli_target() -> Option<&'static str> {
     {
         Some("x86_64-unknown-linux-gnu")
     }
-    #[cfg(not(all(target_os = "linux", target_arch = "x86_64")))]
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        Some("x86_64-pc-windows-msvc")
+    }
+    #[cfg(not(any(
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "x86_64")
+    )))]
     {
         current_target()
     }
 }
 
-/// The CLI tarball's name in a release (see .github/workflows/release.yml).
+/// The CLI archive's name in a release (see .github/workflows/release.yml):
+/// a `.zip` for Windows, a `.tar.gz` elsewhere.
 pub fn cli_asset_name(tag: &str, target: &str) -> String {
-    format!("xpress-{tag}-{target}.tar.gz")
+    let ext = if target.contains("windows") {
+        "zip"
+    } else {
+        "tar.gz"
+    };
+    format!("xpress-{tag}-{target}.{ext}")
 }
 
 /// The desktop app zip's name in a release.
@@ -305,7 +318,8 @@ mod tests {
             assert_eq!(
                 info.cli_download_url.unwrap(),
                 format!(
-                    "https://github.com/kwhorne/xpress/releases/download/v9.9.9/xpress-v9.9.9-{target}.tar.gz"
+                    "https://github.com/kwhorne/xpress/releases/download/v9.9.9/{}",
+                    cli_asset_name("v9.9.9", target)
                 )
             );
         }
@@ -329,14 +343,14 @@ mod tests {
             html_url: String::new(),
             body: String::new(),
             assets: vec![
-                asset(format!("xpress-v1.0.0-{target}.tar.gz.sha256")),
-                asset(format!("xpress-v1.0.0-{target}.tar.gz")),
+                asset(format!("{}.sha256", cli_asset_name("v1.0.0", target))),
+                asset(cli_asset_name("v1.0.0", target)),
             ],
         };
         let info = info_from(rel, "0.5.2");
         assert_eq!(
             info.cli_download_url.unwrap(),
-            format!("https://example.test/xpress-v1.0.0-{target}.tar.gz")
+            format!("https://example.test/{}", cli_asset_name("v1.0.0", target))
         );
     }
 
@@ -351,6 +365,18 @@ mod tests {
             .contains("mismatch"));
         assert!(verify_sha256(b"hello", "").is_err());
         assert!(verify_sha256(b"hello", "not-a-digest  x").is_err());
+    }
+
+    #[test]
+    fn windows_gets_a_zip() {
+        assert_eq!(
+            cli_asset_name("v1.0.0", "x86_64-pc-windows-msvc"),
+            "xpress-v1.0.0-x86_64-pc-windows-msvc.zip"
+        );
+        assert_eq!(
+            cli_asset_name("v1.0.0", "aarch64-apple-darwin"),
+            "xpress-v1.0.0-aarch64-apple-darwin.tar.gz"
+        );
     }
 
     #[test]

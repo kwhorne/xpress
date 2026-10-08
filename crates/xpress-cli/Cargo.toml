@@ -23,11 +23,16 @@ serde_json.workspace = true
 tempfile.workspace = true
 rayon.workspace = true
 notify = "7"
+# Clipboard watching (the `clipboard` feature).
+arboard = { version = "3", optional = true }
 ctrlc = "3"
+
+[target.'cfg(windows)'.dependencies]
+# Release archives for Windows are .zip (for `xpress update`).
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
-arboard = { version = "3", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -58,6 +58,18 @@ jobs:
       - name: Test workspace
         run: cargo test --workspace
 
+  windows:
+    name: test (windows-latest, command line)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the command line
+        run: cargo build -p xpress-cli --all-targets
+      - name: Test the engine and the command line
+        run: cargo test -p xpress-core -p xpress-cli
+
   audit:
     name: cargo audit
     runs-on: ubuntu-latest

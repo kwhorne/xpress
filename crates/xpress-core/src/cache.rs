@@ -36,6 +36,8 @@ struct Mark {
     crc: u32,
 }
 
+// Markers are extended attributes, which exist on Unix only.
+#[cfg_attr(not(unix), allow(dead_code))]
 impl Mark {
     fn encode(&self) -> String {
         format!(

@@ -29,7 +29,7 @@ A `-app.zip` with the same app is also published if you prefer a zip.
 
 ## Command line
 
-The `xpress` command line tool is a separate download — the `.tar.gz` for your
+The `xpress` command line tool is a separate download — the archive for your
 platform on the [releases page](https://github.com/kwhorne/xpress/releases/latest):
 
 | Platform | File |
@@ -37,6 +37,7 @@ platform on the [releases page](https://github.com/kwhorne/xpress/releases/lates
 | macOS, Apple silicon | `xpress-<version>-aarch64-apple-darwin.tar.gz` |
 | macOS, Intel | `xpress-<version>-x86_64-apple-darwin.tar.gz` |
 | Linux, x86-64 | `xpress-<version>-x86_64-unknown-linux-gnu.tar.gz` |
+| Windows, x86-64 | `xpress-<version>-x86_64-pc-windows-msvc.zip` |
 
 ```sh
 tar xzf xpress-v0.9.4-aarch64-apple-darwin.tar.gz
@@ -44,9 +45,30 @@ sudo mv xpress-v0.9.4-aarch64-apple-darwin/xpress /usr/local/bin/
 xpress --version
 ```
 
-Each archive also contains `xpress-gui` (the desktop app as a plain binary),
-plus the README, licence and notice. Every download has a matching `.sha256`
-file: `shasum -a 256 -c xpress-…tar.gz.sha256`.
+Each macOS and Linux archive also contains `xpress-gui` (the desktop app as a
+plain binary), plus the README, licence and notice. Every download has a
+matching `.sha256` file: `shasum -a 256 -c xpress-…tar.gz.sha256`.
+
+### Windows
+
+The Windows zip holds `xpress.exe` (the command line only; the desktop app is
+macOS and Linux). In PowerShell:
+
+```powershell
+Expand-Archive xpress-v0.9.4-x86_64-pc-windows-msvc.zip -DestinationPath $env:LOCALAPPDATA\Programs
+$dir = "$env:LOCALAPPDATA\Programs\xpress-v0.9.4-x86_64-pc-windows-msvc"
+[Environment]::SetEnvironmentVariable("Path", "$([Environment]::GetEnvironmentVariable('Path','User'));$dir", "User")
+xpress --version    # in a new terminal
+(Get-FileHash xpress-v0.9.4-x86_64-pc-windows-msvc.zip).Hash   # compare with the .sha256
+```
+
+`xpress.exe` isn't code-signed, so SmartScreen may warn the first time you run
+it (*More info → Run anyway*). Everything for images and PDFs works out of the
+box; for video and audio put `ffmpeg.exe` on your `PATH` or in
+`%LOCALAPPDATA%\xpress\bin`. Clipboard watching (`xpress watch --clipboard`)
+works too and saves to `%USERPROFILE%\Pictures\xpress`; settings live in
+`%APPDATA%\xpress`. "Already optimised" markers need extended attributes, which Windows
+doesn't have, so files are always optimised again.
 
 ### Extra tools
 
@@ -79,7 +101,8 @@ xpress doctor
 xpress looks for each tool in this order: `$XPRESS_BIN_DIR`, a `bin/` folder
 next to the `xpress` executable, the per-user tools folder
 (`~/Library/Application Support/xpress/bin` on macOS,
-`~/.local/share/xpress/bin` on Linux), then your `PATH`. A portable ffmpeg can
+`~/.local/share/xpress/bin` on Linux, `%LOCALAPPDATA%\xpress\bin` on Windows),
+then your `PATH`. A portable ffmpeg can
 be put in the per-user folder with
 `scripts/fetch-static-tools.sh <target> "<that folder>"` from the source tree.
 

@@ -1,4 +1,5 @@
-//! "Already optimised" markers (extended attributes).
+//! "Already optimised" markers (extended attributes, so Unix only).
+#![cfg(unix)]
 
 use std::path::{Path, PathBuf};
 
