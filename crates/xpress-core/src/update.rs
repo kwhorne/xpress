@@ -318,7 +318,8 @@ mod tests {
             assert_eq!(
                 info.cli_download_url.unwrap(),
                 format!(
-                    "https://github.com/kwhorne/xpress/releases/download/v9.9.9/xpress-v9.9.9-{target}.tar.gz"
+                    "https://github.com/kwhorne/xpress/releases/download/v9.9.9/{}",
+                    cli_asset_name("v9.9.9", target)
                 )
             );
         }
@@ -342,14 +343,14 @@ mod tests {
             html_url: String::new(),
             body: String::new(),
             assets: vec![
-                asset(format!("xpress-v1.0.0-{target}.tar.gz.sha256")),
-                asset(format!("xpress-v1.0.0-{target}.tar.gz")),
+                asset(format!("{}.sha256", cli_asset_name("v1.0.0", target))),
+                asset(cli_asset_name("v1.0.0", target)),
             ],
         };
         let info = info_from(rel, "0.5.2");
         assert_eq!(
             info.cli_download_url.unwrap(),
-            format!("https://example.test/xpress-v1.0.0-{target}.tar.gz")
+            format!("https://example.test/{}", cli_asset_name("v1.0.0", target))
         );
     }
 
