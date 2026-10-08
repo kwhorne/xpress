@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-08
+
+The first stable release: the menu-bar app for macOS (Apple silicon and
+Intel), and the command line for macOS, Linux and now Windows.
+
 ### Added
 - **Windows command line**: every release now includes
   `xpress-<version>-x86_64-pc-windows-msvc.zip` with `xpress.exe`, built and
@@ -531,7 +536,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/kwhorne/xpress/compare/v0.9.4...v1.0.0
 [0.9.4]: https://github.com/kwhorne/xpress/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/kwhorne/xpress/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/kwhorne/xpress/compare/v0.9.1...v0.9.2

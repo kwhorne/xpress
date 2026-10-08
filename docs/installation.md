@@ -40,8 +40,8 @@ platform on the [releases page](https://github.com/kwhorne/xpress/releases/lates
 | Windows, x86-64 | `xpress-<version>-x86_64-pc-windows-msvc.zip` |
 
 ```sh
-tar xzf xpress-v0.9.4-aarch64-apple-darwin.tar.gz
-sudo mv xpress-v0.9.4-aarch64-apple-darwin/xpress /usr/local/bin/
+tar xzf xpress-v1.0.0-aarch64-apple-darwin.tar.gz
+sudo mv xpress-v1.0.0-aarch64-apple-darwin/xpress /usr/local/bin/
 xpress --version
 ```
 
@@ -55,11 +55,11 @@ The Windows zip holds `xpress.exe` (the command line only; the desktop app is
 macOS and Linux). In PowerShell:
 
 ```powershell
-Expand-Archive xpress-v0.9.4-x86_64-pc-windows-msvc.zip -DestinationPath $env:LOCALAPPDATA\Programs
-$dir = "$env:LOCALAPPDATA\Programs\xpress-v0.9.4-x86_64-pc-windows-msvc"
+Expand-Archive xpress-v1.0.0-x86_64-pc-windows-msvc.zip -DestinationPath $env:LOCALAPPDATA\Programs
+$dir = "$env:LOCALAPPDATA\Programs\xpress-v1.0.0-x86_64-pc-windows-msvc"
 [Environment]::SetEnvironmentVariable("Path", "$([Environment]::GetEnvironmentVariable('Path','User'));$dir", "User")
 xpress --version    # in a new terminal
-(Get-FileHash xpress-v0.9.4-x86_64-pc-windows-msvc.zip).Hash   # compare with the .sha256
+(Get-FileHash xpress-v1.0.0-x86_64-pc-windows-msvc.zip).Hash   # compare with the .sha256
 ```
 
 `xpress.exe` isn't code-signed, so SmartScreen may warn the first time you run
