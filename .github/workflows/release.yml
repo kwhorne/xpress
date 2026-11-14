@@ -5,7 +5,8 @@ on:
     tags: ["v*"]
   # A dry run — by hand, or for pull requests that change the packaging:
   # builds, signs and packages everything, named v0.0.0-dev, and keeps the
-  # files as workflow artifacts instead of publishing a release.
+  # files as workflow artifacts instead of publishing a release. Only the
+  # hand-started dry run is notarised (see NOTARIZE below).
   workflow_dispatch:
   pull_request:
     paths:
@@ -35,6 +36,10 @@ jobs:
       TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.0.0-dev' }}
       MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
       APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      # Notarise tags and hand-started dry runs; pull requests still build
+      # and sign, but skip the notary service (it can be down or refuse the
+      # team for reasons that have nothing to do with the change).
+      NOTARIZE: ${{ github.event_name != 'pull_request' && secrets.APPLE_APP_PASSWORD != '' && '1' || '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -111,7 +116,7 @@ jobs:
         shell: bash
         env:
           XPRESS_SIGN_ID: ${{ secrets.MACOS_SIGN_IDENTITY }}
-          XPRESS_NOTARIZE: ${{ env.APPLE_APP_PASSWORD != '' && '1' || '0' }}
+          XPRESS_NOTARIZE: ${{ env.NOTARIZE }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
@@ -141,7 +146,7 @@ jobs:
         shell: bash
         env:
           XPRESS_SIGN_ID: ${{ secrets.MACOS_SIGN_IDENTITY }}
-          XPRESS_NOTARIZE: ${{ env.APPLE_APP_PASSWORD != '' && '1' || '0' }}
+          XPRESS_NOTARIZE: ${{ env.NOTARIZE }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
