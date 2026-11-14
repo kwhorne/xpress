@@ -407,6 +407,7 @@ impl History {
     pub fn open(dir: &Path) -> rusqlite::Result<History> {
         std::fs::create_dir_all(dir.join("images"))
             .and_then(|_| std::fs::create_dir_all(dir.join("thumbs")))
+            .and_then(|_| private(dir, &dir.join("history.db")))
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let conn = Connection::open(dir.join("history.db"))?;
         conn.busy_timeout(Duration::from_secs(5))?;
@@ -514,6 +515,27 @@ impl History {
     }
 
     /// Run `f` without recording its changes.
+    /// Run `f` as one unit: if it fails, none of its changes (to the clips
+    /// or the sync outbox) stay. Nests (a savepoint, not a transaction).
+    pub(crate) fn atomically<T>(
+        &self,
+        f: impl FnOnce() -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<T> {
+        self.conn.execute_batch("SAVEPOINT xpress_atomic")?;
+        match f() {
+            Ok(v) => {
+                self.conn.execute_batch("RELEASE xpress_atomic")?;
+                Ok(v)
+            }
+            Err(e) => {
+                let _ = self
+                    .conn
+                    .execute_batch("ROLLBACK TO xpress_atomic; RELEASE xpress_atomic");
+                Err(e)
+            }
+        }
+    }
+
     pub(crate) fn quietly<T>(&self, f: impl FnOnce() -> T) -> T {
         let before = self.quiet.replace(true);
         let out = f();
@@ -608,6 +630,10 @@ impl History {
 
     /// Make a multi-clip of `ids`, in that order.
     pub fn combine(&self, ids: &[i64]) -> rusqlite::Result<i64> {
+        self.atomically(|| self.combine_inner(ids))
+    }
+
+    fn combine_inner(&self, ids: &[i64]) -> rusqlite::Result<i64> {
         if ids.is_empty() {
             return Err(rusqlite::Error::ToSqlConversionFailure(
                 "nothing to combine".into(),
@@ -768,6 +794,16 @@ impl History {
     /// Create a category (`id: None`) or change one. Clips already in the
     /// history that match the rule join it. Returns its id.
     pub fn save_category(
+        &self,
+        id: Option<i64>,
+        name: &str,
+        color: [u8; 3],
+        rule: &Rule,
+    ) -> rusqlite::Result<i64> {
+        self.atomically(|| self.save_category_inner(id, name, color, rule))
+    }
+
+    fn save_category_inner(
         &self,
         id: Option<i64>,
         name: &str,
@@ -1449,9 +1485,59 @@ pub fn parse_color(s: &str) -> Option<[u8; 4]> {
     }
 }
 
+/// Keep the history to this user: the folder `0700`, the database `0600`
+/// (created that way before SQLite opens it, so it is never readable by
+/// others, not even briefly). SQLite gives its `-wal`/`-shm` files the
+/// database's permissions.
+fn private(dir: &Path, db: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(db)?;
+        std::fs::set_permissions(db, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = (dir, db);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_history_is_private_to_this_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("history");
+        let h = History::open(&home).unwrap();
+        h.add(NewClip::text("secret")).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&home), 0o700);
+        assert_eq!(mode(&home.join("history.db")), 0o600);
+    }
+
+    #[test]
+    fn a_failed_combine_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = History::open(dir.path()).unwrap();
+        let one = h.add(NewClip::text("one")).unwrap().id;
+        // 9999 doesn't exist: the item insert fails (foreign key).
+        assert!(h.combine(&[one, 9999]).is_err());
+        let multis = h
+            .search(&Query {
+                kind: Some(ClipKind::Multi),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(multis.is_empty(), "half-made multi-clip: {multis:?}");
+    }
 
     fn history() -> (tempfile::TempDir, History) {
         let dir = tempfile::tempdir().unwrap();
