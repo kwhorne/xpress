@@ -103,7 +103,8 @@ pub fn prepare(
             .map(|(img, _)| img.color().has_alpha())
             .unwrap_or(false);
         if let Some(format) = target.image_conversion(path, alpha) {
-            let r = crate::image::convert(path, format, base)?;
+            // Lossless when the target is PNG (as `xpress convert` does).
+            let r = crate::image::convert_with(path, format, base, true)?;
             work = r.output;
             converted = true;
         }

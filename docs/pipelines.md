@@ -30,7 +30,7 @@ in the [desktop app](gui.md). The [common options](cli.md#common-options)
 | `downscale` | `factor:` (`0.5` or `50%`) | images, video | Scale down, keeping the aspect ratio |
 | `crop` | `width:`, `height:`, `longEdge:`, `ratio:` (`16:9`), `smart: true` | images, video | Resize/crop — same rules as [`xpress crop`](resizing-and-cropping.md) |
 | `watermark` | `image:`, `position:`, `opacity:`, `scale:` | images, video | Overlay a logo (see below) |
-| `stripExif` | — | images | Remove metadata without re-encoding (needs `exiftool`) |
+| `stripExif` | — | images | Remove metadata without re-encoding (HEIC/AVIF/TIFF/JXL need `exiftool`) |
 | `removeAudio` | — | video | Drop the audio track |
 | `changeSpeed` | `factor:` (0.25–8) | video | `2.0` = twice as fast; audio follows |
 | `capFps` | `fps:` | video | Limit the frame rate |
@@ -47,7 +47,9 @@ a fraction of the picture's (default 0.15).
 **runScript** — `code:` runs a shell command with the current file in `$FILE`;
 `path:` runs a script file, which gets the current file as its first argument
 (and in `$FILE`). The file passes through unchanged, so put `runScript` last to
-act on the final result.
+act on the final result. Scripts run with `sh` (on Windows: `cmd /C`, or
+PowerShell for a `.ps1` file, with the file in `%FILE%`) and are stopped after
+`--timeout` seconds, or 10 minutes when no timeout is set.
 
 ### Syntax
 

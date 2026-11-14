@@ -407,6 +407,7 @@ impl History {
     pub fn open(dir: &Path) -> rusqlite::Result<History> {
         std::fs::create_dir_all(dir.join("images"))
             .and_then(|_| std::fs::create_dir_all(dir.join("thumbs")))
+            .and_then(|_| private(dir, &dir.join("history.db")))
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
         let conn = Connection::open(dir.join("history.db"))?;
         conn.busy_timeout(Duration::from_secs(5))?;
@@ -514,6 +515,27 @@ impl History {
     }
 
     /// Run `f` without recording its changes.
+    /// Run `f` as one unit: if it fails, none of its changes (to the clips
+    /// or the sync outbox) stay. Nests (a savepoint, not a transaction).
+    pub(crate) fn atomically<T>(
+        &self,
+        f: impl FnOnce() -> rusqlite::Result<T>,
+    ) -> rusqlite::Result<T> {
+        self.conn.execute_batch("SAVEPOINT xpress_atomic")?;
+        match f() {
+            Ok(v) => {
+                self.conn.execute_batch("RELEASE xpress_atomic")?;
+                Ok(v)
+            }
+            Err(e) => {
+                let _ = self
+                    .conn
+                    .execute_batch("ROLLBACK TO xpress_atomic; RELEASE xpress_atomic");
+                Err(e)
+            }
+        }
+    }
+
     pub(crate) fn quietly<T>(&self, f: impl FnOnce() -> T) -> T {
         let before = self.quiet.replace(true);
         let out = f();
@@ -548,7 +570,12 @@ impl History {
                 "text too large for the history".into(),
             ));
         }
-        let hash = content_hash(&clip);
+        // Decoded once, for the content hash and the preview both.
+        let decoded = clip
+            .image
+            .as_ref()
+            .and_then(|(data, _)| image::load_from_memory(data).ok());
+        let hash = content_hash(&clip, decoded.as_ref());
         if let Some(id) = self
             .conn
             .query_row("SELECT id FROM clips WHERE hash = ?1", [&hash], |r| {
@@ -568,7 +595,7 @@ impl History {
         }
 
         let (image, thumb, bytes) = match &clip.image {
-            Some((data, ext)) => self.store_image(&hash, data, ext),
+            Some((data, ext)) => self.store_decoded(&hash, data, ext, decoded.as_ref()),
             None => (None, self.file_thumb(&clip, &hash), clip.text.len() as u64),
         };
         self.conn.execute(
@@ -608,6 +635,10 @@ impl History {
 
     /// Make a multi-clip of `ids`, in that order.
     pub fn combine(&self, ids: &[i64]) -> rusqlite::Result<i64> {
+        self.atomically(|| self.combine_inner(ids))
+    }
+
+    fn combine_inner(&self, ids: &[i64]) -> rusqlite::Result<i64> {
         if ids.is_empty() {
             return Err(rusqlite::Error::ToSqlConversionFailure(
                 "nothing to combine".into(),
@@ -774,6 +805,16 @@ impl History {
         color: [u8; 3],
         rule: &Rule,
     ) -> rusqlite::Result<i64> {
+        self.atomically(|| self.save_category_inner(id, name, color, rule))
+    }
+
+    fn save_category_inner(
+        &self,
+        id: Option<i64>,
+        name: &str,
+        color: [u8; 3],
+        rule: &Rule,
+    ) -> rusqlite::Result<i64> {
         let name = name.trim();
         if name.is_empty() {
             return Err(rusqlite::Error::ToSqlConversionFailure(
@@ -913,6 +954,18 @@ impl History {
         data: &[u8],
         ext: &str,
     ) -> (Option<String>, Option<String>, u64) {
+        self.store_decoded(hash, data, ext, None)
+    }
+
+    /// [`Self::store_image`], reusing `decoded` (the same image, already
+    /// decoded) for the preview when the caller has it.
+    fn store_decoded(
+        &self,
+        hash: &str,
+        data: &[u8],
+        ext: &str,
+        decoded: Option<&image::DynamicImage>,
+    ) -> (Option<String>, Option<String>, u64) {
         if !safe_file_name(hash, ext) {
             return (None, None, 0);
         }
@@ -928,7 +981,11 @@ impl History {
         if std::fs::write(self.dir.join(&image), &stored).is_err() {
             return (None, None, 0);
         }
-        let thumb = make_thumb(data).and_then(|png| {
+        let thumb = match decoded {
+            Some(img) => thumb_png(img),
+            None => make_thumb(data),
+        }
+        .and_then(|png| {
             let rel = format!("thumbs/{hash}.png");
             std::fs::write(self.dir.join(&rel), png).ok().map(|_| rel)
         });
@@ -1246,19 +1303,19 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn content_hash(clip: &NewClip) -> String {
+fn content_hash(clip: &NewClip, decoded: Option<&image::DynamicImage>) -> String {
     let mut h = Sha256::new();
     match &clip.image {
         // By pixels, so a picture stored as a screenshot and the same
         // picture copied back from the history are one clip.
-        Some((data, _)) => match image::load_from_memory(data) {
-            Ok(img) => {
+        Some((data, _)) => match decoded {
+            Some(img) => {
                 let rgba = img.to_rgba8();
                 h.update(rgba.width().to_le_bytes());
                 h.update(rgba.height().to_le_bytes());
                 h.update(rgba.as_raw());
             }
-            Err(_) => h.update(data),
+            None => h.update(data),
         },
         None => {
             h.update(clip.kind.as_str());
@@ -1280,9 +1337,14 @@ fn fts_query(text: &str) -> Option<String> {
 }
 
 fn make_thumb(data: &[u8]) -> Option<Vec<u8>> {
-    let img = image::load_from_memory(data).ok()?;
+    thumb_png(&image::load_from_memory(data).ok()?)
+}
+
+fn thumb_png(img: &image::DynamicImage) -> Option<Vec<u8>> {
+    let small;
     let thumb = if img.width() > THUMB_SIZE || img.height() > THUMB_SIZE {
-        img.thumbnail(THUMB_SIZE, THUMB_SIZE)
+        small = img.thumbnail(THUMB_SIZE, THUMB_SIZE);
+        &small
     } else {
         img
     };
@@ -1449,9 +1511,59 @@ pub fn parse_color(s: &str) -> Option<[u8; 4]> {
     }
 }
 
+/// Keep the history to this user: the folder `0700`, the database `0600`
+/// (created that way before SQLite opens it, so it is never readable by
+/// others, not even briefly). SQLite gives its `-wal`/`-shm` files the
+/// database's permissions.
+fn private(dir: &Path, db: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(db)?;
+        std::fs::set_permissions(db, std::fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = (dir, db);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn the_history_is_private_to_this_user() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("history");
+        let h = History::open(&home).unwrap();
+        h.add(NewClip::text("secret")).unwrap();
+        let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&home), 0o700);
+        assert_eq!(mode(&home.join("history.db")), 0o600);
+    }
+
+    #[test]
+    fn a_failed_combine_leaves_nothing_behind() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = History::open(dir.path()).unwrap();
+        let one = h.add(NewClip::text("one")).unwrap().id;
+        // 9999 doesn't exist: the item insert fails (foreign key).
+        assert!(h.combine(&[one, 9999]).is_err());
+        let multis = h
+            .search(&Query {
+                kind: Some(ClipKind::Multi),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(multis.is_empty(), "half-made multi-clip: {multis:?}");
+    }
 
     fn history() -> (tempfile::TempDir, History) {
         let dir = tempfile::tempdir().unwrap();

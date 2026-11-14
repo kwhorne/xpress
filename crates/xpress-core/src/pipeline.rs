@@ -7,7 +7,7 @@
 //! Each step transforms the working file and feeds the next. The final artifact
 //! is placed at the pipeline output (or back next to the source).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
@@ -18,7 +18,6 @@ use crate::image::{self, ImageFormat};
 use crate::result::{
     file_size, finish, OptimisationResult, OptimiseError, OptimiseOptions, Placement,
 };
-use crate::tools;
 use crate::{scale, video};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -85,7 +84,8 @@ impl CropArgs {
 
 /// Parse a full pipeline string into steps.
 pub fn parse(dsl: &str) -> Result<Vec<Step>, String> {
-    dsl.split("->")
+    split_unquoted(dsl, "->")
+        .into_iter()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .map(parse_step)
@@ -226,7 +226,7 @@ fn parse_args(s: &str) -> Result<Vec<(String, String)>, String> {
         return Ok(vec![]);
     }
     let mut out = Vec::new();
-    for part in s.split(',') {
+    for part in split_unquoted(s, ",") {
         let part = part.trim();
         if part.is_empty() {
             continue;
@@ -238,6 +238,33 @@ fn parse_args(s: &str) -> Result<Vec<(String, String)>, String> {
         out.push((k.trim().to_string(), v));
     }
     Ok(out)
+}
+
+/// Split `s` at `sep`, except inside '…' or "…" (a watermark path or script
+/// may contain `,` or `->`).
+fn split_unquoted<'a>(s: &'a str, sep: &str) -> Vec<&'a str> {
+    let mut parts = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut start = 0;
+    let mut i = 0;
+    while i < s.len() {
+        let c = s[i..].chars().next().unwrap_or_default();
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if s[i..].starts_with(sep) => {
+                parts.push(&s[start..i]);
+                i += sep.len();
+                start = i;
+                continue;
+            }
+            None => {}
+        }
+        i += c.len_utf8();
+    }
+    parts.push(&s[start..]);
+    parts
 }
 
 fn parse_factor(v: &str) -> Result<f64, String> {
@@ -284,8 +311,7 @@ pub fn run(
         counter += 1;
         let next_ext = step_output_ext(step, &current);
         let target = work.path().join(format!("s{counter}.{next_ext}"));
-        apply_step(step, &current, &target, options)?;
-        current = target;
+        current = apply_step(step, &current, &target, options)?;
     }
 
     // Place the final artifact: a same-type result replaces the source (with a
@@ -372,10 +398,11 @@ fn apply_step(
     current: &Path,
     target: &Path,
     base: &OptimiseOptions,
-) -> Result<(), OptimiseError> {
+) -> Result<PathBuf, OptimiseError> {
     // Per-step options: write to `target`, never back up intermediates.
     let opts = OptimiseOptions {
         output: Some(target.to_path_buf()),
+        output_follows_format: false,
         backup: false,
         allow_larger: true,
         ..base.clone()
@@ -403,7 +430,8 @@ fn apply_step(
                     )));
                 }
             } else if let Some(f) = ImageFormat::from_str(to) {
-                image::convert(current, f, &opts)?;
+                // Like `xpress convert`: a PNG keeps every pixel.
+                image::convert_with(current, f, &opts, true)?;
             } else if let Some(a) = AudioFormat::from_target(to) {
                 audio::optimise(current, &opts, a, None)?;
             } else {
@@ -413,8 +441,9 @@ fn apply_step(
             }
         }
         Step::StripExif => {
-            std::fs::copy(current, target)?;
-            tools::copy_exif(current, target, true, &[]);
+            if !crate::strip::strip_file(current, target, crate::image::Strip::All)? {
+                std::fs::copy(current, target)?;
+            }
         }
         Step::RemoveAudio => {
             video::remove_audio(current, target)?;
@@ -434,7 +463,16 @@ fn apply_step(
         }
         Step::Adaptive => {
             if classify(current) == Some(MediaKind::Image) {
-                image::optimise_adaptive(current, &opts)?;
+                // Adaptive may pick another format (photo.png -> WebP/JPEG):
+                // let the output's extension follow, and carry on from there.
+                let follow = OptimiseOptions {
+                    output_follows_format: true,
+                    ..opts.clone()
+                };
+                let r = image::optimise_adaptive(current, &follow)?;
+                if r.output.is_file() {
+                    return Ok(r.output);
+                }
             } else {
                 crate::optimise_file(current, &opts, AudioFormat::SameAsInput, None)?;
             }
@@ -448,7 +486,7 @@ fn apply_step(
             opacity,
             scale,
         } => {
-            let overlay = std::path::PathBuf::from(img);
+            let overlay = std::path::PathBuf::from(crate::expand_home(img));
             crate::effects::watermark(
                 current,
                 target,
@@ -460,8 +498,12 @@ fn apply_step(
         }
         Step::CopyToClipboard => {
             // Pass the file through unchanged, and copy it to the clipboard.
+            // `target` is a temporary file, so the clipboard gets the image
+            // itself (as PNG), never a link to a file about to disappear.
             std::fs::copy(current, target)?;
-            crate::clipboard::set_clipboard_png(target);
+            if let Some(png) = crate::clipboard::png_data(target) {
+                crate::clipboard::write(&[crate::clipboard::Part::Png(png)]);
+            }
         }
         Step::RunScript { code, path } => {
             // Pass the file through; run the user's script with $FILE set to it.
@@ -474,7 +516,7 @@ fn apply_step(
             "step produced no output: {step:?}"
         )));
     }
-    Ok(())
+    Ok(target.to_path_buf())
 }
 
 /// Render steps back to canonical DSL (for `pipeline show`).
@@ -538,23 +580,67 @@ fn run_user_script(
     file: &std::path::Path,
 ) -> Result<(), OptimiseError> {
     use std::process::Command;
-    let mut cmd = if let Some(script) = path {
-        let mut c = Command::new("sh");
-        c.arg(script).arg(file);
-        c
-    } else if let Some(code) = code {
-        let mut c = Command::new("sh");
-        c.arg("-c").arg(code);
-        c
-    } else {
-        return Err(OptimiseError::Other(
-            "runScript requires code: or path:".into(),
-        ));
+    // `sh` on macOS/Linux; on Windows `cmd /C` (or PowerShell for a .ps1).
+    let shell = |c: &mut Command, script: Option<&str>, code: Option<&str>| {
+        if let Some(script) = script {
+            if cfg!(windows) && script.to_ascii_lowercase().ends_with(".ps1") {
+                c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script]);
+            } else if cfg!(windows) {
+                c.args(["/C", script]);
+            } else {
+                c.arg(script);
+            }
+            c.arg(file);
+        } else if let Some(code) = code {
+            c.arg(if cfg!(windows) { "/C" } else { "-c" }).arg(code);
+        }
+    };
+    let program = |script: Option<&str>| match script {
+        Some(s) if cfg!(windows) && s.to_ascii_lowercase().ends_with(".ps1") => "powershell",
+        _ if cfg!(windows) => "cmd",
+        _ => "sh",
+    };
+    let script = path.map(crate::expand_home);
+    let mut cmd = match (script.as_deref(), code) {
+        (Some(s), _) => {
+            let mut c = Command::new(program(Some(s)));
+            shell(&mut c, Some(s), None);
+            c
+        }
+        (None, Some(code)) => {
+            let mut c = Command::new(program(None));
+            shell(&mut c, None, Some(code));
+            c
+        }
+        (None, None) => {
+            return Err(OptimiseError::Other(
+                "runScript requires code: or path:".into(),
+            ))
+        }
     };
     cmd.env("FILE", file);
-    let status = cmd
-        .status()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| OptimiseError::Other(format!("runScript failed to launch: {e}")))?;
+
+    // The `--timeout` for tools applies; without one, a script gets 10 minutes
+    // so a hung script can't stall a watch daemon forever.
+    let limit = crate::tools::timeout().unwrap_or(std::time::Duration::from_secs(600));
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None if started.elapsed() > limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(OptimiseError::Other(format!(
+                    "runScript took longer than {}s and was stopped",
+                    limit.as_secs()
+                )));
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    };
     if !status.success() {
         return Err(OptimiseError::Other(format!(
             "runScript exited with status {}",
@@ -583,6 +669,58 @@ fn parse_size(v: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn run_script_reports_failure_and_sees_the_file() {
+        let f = Path::new("/tmp/x.png");
+        assert!(run_user_script(Some(r#"test "$FILE" = /tmp/x.png"#), None, f).is_ok());
+        assert!(run_user_script(Some("exit 3"), None, f).is_err());
+        assert!(run_user_script(None, None, f).is_err());
+    }
+
+    #[test]
+    fn quoted_values_may_contain_separators() {
+        let steps = parse(r#"watermark(image: "~/logos/a, b -> c.png", opacity: 0.5) -> optimise"#)
+            .unwrap();
+        assert_eq!(steps.len(), 2);
+        match &steps[0] {
+            Step::Watermark { image, opacity, .. } => {
+                assert_eq!(image, "~/logos/a, b -> c.png");
+                assert_eq!(*opacity, 0.5);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(steps[1], Step::Optimise);
+    }
+
+    #[test]
+    fn adaptive_output_carries_the_chosen_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("photo.png");
+        // Photo-like noise: JPEG/WebP beat PNG by far.
+        let mut seed = 0x2545_f491_u32;
+        let img = ::image::RgbImage::from_fn(384, 384, |x, y| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            let n = (seed % 24) as u8;
+            let (x, y) = (x * 255 / 384, y * 255 / 384);
+            ::image::Rgb([x as u8 ^ n, y as u8 ^ n, ((x + y) / 2) as u8 ^ n])
+        });
+        img.save(&src).unwrap();
+        let opts = OptimiseOptions {
+            backup: false,
+            use_cache: false,
+            ..OptimiseOptions::default()
+        };
+        let r = run(&src, &[Step::Adaptive], &opts).unwrap();
+        let bytes = std::fs::read(&r.output).unwrap();
+        let actual = ::image::guess_format(&bytes).unwrap();
+        let by_name = ::image::ImageFormat::from_path(&r.output).unwrap();
+        assert_ne!(by_name, ::image::ImageFormat::Png, "the scenario: PNG lost");
+        assert_eq!(actual, by_name, "{} holds {actual:?}", r.output.display());
+    }
 
     #[test]
     fn parse_chain() {

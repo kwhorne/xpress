@@ -16,15 +16,13 @@ mod watch;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 
 use xpress_core::audio::AudioFormat;
-use xpress_core::collect_files;
 use xpress_core::compression::{CompressionQuality, CompressionTier};
 use xpress_core::filetype::MediaKind;
 use xpress_core::result::OptimiseOptions;
-use xpress_core::tools::{self, Tool};
 
 const CREDITS: &str = "Developed by Knut W. Horne · https://kwhorne.com";
 const LONG_VERSION: &str = concat!(
@@ -191,6 +189,7 @@ impl CommonOpts {
             strip_location: self.strip_location,
             preserve_dates: !self.no_preserve_dates && cfg.preserve_dates,
             output: self.output.clone(),
+            output_follows_format: false,
             allow_larger: self.allow_larger,
             use_cache: !self.force,
         }
@@ -473,12 +472,53 @@ fn resolve_output(
     if out.is_dir() {
         return Some(out.join(xpress_core::result::file_name_lossy(source)));
     }
-    if single {
-        Some(out.clone())
-    } else {
-        // A concrete file path with multiple inputs makes no sense; fall back to in-place.
-        None
+    // With several inputs, `jobs_for` has already created `out` as a folder.
+    single.then(|| out.clone())
+}
+
+/// Pair each file with its options, resolving `--output` for each one.
+///
+/// With several inputs and a plain `-o <folder>`, the folder is created when
+/// missing (never silently falling back to in-place writes), and two inputs
+/// that would land on the same output file (e.g. `a/hero.jpg` and
+/// `b/hero.jpg` with `-r`) stop the run before anything is written.
+fn jobs_for(common: &CommonOpts, files: &[PathBuf]) -> Result<Vec<(PathBuf, OptimiseOptions)>> {
+    let single = files.len() == 1;
+    if let Some(out) = &common.output {
+        let s = out.to_string_lossy();
+        let wants_dir = !single || s.ends_with('/') || s.ends_with(std::path::MAIN_SEPARATOR);
+        if wants_dir && !xpress_core::template::is_template(&s) {
+            if out.exists() && !out.is_dir() {
+                bail!(
+                    "--output {} is a file; with several inputs it must be a folder (or a template like '%P/optimised/%f.%e')",
+                    out.display()
+                );
+            }
+            std::fs::create_dir_all(out)
+                .with_context(|| format!("creating output folder {}", out.display()))?;
+        }
     }
+    let counter = std::cell::Cell::new(1u64);
+    let jobs: Vec<(PathBuf, OptimiseOptions)> = files
+        .iter()
+        .map(|f| (f.clone(), per_file_options(common, f, &counter, single)))
+        .collect();
+
+    // Case-folded: on macOS and Windows `Hero.jpg` and `hero.jpg` are one file.
+    let mut seen: std::collections::HashMap<String, &Path> = std::collections::HashMap::new();
+    for (src, o) in &jobs {
+        let Some(dest) = &o.output else { continue };
+        let key = dest.to_string_lossy().to_lowercase();
+        if let Some(prev) = seen.insert(key, src) {
+            bail!(
+                "{} and {} would both be written to {}; use an output template such as '%P/optimised/%f.%e' to keep them apart",
+                prev.display(),
+                src.display(),
+                dest.display()
+            );
+        }
+    }
+    Ok(jobs)
 }
 
 /// Build per-file options, resolving an output template/dir (sequential counter).
@@ -491,6 +531,9 @@ fn per_file_options(
     let mut o = common.to_options();
     let mut c = counter.get();
     o.output = resolve_output(&common.output, source, &mut c, single);
+    // A folder or template output is named after the source; an explicit
+    // single file name is used exactly as given.
+    o.output_follows_format = o.output.is_some() && o.output != common.output;
     counter.set(c);
     o
 }
@@ -524,6 +567,26 @@ fn main() {
         eprintln!("{} {e:#}", render::ERROR_X);
         std::process::exit(1);
     }
+    // Scripts and CI must see a failed file, not just read the ❌.
+    if render::failures() > 0 {
+        std::process::exit(1);
+    }
+}
+
+/// [`xpress_core::collect_files`], warning (once) about inputs that don't
+/// exist — a typo must not pass silently — and counting them as failures.
+fn collect_files(items: &[PathBuf], recursive: bool, kinds: &[MediaKind]) -> Vec<PathBuf> {
+    static WARNED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+    for item in items {
+        if !item.exists() {
+            let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+            if !warned.contains(item) {
+                warned.push(item.clone());
+                render::file_error(item, "no such file or folder");
+            }
+        }
+    }
+    xpress_core::collect_files(items, recursive, kinds)
 }
 
 fn run() -> Result<()> {
@@ -639,9 +702,8 @@ fn run_update(check_only: bool) -> Result<()> {
             Ok(())
         }
         Err(e) => {
-            eprintln!("{} automatic update failed: {e:#}", render::WARN);
             eprintln!("    download it manually from {}", info.url);
-            Ok(())
+            Err(e.context("automatic update failed"))
         }
     }
 }
@@ -845,17 +907,7 @@ fn run_optimise(args: OptimiseArgs) -> Result<()> {
         bail!("no optimisable files found");
     }
     let mode = args.common.output_mode();
-    let single = files.len() == 1;
-    let counter = std::cell::Cell::new(1u64);
-    let jobs: Vec<(PathBuf, OptimiseOptions)> = files
-        .iter()
-        .map(|f| {
-            (
-                f.clone(),
-                per_file_options(&args.common, f, &counter, single),
-            )
-        })
-        .collect();
+    let jobs = jobs_for(&args.common, &files)?;
 
     let max_size = args.max_size;
     let adaptive = args.adaptive;
@@ -912,17 +964,7 @@ fn run_downscale(args: DownscaleArgs) -> Result<()> {
     if files.is_empty() {
         bail!("no images or videos found");
     }
-    let single = files.len() == 1;
-    let counter = std::cell::Cell::new(1u64);
-    let jobs: Vec<_> = files
-        .iter()
-        .map(|f| {
-            (
-                f.clone(),
-                per_file_options(&args.common, f, &counter, single),
-            )
-        })
-        .collect();
+    let jobs = jobs_for(&args.common, &files)?;
     let factor = args.factor;
     let results = progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
         xpress_core::scale::downscale_file(f, factor, o)
@@ -942,17 +984,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         && !collect_files(&args.items, args.common.recursive, &[MediaKind::Image]).is_empty();
     if !gif_videos.is_empty() && !gif_images {
         let files = gif_videos;
-        let single = files.len() == 1;
-        let counter = std::cell::Cell::new(1u64);
-        let jobs: Vec<_> = files
-            .iter()
-            .map(|f| {
-                (
-                    f.clone(),
-                    per_file_options(&args.common, f, &counter, single),
-                )
-            })
-            .collect();
+        let jobs = jobs_for(&args.common, &files)?;
         let results =
             progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
                 xpress_core::video::to_gif(f, o, 15, None)
@@ -965,17 +997,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
     if let Some(codec) = xpress_core::video::VideoCodec::from_target(&args.to) {
         let files = collect_files(&args.items, args.common.recursive, &[MediaKind::Video]);
         if !files.is_empty() {
-            let single = files.len() == 1;
-            let counter = std::cell::Cell::new(1u64);
-            let jobs: Vec<_> = files
-                .iter()
-                .map(|f| {
-                    (
-                        f.clone(),
-                        per_file_options(&args.common, f, &counter, single),
-                    )
-                })
-                .collect();
+            let jobs = jobs_for(&args.common, &files)?;
             let hw = args.hw;
             let results =
                 progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
@@ -993,17 +1015,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         if files.is_empty() {
             bail!("no images found");
         }
-        let single = files.len() == 1;
-        let counter = std::cell::Cell::new(1u64);
-        let jobs: Vec<_> = files
-            .iter()
-            .map(|f| {
-                (
-                    f.clone(),
-                    per_file_options(&args.common, f, &counter, single),
-                )
-            })
-            .collect();
+        let jobs = jobs_for(&args.common, &files)?;
         let quality = args.quality;
         let lossless_png = !args.palette;
         let results =
@@ -1022,17 +1034,7 @@ fn run_convert(args: ConvertArgs) -> Result<()> {
         if files.is_empty() {
             bail!("no audio files found");
         }
-        let single = files.len() == 1;
-        let counter = std::cell::Cell::new(1u64);
-        let jobs: Vec<_> = files
-            .iter()
-            .map(|f| {
-                (
-                    f.clone(),
-                    per_file_options(&args.common, f, &counter, single),
-                )
-            })
-            .collect();
+        let jobs = jobs_for(&args.common, &files)?;
         let bitrate = args.bitrate;
         let results =
             progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
@@ -1061,17 +1063,7 @@ fn run_crop(args: CropArgs) -> Result<()> {
     if files.is_empty() {
         bail!("no images or videos found");
     }
-    let single = files.len() == 1;
-    let counter = std::cell::Cell::new(1u64);
-    let jobs: Vec<_> = files
-        .iter()
-        .map(|f| {
-            (
-                f.clone(),
-                per_file_options(&args.common, f, &counter, single),
-            )
-        })
-        .collect();
+    let jobs = jobs_for(&args.common, &files)?;
     let results = progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
         xpress_core::crop::crop_file(f, &spec, o)
     });
@@ -1197,17 +1189,7 @@ fn run_pipeline_run(args: PipelineRunArgs) -> Result<()> {
     if files.is_empty() {
         bail!("no files found");
     }
-    let single = files.len() == 1;
-    let counter = std::cell::Cell::new(1u64);
-    let jobs: Vec<_> = files
-        .iter()
-        .map(|f| {
-            (
-                f.clone(),
-                per_file_options(&args.common, f, &counter, single),
-            )
-        })
-        .collect();
+    let jobs = jobs_for(&args.common, &files)?;
     let results = progress::run_jobs(jobs, args.common.output_mode(), args.common.jobs, |f, o| {
         xpress_core::pipeline::run(f, &steps, o)
     });
@@ -1254,7 +1236,7 @@ fn run_crop_pdf(args: CropPdfArgs) -> Result<()> {
                     out.display()
                 );
             }
-            Err(e) => eprintln!("{} {} {} {e}", render::ERROR_X, f.display(), render::ARROW),
+            Err(e) => render::file_error(f, e),
         }
     }
     println!("\n{n} cropped");
@@ -1278,7 +1260,7 @@ fn run_uncrop_pdf(args: FilesArg) -> Result<()> {
                 n += 1;
                 println!("{} uncropped {}", render::CHECK, f.display());
             }
-            Err(e) => eprintln!("{} {} {} {e}", render::ERROR_X, f.display(), render::ARROW),
+            Err(e) => render::file_error(f, e),
         }
     }
     println!("\n{n} uncropped");
@@ -1291,10 +1273,10 @@ fn run_extract_pages(args: ExtractPagesArgs) -> Result<()> {
         bail!("no PDFs found");
     }
     for f in &files {
-        let out_dir = args
-            .out
-            .clone()
-            .unwrap_or_else(|| f.parent().map(|p| p.to_path_buf()).unwrap_or_default());
+        let out_dir = args.out.clone().unwrap_or_else(|| match f.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from("."),
+        });
         match xpress_core::pdf::extract_pages(f, &out_dir, &args.format, args.dpi) {
             Ok(pages) => println!(
                 "{} {} {} {} page(s)",
@@ -1303,7 +1285,7 @@ fn run_extract_pages(args: ExtractPagesArgs) -> Result<()> {
                 render::ARROW,
                 pages.len()
             ),
-            Err(e) => eprintln!("{} {} {} {e}", render::ERROR_X, f.display(), render::ARROW),
+            Err(e) => render::file_error(f, e),
         }
     }
     Ok(())
@@ -1321,12 +1303,7 @@ fn run_restore(args: FilesArg) -> Result<()> {
                 n += 1;
                 println!("{} restored {}", render::CHECK, original.display());
             }
-            Err(e) => eprintln!(
-                "{} {} {} {e}",
-                render::ERROR_X,
-                original.display(),
-                render::ARROW
-            ),
+            Err(e) => render::file_error(original, e),
         }
     }
     println!("\n{n} restored");
@@ -1345,12 +1322,7 @@ fn run_clean_backups(args: FilesArg) -> Result<()> {
                 n += 1;
                 println!("{} removed {}", render::CHECK, backup.display());
             }
-            Err(e) => eprintln!(
-                "{} {} {} {e}",
-                render::ERROR_X,
-                backup.display(),
-                render::ARROW
-            ),
+            Err(e) => render::file_error(backup, e),
         }
     }
     println!("\n{n} backups deleted");
@@ -1358,18 +1330,38 @@ fn run_clean_backups(args: FilesArg) -> Result<()> {
 }
 
 fn run_strip_exif(args: FilesArg) -> Result<()> {
-    if !tools::is_available(Tool::Exiftool) {
-        bail!("exiftool not found — install it (e.g. `brew install exiftool`)");
-    }
     let files = collect_files(&args.items, args.recursive, &[MediaKind::Image]);
     if files.is_empty() {
         bail!("no images found");
     }
+    let staging = tempfile::tempdir()?;
     for f in &files {
-        tools::copy_exif(f, f, true, &[]);
-        println!("{} stripped metadata from {}", render::CHECK, f.display());
+        let staged = staging.path().join(xpress_core::result::file_name_lossy(f));
+        match strip_exif_one(f, &staged) {
+            Ok(true) => println!("{} stripped metadata from {}", render::CHECK, f.display()),
+            Ok(false) => println!("{} no metadata to strip in {}", render::WARN, f.display()),
+            Err(e) => render::file_error(f, e),
+        }
     }
     Ok(())
+}
+
+/// Remove EXIF/XMP/IPTC/comments from `f` in place without re-encoding it
+/// (the colour profile and orientation stay), keeping its date.
+fn strip_exif_one(f: &Path, staged: &Path) -> Result<bool> {
+    use xpress_core::image::Strip;
+    let mtime = std::fs::metadata(f)?.modified().ok();
+    if !xpress_core::strip::strip_file(f, staged, Strip::All)? {
+        return Ok(false);
+    }
+    xpress_core::result::place_file(staged, f)?;
+    if let Some(t) = mtime {
+        let _ = std::fs::File::options()
+            .write(true)
+            .open(f)?
+            .set_modified(t);
+    }
+    Ok(true)
 }
 
 #[cfg(test)]

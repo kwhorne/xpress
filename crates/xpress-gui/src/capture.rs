@@ -319,7 +319,9 @@ pub fn start(
         .spawn(move || {
             // Only what's copied from now on.
             let mut last = pasteboard::change_count();
-            let since = SystemTime::now();
+            // Screenshots count from when recording them is (last) turned
+            // on — never older ones lying in the folder.
+            let mut since = SystemTime::now();
             let shots_dir = screenshot_dir();
             let mut seen = HashSet::new();
             let mut last_prune: Option<Instant> = None;
@@ -330,6 +332,7 @@ pub fn start(
                 let count = pasteboard::change_count();
                 if !flags.enabled.load(Ordering::Relaxed) {
                     last = count;
+                    since = SystemTime::now();
                     continue;
                 }
                 let mut dirty = false;
@@ -347,9 +350,9 @@ pub fn start(
                     }
                 }
 
-                if tick.is_multiple_of(SCREENSHOT_EVERY)
-                    && flags.screenshots.load(Ordering::Relaxed)
-                {
+                if !flags.screenshots.load(Ordering::Relaxed) {
+                    since = SystemTime::now();
+                } else if tick.is_multiple_of(SCREENSHOT_EVERY) {
                     for path in new_screenshots(&shots_dir, since, &mut seen) {
                         if let Ok(clip) = NewClip::screenshot(&path) {
                             dirty |= flags.record(&history, clip);

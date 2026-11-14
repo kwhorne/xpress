@@ -2,7 +2,8 @@
 name = "xpress-gui"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+# egui/eframe 0.36 need a newer compiler than the engine and the CLI.
+rust-version = "1.95"
 license.workspace = true
 description = "Desktop GUI for xpress — floating results, drag-and-drop, global hotkeys"
 
@@ -22,10 +23,11 @@ rfd = "0.15"
 tray-icon = "0.19"
 serde.workspace = true
 serde_json.workspace = true
+# Self-update staging folder.
+tempfile.workspace = true
 
 [dev-dependencies]
 egui_kittest = "0.36"
-tempfile.workspace = true
 
 # Wayland compositors with the data-control protocol (X11 works without it).
 [target.'cfg(target_os = "linux")'.dependencies]

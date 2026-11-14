@@ -11,7 +11,7 @@
 #
 #   A) Apple ID + app-specific password:
 #        APPLE_ID=you@example.com
-#        APPLE_TEAM_ID=7G383N3VY7
+#        APPLE_TEAM_ID=52AT44QFCM
 #        APPLE_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx   # app-specific password
 #
 #   B) App Store Connect API key:
@@ -38,6 +38,9 @@ cred=()
 if [[ -n "${ASC_KEY_ID:-}" && -n "${ASC_ISSUER_ID:-}" && -n "${ASC_KEY_PATH:-}" ]]; then
   cred=(--key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
 elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
+  # Note: notarytool takes the password only as an argument (or a prompt on
+  # a terminal), so it is visible to other processes on this machine while
+  # it runs. Prefer the API key (B) on shared machines.
   cred=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD")
 else
   echo "no notarisation credentials set (see the header of this script)" >&2
@@ -47,14 +50,31 @@ fi
 # notarytool needs a zip for a .app; a .dmg can be submitted directly.
 submit="$target"
 cleanup=""
+# Remove the temporary zip on every exit, failed submissions included.
+trap '[[ -n "$cleanup" ]] && rm -f "$cleanup"; true' EXIT
 if [[ "$target" == *.app ]]; then
   submit="$(dirname "$target")/$(basename "$target" .app)-notarize.zip"
-  ditto -c -k --keepParent "$target" "$submit"
   cleanup="$submit"
+  ditto -c -k --keepParent "$target" "$submit"
 fi
 
 echo "==> Submitting $submit to the notary service…"
-xcrun notarytool submit "$submit" "${cred[@]}" --wait
+# `submit --wait` exits 0 whatever the verdict, so read the status it prints.
+out="$(xcrun notarytool submit "$submit" "${cred[@]}" --wait 2>&1)" || {
+  echo "$out"
+  echo "notarytool submit failed" >&2
+  exit 1
+}
+echo "$out"
+id="$(printf '%s\n' "$out" | awk '/^ *id: /{print $2; exit}')"
+status="$(printf '%s\n' "$out" | awk '/^ *status: /{print $2}' | tail -1)"
+if [[ "$status" != "Accepted" ]]; then
+  echo "==> Notarisation ${status:-failed} — Apple's log for $id:" >&2
+  if [[ -n "$id" ]]; then
+    xcrun notarytool log "$id" "${cred[@]}" >&2 || true
+  fi
+  exit 1
+fi
 
 if [[ "$target" == *.zip ]]; then
   echo "==> Notarised ✓ (a zip can't be stapled; Gatekeeper checks online)"
@@ -65,4 +85,3 @@ echo "==> Stapling ticket to $target"
 xcrun stapler staple "$target"
 xcrun stapler validate "$target" && echo "==> Notarised and stapled ✓"
 
-[[ -n "$cleanup" ]] && rm -f "$cleanup" || true

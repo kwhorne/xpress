@@ -13,7 +13,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/dist/xpress.app"
 OUT="$ROOT/dist/xpress.dmg"
-VERSION="0.1.0"
+# The workspace version (Cargo.toml), unless --version says otherwise.
+VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

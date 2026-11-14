@@ -19,16 +19,9 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Ffmpeg,
-    Ffprobe,
-    Pngquant,
-    Jpegoptim,
-    JpegoptimOld,
     Gifsicle,
     Gifski,
-    Vips,
-    Vipsthumbnail,
     Ghostscript,
-    Cwebp,
     HeifEnc,
     Cjxl,
     Exiftool,
@@ -40,16 +33,9 @@ impl Tool {
     pub fn binary_name(&self) -> &'static str {
         match self {
             Tool::Ffmpeg => "ffmpeg",
-            Tool::Ffprobe => "ffprobe",
-            Tool::Pngquant => "pngquant",
-            Tool::Jpegoptim => "jpegoptim",
-            Tool::JpegoptimOld => "jpegoptim-old",
             Tool::Gifsicle => "gifsicle",
             Tool::Gifski => "gifski",
-            Tool::Vips => "vips",
-            Tool::Vipsthumbnail => "vipsthumbnail",
             Tool::Ghostscript => "gs",
-            Tool::Cwebp => "cwebp",
             Tool::HeifEnc => "heif-enc",
             Tool::Cjxl => "cjxl",
             Tool::Exiftool => "exiftool",
@@ -86,6 +72,11 @@ static TIMEOUT_SECS: AtomicU64 = AtomicU64::new(0);
 /// `None` (or a zero duration) to disable.
 pub fn set_timeout(timeout: Option<Duration>) {
     TIMEOUT_SECS.store(timeout.map(|d| d.as_secs()).unwrap_or(0), Ordering::Relaxed);
+}
+
+/// The timeout set with [`set_timeout`], if any.
+pub fn timeout() -> Option<Duration> {
+    current_timeout()
 }
 
 fn current_timeout() -> Option<Duration> {
@@ -151,14 +142,35 @@ fn bin_dirs() -> Vec<PathBuf> {
 /// Resolve the absolute path to a tool.
 pub fn resolve(tool: Tool) -> Result<PathBuf, ToolError> {
     let name = tool.binary_name();
+    // Ghostscript's console binary is `gswin64c` (or `gswin32c`) on Windows.
+    let names: &[&str] = match tool {
+        Tool::Ghostscript if cfg!(windows) => &["gswin64c", "gswin32c", "gs"],
+        _ => std::slice::from_ref(&name),
+    };
     for dir in bin_dirs() {
-        // `ffmpeg.exe` on Windows.
-        let candidate = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-        if candidate.is_file() {
-            return Ok(candidate);
+        for n in names {
+            // `ffmpeg.exe` on Windows.
+            let candidate = dir.join(format!("{n}{}", std::env::consts::EXE_SUFFIX));
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
         }
     }
-    which::which(name).map_err(|_| ToolError::NotFound(name))
+    names
+        .iter()
+        .find_map(|n| which::which(n).ok())
+        .ok_or(ToolError::NotFound(name))
+}
+
+/// A file path as an argument for an external tool, made absolute so it can
+/// never be read as an option (`-photo.jpg`), an exiftool argfile (`@list`)
+/// or an ffmpeg protocol (`concat:a.mp4`, `http:x`): it always starts with
+/// `/` (or a drive letter on Windows).
+pub fn arg(path: &Path) -> String {
+    std::path::absolute(path)
+        .unwrap_or_else(|_| Path::new(".").join(path))
+        .display()
+        .to_string()
 }
 
 /// Whether a tool is available without erroring.
@@ -177,6 +189,12 @@ pub fn is_arm64() -> bool {
     cfg!(target_arch = "aarch64")
 }
 
+/// Whether ffmpeg's VideoToolbox (Apple silicon hardware) encoders apply:
+/// macOS on arm64 only — not Linux or Windows on ARM.
+pub fn has_videotoolbox() -> bool {
+    cfg!(all(target_os = "macos", target_arch = "aarch64"))
+}
+
 /// Run a tool to completion, capturing stdout/stderr. Errors on non-zero exit.
 /// Honours the timeout set via [`set_timeout`], killing the process if exceeded.
 pub fn run<I, S>(tool: Tool, args: I) -> Result<Output, ToolError>
@@ -184,10 +202,23 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
+    run_in(tool, args, None)
+}
+
+/// [`run`] with the working directory set to `dir` (when given).
+pub fn run_in<I, S>(tool: Tool, args: I, dir: Option<&Path>) -> Result<Output, ToolError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
     let path = resolve(tool)?;
     let name = tool.binary_name();
 
-    let mut child = Command::new(&path)
+    let mut cmd = Command::new(&path);
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    let mut child = cmd
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -274,28 +305,16 @@ where
     Err(last_err.unwrap())
 }
 
-/// Copy EXIF metadata from `src` to `dst` using exiftool, optionally stripping
-/// all metadata first. Best-effort: a missing exiftool is not fatal.
-pub fn copy_exif(src: &Path, dst: &Path, strip_metadata: bool, exclude_tags: &[&str]) {
-    if !is_available(Tool::Exiftool) {
-        return;
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_arguments_never_look_like_options() {
+        for p in ["-rf.png", "@list", "concat:a.mp4", "plain.jpg"] {
+            let a = arg(Path::new(p));
+            assert!(Path::new(&a).is_absolute(), "{a}");
+            assert!(a.ends_with(p), "{a}");
+        }
     }
-    let mut args: Vec<String> = vec![
-        "-overwrite_original".into(),
-        "-TagsFromFile".into(),
-        src.display().to_string(),
-    ];
-    if strip_metadata {
-        // Keep only orientation/colour-critical tags when stripping.
-        args.push("-all=".into());
-        args.push("-icc_profile".into());
-        args.push("-Orientation".into());
-    } else {
-        args.push("-all:all".into());
-    }
-    for tag in exclude_tags {
-        args.push(format!("--{tag}"));
-    }
-    args.push(dst.display().to_string());
-    let _ = run(Tool::Exiftool, &args);
 }

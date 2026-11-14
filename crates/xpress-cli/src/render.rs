@@ -1,6 +1,7 @@
 //! Terminal output helpers (status icons + savings summary).
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use xpress_core::result::{OptimisationResult, OptimiseError};
 use xpress_core::tools::{self, Tool};
@@ -9,6 +10,25 @@ pub const CHECK: &str = "\u{2705}"; // ✅
 pub const ERROR_X: &str = "\u{274C}"; // ❌
 pub const WARN: &str = "\u{26A0}\u{FE0F}"; // ⚠️
 pub const ARROW: &str = "\u{2192}"; // →
+
+/// Files that failed in this run; any makes `xpress` exit with status 1.
+static FAILURES: AtomicUsize = AtomicUsize::new(0);
+
+/// Record `n` failed files (for the exit status).
+pub fn note_failures(n: usize) {
+    FAILURES.fetch_add(n, Ordering::Relaxed);
+}
+
+/// How many files failed in this run.
+pub fn failures() -> usize {
+    FAILURES.load(Ordering::Relaxed)
+}
+
+/// Print a per-file error and count it as a failure.
+pub fn file_error(path: &std::path::Path, e: impl std::fmt::Display) {
+    note_failures(1);
+    eprintln!("{ERROR_X} {} {ARROW} {e}", path.display());
+}
 
 pub fn human_size(bytes: u64) -> String {
     xpress_core::result::human_size(bytes)
@@ -34,6 +54,7 @@ fn kind_str(kind: xpress_core::filetype::MediaKind) -> &'static str {
 
 /// Emit results as a JSON array (one object per file).
 fn summarise_json(results: &[(PathBuf, Result<OptimisationResult, OptimiseError>)]) {
+    note_failures(results.iter().filter(|(_, r)| r.is_err()).count());
     let items: Vec<serde_json::Value> = results
         .iter()
         .map(|(path, res)| match res {
@@ -152,6 +173,7 @@ pub fn summarise(
     } else {
         String::new()
     };
+    note_failures(failed);
     println!(
         "\n{ok} optimised{skipped}, {failed} failed — saved {} ({:.0}%)",
         human_size(saved),

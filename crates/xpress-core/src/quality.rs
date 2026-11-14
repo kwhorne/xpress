@@ -60,22 +60,63 @@ fn over(img: &DynamicImage, bg: u8) -> image::RgbImage {
     })
 }
 
+fn linear(img: &image::RgbImage) -> Option<ssimulacra2::LinearRgb> {
+    ssimulacra2::LinearRgb::try_from(to_ssim_rgb(img)?).ok()
+}
+
+/// A reference image converted for SSIMULACRA2 once, then scored against
+/// many candidates (the quality search tries up to nine): no re-conversion
+/// (or re-compositing over black and white) of the original per try.
+pub struct Reference {
+    size: (u32, u32),
+    /// Opaque: the image itself (also what it looks like over any background).
+    /// Transparent: over black, and over white.
+    over: Vec<ssimulacra2::LinearRgb>,
+    alpha: bool,
+}
+
+impl Reference {
+    pub fn new(reference: &DynamicImage) -> Option<Reference> {
+        let alpha = reference.color().has_alpha();
+        let over = if alpha {
+            vec![linear(&over(reference, 0))?, linear(&over(reference, 255))?]
+        } else {
+            vec![linear(&reference.to_rgb8())?]
+        };
+        Some(Reference {
+            size: (reference.width(), reference.height()),
+            over,
+            alpha,
+        })
+    }
+
+    /// SSIMULACRA2 score of `candidate` (same dimensions). Transparent images
+    /// are judged over both black and white; the worse counts.
+    pub fn score(&self, candidate: &DynamicImage) -> Option<f64> {
+        if self.size != (candidate.width(), candidate.height()) {
+            return None;
+        }
+        let one = |reference: &ssimulacra2::LinearRgb, candidate: &image::RgbImage| {
+            ssimulacra2::compute_frame_ssimulacra2(reference.clone(), linear(candidate)?).ok()
+        };
+        if self.alpha || candidate.color().has_alpha() {
+            let mut worst = f64::INFINITY;
+            for (i, bg) in [0u8, 255].into_iter().enumerate() {
+                // An opaque reference looks the same over either background.
+                let reference = &self.over[i.min(self.over.len() - 1)];
+                worst = worst.min(one(reference, &over(candidate, bg))?);
+            }
+            Some(worst)
+        } else {
+            one(&self.over[0], &candidate.to_rgb8())
+        }
+    }
+}
+
 /// SSIMULACRA2 score of `candidate` against `reference` (same dimensions).
 /// Transparent images are judged over both black and white; the worse counts.
 pub fn score(reference: &DynamicImage, candidate: &DynamicImage) -> Option<f64> {
-    if (reference.width(), reference.height()) != (candidate.width(), candidate.height()) {
-        return None;
-    }
-    let one = |a: image::RgbImage, b: image::RgbImage| {
-        ssimulacra2::compute_frame_ssimulacra2(to_ssim_rgb(&a)?, to_ssim_rgb(&b)?).ok()
-    };
-    if reference.color().has_alpha() || candidate.color().has_alpha() {
-        let black = one(over(reference, 0), over(candidate, 0))?;
-        let white = one(over(reference, 255), over(candidate, 255))?;
-        Some(black.min(white))
-    } else {
-        one(reference.to_rgb8(), candidate.to_rgb8())
-    }
+    Reference::new(reference)?.score(candidate)
 }
 
 /// Binary-search the compression factor for the strongest compression whose
@@ -89,11 +130,15 @@ fn search(
     ext: &str,
     encode: impl Fn(i32, &Path) -> Result<(), OptimiseError>,
 ) -> Result<Option<(PathBuf, f64)>, OptimiseError> {
+    let Some(prepared) = Reference::new(reference) else {
+        return Ok(None);
+    };
     let probe = |factor: i32| -> Result<Option<(PathBuf, f64)>, OptimiseError> {
         let out = tmp.join(format!("q{factor}.{ext}"));
         encode(factor, &out)?;
         let decoded = ximage::open_oriented(&out)?;
-        Ok(score(reference, &decoded)
+        Ok(prepared
+            .score(&decoded)
             .filter(|s| *s >= target)
             .map(|s| (out, s)))
     };
@@ -135,6 +180,7 @@ fn staged(base: &OptimiseOptions, factor: i32, out: &Path) -> OptimiseOptions {
     OptimiseOptions {
         compression: CompressionQuality::factor(factor),
         output: Some(out.to_path_buf()),
+        output_follows_format: false,
         backup: false,
         allow_larger: true,
         preserve_dates: false,

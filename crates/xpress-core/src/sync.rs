@@ -183,9 +183,10 @@ pub fn sync_with(
 
     let mut report = Report::default();
     if snapshot || log_files(&own)?.is_empty() || needs_compaction(&own)? {
-        compact(history, root, &own)?;
+        compact(history, root, &own, &device)?;
     }
-    report.sent = flush(history, root, &own)?;
+    report.sent = flush(history, root, &own, &device)?;
+    remove_deleted_blobs(history, root);
 
     for entry in fs::read_dir(root.join("devices"))?.flatten() {
         let dir = entry.path();
@@ -339,21 +340,73 @@ fn blobs_for<'a>(
 
 /// Copy images to the shared blobs, once each — without holding the history
 /// lock, since a first sync can copy a lot.
-fn share_blobs(root: &Path, blobs: &[Blob]) -> std::io::Result<()> {
+fn share_blobs(root: &Path, device: &str, blobs: &[Blob]) -> std::io::Result<()> {
     for (name, src) in blobs {
         let blob = root.join("blobs").join(name);
         if blob.exists() || !src.exists() {
             continue;
         }
-        let tmp = blob.with_extension("part");
+        // Per device: two Macs sharing the same image never write one file.
+        let tmp = root.join("blobs").join(format!("{name}.{device}.part"));
         fs::copy(src, &tmp)?;
         fs::rename(tmp, blob)?;
     }
     Ok(())
 }
 
+/// How long a `.part` file may sit in `blobs/` before it counts as left
+/// behind by an interrupted copy.
+const STALE_PART: Duration = Duration::from_secs(24 * 60 * 60);
+
+/// Delete shared images whose clip was deleted (a tombstone, no clip left
+/// here), so they don't stay in iCloud Drive forever — and copies left half
+/// done. Best effort: a failure only means the file stays until next time.
+fn remove_deleted_blobs(history: &Mutex<History>, root: &Path) {
+    let Ok(entries) = fs::read_dir(root.join("blobs")) else {
+        return;
+    };
+    let mut candidates = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.ends_with(".part") {
+            let old = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > STALE_PART);
+            if old {
+                let _ = fs::remove_file(&path);
+            }
+            continue;
+        }
+        if let Some((hash, _)) = name.split_once('.') {
+            candidates.push((hash.to_string(), path));
+        }
+    }
+    let deleted: Vec<PathBuf> = {
+        let h = history.lock().unwrap();
+        candidates
+            .into_iter()
+            .filter(|(hash, _)| {
+                h.tombstone(hash).ok().flatten().is_some() && h.id_of(hash).ok().flatten().is_none()
+            })
+            .map(|(_, path)| path)
+            .collect()
+    };
+    for path in deleted {
+        let _ = fs::remove_file(path);
+    }
+}
+
 /// Write the outbox to this Mac's log.
-fn flush(history: &Mutex<History>, root: &Path, own: &Path) -> std::io::Result<usize> {
+fn flush(
+    history: &Mutex<History>,
+    root: &Path,
+    own: &Path,
+    device: &str,
+) -> std::io::Result<usize> {
     let (pending, blobs) = {
         let h = history.lock().unwrap();
         let pending = h.outbox().map_err(io)?;
@@ -367,7 +420,7 @@ fn flush(history: &Mutex<History>, root: &Path, own: &Path) -> std::io::Result<u
     if pending.is_empty() {
         return Ok(0);
     }
-    share_blobs(root, &blobs)?;
+    share_blobs(root, device, &blobs)?;
     let lines: Vec<String> = pending.iter().map(|(_, json)| json.clone()).collect();
     append(own, &lines)?;
     // Only what was written; newer changes go next time.
@@ -380,16 +433,17 @@ fn flush(history: &Mutex<History>, root: &Path, own: &Path) -> std::io::Result<u
 }
 
 /// Replace this Mac's logs with one snapshot of everything.
-fn compact(history: &Mutex<History>, root: &Path, own: &Path) -> std::io::Result<()> {
-    let (ops, blobs) = {
+fn compact(history: &Mutex<History>, root: &Path, own: &Path, device: &str) -> std::io::Result<()> {
+    let (ops, blobs, covered) = {
         let h = history.lock().unwrap();
         let ops = h.snapshot().map_err(io)?;
         let blobs = blobs_for(&h, ops.iter())?;
-        // The snapshot covers what's waiting too.
-        h.clear_outbox(i64::MAX).map_err(io)?;
-        (ops, blobs)
+        // The snapshot covers what's waiting up to now; it is cleared only
+        // once the snapshot is safely written (below).
+        let covered = h.outbox().map_err(io)?.last().map_or(0, |(id, _)| *id);
+        (ops, blobs, covered)
     };
-    share_blobs(root, &blobs)?;
+    share_blobs(root, device, &blobs)?;
     let old = log_files(own)?;
     let next = old.last().map_or(1, |l| log_number(l) + 1);
     let lines: Vec<String> = ops
@@ -398,6 +452,7 @@ fn compact(history: &Mutex<History>, root: &Path, own: &Path) -> std::io::Result
         .collect::<std::io::Result<_>>()?;
     let first = log_path(own, next);
     append_from(own, &first, &lines)?;
+    history.lock().unwrap().clear_outbox(covered).map_err(io)?;
     for file in old {
         let _ = fs::remove_file(file);
     }
@@ -1084,6 +1139,28 @@ mod tests {
     }
 
     #[test]
+    fn deleted_images_leave_the_shared_folder() {
+        let cloud = tempfile::tempdir().unwrap();
+        let blobs = || -> Vec<String> {
+            fs::read_dir(cloud.path().join("blobs"))
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect()
+        };
+        let a = mac();
+        a.sync(cloud.path());
+        let img = a.h().add(NewClip::image_png(png(3))).unwrap().id;
+        a.sync(cloud.path());
+        assert_eq!(blobs().len(), 1, "shared: {:?}", blobs());
+        assert!(blobs().iter().all(|n| !n.ends_with(".part")));
+
+        a.h().delete(img).unwrap();
+        a.sync(cloud.path());
+        assert!(blobs().is_empty(), "left behind: {:?}", blobs());
+    }
+
+    #[test]
     fn the_same_copy_on_two_macs_is_one_clip() {
         let cloud = tempfile::tempdir().unwrap();
         let (a, b) = (mac(), mac());
@@ -1243,7 +1320,8 @@ mod tests {
 
         let b = mac();
         b.sync(cloud.path());
-        compact(&a.history, cloud.path(), &own).unwrap();
+        let device = a.h().device_id().unwrap();
+        compact(&a.history, cloud.path(), &own, &device).unwrap();
         let files = log_files(&own).unwrap();
         assert!(files.iter().all(|f| log_number(f) > 2), "old logs replaced");
 

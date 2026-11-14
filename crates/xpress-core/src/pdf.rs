@@ -128,7 +128,8 @@ pub fn extract_pages(
         _ => ("png16m", "png"),
     };
     let stem = crate::result::file_stem_lossy(path);
-    let pattern = out_dir.join(format!("{stem}-%03d.{ext}"));
+    // `%` is Ghostscript's page-number placeholder: a literal one is `%%`.
+    let pattern = out_dir.join(format!("{}-%03d.{ext}", stem.replace('%', "%%")));
     tools::run(
         Tool::Ghostscript,
         [
@@ -139,12 +140,23 @@ pub fn extract_pages(
             &format!("-sDEVICE={device}"),
             &format!("-r{}", dpi.clamp(36, 600)),
             &format!("-sOutputFile={}", pattern.display()),
-            &path.display().to_string(),
+            // `-f`: the next argument is a file, even if it starts with `-`.
+            "-f",
+            &tools::arg(path),
         ],
     )?;
+    // Only this PDF's pages (`<stem>-001.png`, …), not whatever else is there.
+    let is_page = |p: &Path| {
+        p.file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.strip_prefix(stem.as_str()))
+            .and_then(|s| s.strip_prefix('-'))
+            .is_some_and(|n| n.len() >= 3 && n.bytes().all(|b| b.is_ascii_digit()))
+            && p.extension().and_then(|e| e.to_str()) == Some(ext)
+    };
     let mut out: Vec<_> = std::fs::read_dir(out_dir)?
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some(ext))
+        .filter(|p| is_page(p))
         .collect();
     out.sort();
     Ok(out)
@@ -411,6 +423,22 @@ pub fn optimise(
         stream.set_content(buf);
     }
 
+    // Document info (author, title, producer, dates) and XMP packets — on the
+    // catalog, pages and images alike.
+    let mut removed_metadata = false;
+    if options.strip_metadata {
+        removed_metadata |= doc.trailer.remove(b"Info").is_some();
+        for obj in doc.objects.values_mut() {
+            let dict = match obj {
+                lopdf::Object::Dictionary(d) => d,
+                lopdf::Object::Stream(s) => &mut s.dict,
+                _ => continue,
+            };
+            removed_metadata |= dict.remove(b"Metadata").is_some();
+            removed_metadata |= dict.remove(b"PieceInfo").is_some();
+        }
+    }
+
     // Lossless structural gains: drop orphans and Flate-compress plain streams.
     let _ = doc.prune_objects();
     doc.compress();
@@ -429,7 +457,9 @@ pub fn optimise(
         cq.image_is_aggressive(),
         options,
         Placement {
-            size_guard: true,
+            // Removing metadata was asked for: never keep the original for
+            // want of a smaller file.
+            size_guard: !removed_metadata,
             backup: true,
             replace_source: false,
         },

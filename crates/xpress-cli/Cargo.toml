@@ -29,7 +29,9 @@ ctrlc = "3"
 
 [target.'cfg(windows)'.dependencies]
 # Release archives for Windows are .zip (for `xpress update`).
-zip = { version = "2", default-features = false, features = ["deflate"] }
+# Deflate through flate2, whose default (pure-Rust) backend the direct
+# `flate2` dependency above enables.
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

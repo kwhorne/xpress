@@ -35,10 +35,12 @@ pub fn expand(template: &str, source: &Path, counter: &mut u64) -> PathBuf {
         .extension()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let parent = source
-        .parent()
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_default();
+    // A bare `photo.png` has the parent "": that's the current folder, not
+    // the root (`%P/out` must not become `/out`).
+    let parent = match source.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.to_string_lossy().into_owned(),
+        _ => ".".to_string(),
+    };
 
     let (y, mo, d, h, mi, s) = local_datetime_parts();
 
@@ -133,6 +135,13 @@ mod tests {
         let mut c = 1;
         let out = expand("%f-thumb.%e", Path::new("/a/b/photo.png"), &mut c);
         assert_eq!(out, PathBuf::from("photo-thumb.png"));
+    }
+
+    #[test]
+    fn bare_file_name_has_the_current_folder_as_parent() {
+        let mut c = 1;
+        let out = expand("%P/optimised/%f.%e", Path::new("photo.png"), &mut c);
+        assert_eq!(out, PathBuf::from("./optimised/photo.png"));
     }
 
     #[test]

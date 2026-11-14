@@ -203,12 +203,12 @@ pub fn normalize(src: &Path, dst: &Path, lufs: f64) -> Result<(), OptimiseError>
         [
             "-y",
             "-i",
-            &src.display().to_string(),
+            &tools::arg(src),
             "-af",
             &filter,
             "-hide_banner",
             "-nostats",
-            &dst.display().to_string(),
+            &tools::arg(dst),
         ],
     )?;
     Ok(())
@@ -257,9 +257,10 @@ pub fn optimise(
     ));
 
     let encode = |codec_args: Vec<String>| {
-        let mut args: Vec<String> = vec!["-y".into(), "-i".into(), path.display().to_string()];
+        let mut args: Vec<String> = vec!["-y".into(), "-i".into(), tools::arg(path)];
         args.extend(codec_args);
-        args.push(temp_out.display().to_string());
+        args.extend(crate::video::metadata_args(options));
+        args.push(tools::arg(&temp_out));
         tools::run(Tool::Ffmpeg, &args)
     };
     // An explicit bitrate (a size budget, `lowerBitrate`) is honoured as a
@@ -295,6 +296,36 @@ pub fn optimise(
     // place, e.g. `.oga` -> `.ogg`. A conversion to another format is written
     // alongside, keeping the source, like image and video conversion.
     let converting = format != AudioFormat::SameAsInput.resolved(&input_ext);
+
+    // Not smaller, so the size guard would keep the original with all its
+    // tags: when removing metadata was asked for, remux it without them.
+    let new_size = file_size(&temp_out);
+    if !converting
+        && crate::video::strips(options)
+        && !options.allow_larger
+        && (new_size == 0 || new_size >= old_size)
+    {
+        let stripped = tmp.path().join(format!(
+            "stripped-{}",
+            crate::result::file_name_lossy(path).to_string_lossy()
+        ));
+        crate::video::remux_stripped(path, &stripped, options)?;
+        return finish(
+            MediaKind::Audio,
+            path,
+            &stripped,
+            path.to_path_buf(),
+            old_size,
+            aggressive,
+            options,
+            Placement {
+                size_guard: false,
+                backup: true,
+                replace_source: false,
+            },
+        );
+    }
+
     finish(
         MediaKind::Audio,
         path,

@@ -378,7 +378,13 @@ fn write_webp(
 /// Rewrite a WebP file's metadata: drop any existing `ICCP`/`EXIF`/`XMP `
 /// chunks and add the ones in `meta`, with a `VP8X` header whose flags match.
 /// Returns `None` (keep the input) when it isn't a WebP we understand.
-fn webp_with_meta(webp: &[u8], meta: &Meta, w: u32, h: u32, alpha: bool) -> Option<Vec<u8>> {
+pub(crate) fn webp_with_meta(
+    webp: &[u8],
+    meta: &Meta,
+    w: u32,
+    h: u32,
+    alpha: bool,
+) -> Option<Vec<u8>> {
     if webp.len() < 12 || &webp[0..4] != b"RIFF" || &webp[8..12] != b"WEBP" {
         return None;
     }
@@ -395,6 +401,8 @@ fn webp_with_meta(webp: &[u8], meta: &Meta, w: u32, h: u32, alpha: bool) -> Opti
             return None;
         }
         match fourcc {
+            // VP8X is always 10 bytes; anything else isn't a WebP we understand.
+            b"VP8X" if size != 10 => return None,
             b"VP8X" => vp8x = Some(webp[pos + 8..end].to_vec()),
             b"ICCP" | b"EXIF" | b"XMP " => {}
             _ => {
@@ -414,8 +422,8 @@ fn webp_with_meta(webp: &[u8], meta: &Meta, w: u32, h: u32, alpha: bool) -> Opti
     const XMP_FLAG: u8 = 0x04;
     let mut header = vp8x.unwrap_or_else(|| {
         let mut v = vec![0u8; 10];
-        v[4..7].copy_from_slice(&(w - 1).to_le_bytes()[..3]);
-        v[7..10].copy_from_slice(&(h - 1).to_le_bytes()[..3]);
+        v[4..7].copy_from_slice(&w.saturating_sub(1).to_le_bytes()[..3]);
+        v[7..10].copy_from_slice(&h.saturating_sub(1).to_le_bytes()[..3]);
         v
     });
     header[0] &= !(ICC_FLAG | EXIF_FLAG | XMP_FLAG);
@@ -600,6 +608,14 @@ pub fn optimise(
             #[cfg(target_os = "macos")]
             {
                 heic_encode(path, &temp_out, cq)?;
+                // `sips` carries all metadata (GPS included) over.
+                let stripped = tmp.path().join(format!(
+                    "stripped-{}",
+                    file_name_lossy(path).to_string_lossy()
+                ));
+                if crate::strip::strip_file(&temp_out, &stripped, strip)? {
+                    std::fs::rename(&stripped, &temp_out)?;
+                }
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -769,8 +785,8 @@ fn optimise_animated(
     if ext == "gif" && tools::is_available(Tool::Gifsicle) {
         let mut args = cq.gifsicle_args();
         args.push("-o".into());
-        args.push(out.display().to_string());
-        args.push(src.display().to_string());
+        args.push(tools::arg(out));
+        args.push(tools::arg(src));
         tools::run(Tool::Gifsicle, &args)?;
     } else {
         std::fs::copy(src, out)?;
@@ -786,6 +802,33 @@ fn finalise(
     cq: CompressionQuality,
     options: &OptimiseOptions,
 ) -> Result<OptimisationResult, OptimiseError> {
+    // Not smaller, so the size guard would keep the original — metadata and
+    // all. When removing metadata was asked for, take it out of the original
+    // without re-encoding instead.
+    let strip = Strip::from_options(options);
+    let new_size = file_size(temp_out);
+    if strip != Strip::Keep && !options.allow_larger && (new_size == 0 || new_size >= old_size) {
+        let stripped = temp_out.with_file_name(format!(
+            "stripped-{}",
+            file_name_lossy(src).to_string_lossy()
+        ));
+        if crate::strip::strip_file(src, &stripped, strip)? {
+            return finish(
+                MediaKind::Image,
+                src,
+                &stripped,
+                src.to_path_buf(),
+                old_size,
+                cq.image_is_aggressive(),
+                options,
+                Placement {
+                    size_guard: false,
+                    backup: true,
+                    replace_source: false,
+                },
+            );
+        }
+    }
     finish(
         MediaKind::Image,
         src,
@@ -815,6 +858,7 @@ pub(crate) fn finish_transformed(
     let optimised = tmp.path().join(file_name_lossy(transformed));
     let staged_opts = OptimiseOptions {
         output: Some(optimised),
+        output_follows_format: false,
         backup: false,
         allow_larger: true,
         preserve_dates: false,
@@ -841,24 +885,11 @@ pub(crate) fn finish_transformed(
 // Adaptive
 // ---------------------------------------------------------------------------
 
-/// Cheap transparency check: reads the PNG IHDR colour-type byte (6 = RGBA,
-/// 4 = gray+alpha). Non-PNG inputs conservatively report no alpha.
+/// Whether the image has an alpha channel (from its header; not decoded).
 pub fn has_alpha(path: &Path) -> bool {
-    let Some(ext) = extension_lower(path) else {
-        return false;
-    };
-    if ext != "png" {
-        return false;
-    }
-    use std::io::Read;
-    let Ok(mut f) = std::fs::File::open(path) else {
-        return false;
-    };
-    let mut header = [0u8; 26];
-    if f.read_exact(&mut header).is_err() {
-        return false;
-    }
-    matches!(header[25], 4 | 6)
+    // The decoder reports alpha for RGBA/grey+alpha PNGs, paletted PNGs with
+    // a tRNS chunk, and transparent WebP/AVIF/GIF/TIFF alike (header only).
+    open_decoder(path).is_ok_and(|d| d.color_type().has_alpha())
 }
 
 /// Adaptively optimise an image: try the in-format optimisation plus JPEG and
@@ -878,6 +909,7 @@ pub fn optimise_adaptive(
     let c_same = tmp.path().join(format!("c0_same.{src_ext}"));
     let same_opts = OptimiseOptions {
         output: Some(c_same.clone()),
+        output_follows_format: false,
         backup: false,
         allow_larger: true,
         ..options.clone()
@@ -897,6 +929,7 @@ pub fn optimise_adaptive(
         let c = tmp.path().join(format!("c{}.{}", i + 1, fmt.extension()));
         let opts = OptimiseOptions {
             output: Some(c.clone()),
+            output_follows_format: false,
             backup: false,
             allow_larger: true,
             ..options.clone()
@@ -1066,10 +1099,10 @@ fn readable_source(path: &Path, tmp: &TempDir) -> Result<PathBuf, OptimiseError>
                 "-y",
                 "-hide_banner",
                 "-i",
-                &path.display().to_string(),
+                &tools::arg(path),
                 "-frames:v",
                 "1",
-                &out.display().to_string(),
+                &tools::arg(&out),
             ],
         )?;
         return Ok(out);
@@ -1114,9 +1147,9 @@ fn heic_decode(src: &Path, out: &Path) -> Result<(), OptimiseError> {
         "-s".into(),
         "format".into(),
         "png".into(),
-        src.display().to_string(),
+        tools::arg(src),
         "--out".into(),
-        out.display().to_string(),
+        tools::arg(out),
     ])
 }
 
@@ -1130,9 +1163,9 @@ fn heic_encode(src: &Path, out: &Path, cq: CompressionQuality) -> Result<(), Opt
         "-s".into(),
         "formatOptions".into(),
         cq.conversion_quality().to_string(),
-        src.display().to_string(),
+        tools::arg(src),
         "--out".into(),
-        out.display().to_string(),
+        tools::arg(out),
     ])
 }
 
@@ -1218,8 +1251,8 @@ pub fn convert_with(
                         "-q",
                         &q,
                         "-o",
-                        &temp_out.display().to_string(),
-                        &work_src.display().to_string(),
+                        &tools::arg(&temp_out),
+                        &tools::arg(&work_src),
                     ],
                     2,
                 )?;
@@ -1242,8 +1275,8 @@ pub fn convert_with(
                     &cq.jxl_quality().to_string(),
                     "-e",
                     &cq.jxl_effort().to_string(),
-                    &work_src.display().to_string(),
-                    &temp_out.display().to_string(),
+                    &tools::arg(&work_src),
+                    &tools::arg(&temp_out),
                 ],
                 2,
             )?;
@@ -1292,6 +1325,19 @@ pub fn scale_image(src: &Path, out: &Path, factor: f64) -> Result<(), OptimiseEr
         let h = ((img.height() as f64 * factor).round() as u32).max(1);
         img.resize_exact(w, h, image::imageops::FilterType::Lanczos3)
     })
+}
+
+/// [`resize_to`] for an image already decoded with [`load`] — for several
+/// sizes of one source without decoding it again for each.
+pub fn resize_loaded(
+    img: &DynamicImage,
+    meta: &Meta,
+    out: &Path,
+    w: u32,
+    h: u32,
+) -> Result<(), OptimiseError> {
+    let resized = img.resize_exact(w.max(1), h.max(1), image::imageops::FilterType::Lanczos3);
+    save_with_meta(&resized, out, meta)
 }
 
 /// Resize an image to exactly `w`x`h` (keeps aspect only if caller computed it).

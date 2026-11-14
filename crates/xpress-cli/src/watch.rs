@@ -88,7 +88,7 @@ pub fn run(
                 );
                 continue;
             }
-            let folder = folder.canonicalize().unwrap_or(folder);
+            let folder = canonical(&folder);
             targets.push(FolderTarget {
                 folder: folder.clone(),
                 file_type: "all".into(),
@@ -110,7 +110,7 @@ pub fn run(
                 );
                 continue;
             }
-            let folder = folder.canonicalize().unwrap_or(folder);
+            let folder = canonical(&folder);
             match resolve_steps(&store, &a.pipeline) {
                 Ok(steps) => targets.push(FolderTarget {
                     folder,
@@ -200,7 +200,7 @@ fn folder_loop(
                     for p in event.paths {
                         if let Ok(meta) = std::fs::metadata(&p) {
                             if meta.is_file() {
-                                pending.insert(p, (Instant::now(), meta.len()));
+                                pending.insert(canonical(&p), (Instant::now(), meta.len()));
                             }
                         }
                     }
@@ -215,6 +215,61 @@ fn folder_loop(
     }
     println!("\nstopped.");
     Ok(())
+}
+
+/// `path` made absolute and canonical, so the paths notify reports, the
+/// watched folders and our own outputs (even from a relative `-o ./out`)
+/// compare equal. On Windows without the `\\?\` prefix `canonicalize` adds,
+/// which `starts_with` would otherwise never match.
+fn canonical(path: &Path) -> PathBuf {
+    let Ok(c) = std::fs::canonicalize(path) else {
+        return std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    };
+    #[cfg(windows)]
+    {
+        let s = c.to_string_lossy();
+        if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{unc}"));
+        }
+        if let Some(local) = s.strip_prefix(r"\\?\") {
+            return PathBuf::from(local);
+        }
+    }
+    c
+}
+
+/// Whether `path` sits somewhere under `root` that is never touched: a hidden
+/// folder (`.git`, `.Trash`, …) or a download still in progress (Safari's
+/// `photo.jpg.download/` bundle).
+fn in_skipped_folder(path: &Path, root: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
+    let Some(parent) = rel.parent() else {
+        return false;
+    };
+    parent.components().any(|c| {
+        let name = c.as_os_str().to_string_lossy();
+        name.starts_with('.') || name.ends_with(".download")
+    })
+}
+
+/// Where the result for `path` goes when `-o` was given: a template is
+/// expanded; anything else is a folder the file goes into.
+fn output_for(path: &Path, options: &OptimiseOptions) -> OptimiseOptions {
+    let mut o = options.clone();
+    if let Some(out) = &options.output {
+        let s = out.to_string_lossy();
+        let dest = if xpress_core::template::is_template(&s) {
+            let mut counter = 1;
+            xpress_core::template::expand(&s, path, &mut counter)
+        } else {
+            out.join(xpress_core::result::file_name_lossy(path))
+        };
+        o.output = Some(dest);
+        o.output_follows_format = true;
+    }
+    o
 }
 
 /// Changed files awaiting processing: when they last changed, and their size then.
@@ -255,6 +310,9 @@ fn process_path(
     options: &OptimiseOptions,
     processed: &mut HashMap<PathBuf, SystemTime>,
 ) {
+    // One spelling for every comparison below (`processed` keys, folders):
+    // on Windows a path may arrive with or without the `\\?\` prefix.
+    let path = &canonical(path);
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -276,12 +334,24 @@ fn process_path(
     // Find the first target whose folder contains this path and type matches.
     let Some(target) = targets
         .iter()
-        .find(|t| path.starts_with(&t.folder) && type_matches(&t.file_type, kind))
+        .find(|t| path.starts_with(canonical(&t.folder)) && type_matches(&t.file_type, kind))
     else {
         return;
     };
+    if in_skipped_folder(path, &canonical(&target.folder)) {
+        return;
+    }
+    // Never feed our own output folder back in (`-o out` inside a watched folder).
+    if let Some(out) = &options.output {
+        if !xpress_core::template::is_template(&out.to_string_lossy())
+            && path.starts_with(canonical(out))
+        {
+            return;
+        }
+    }
 
-    match pipeline::run(path, &target.steps, options) {
+    let options = output_for(path, options);
+    match pipeline::run(path, &target.steps, &options) {
         Ok(r) => {
             if r.improved() {
                 println!(
@@ -299,7 +369,7 @@ fn process_path(
             // that would otherwise be run through the pipeline a second time.
             for p in [path, r.output.as_path()] {
                 if let Ok(mt) = std::fs::metadata(p).and_then(|m| m.modified()) {
-                    processed.insert(p.to_path_buf(), mt);
+                    processed.insert(canonical(p), mt);
                 }
             }
         }
@@ -359,7 +429,10 @@ fn clipboard_hash(img: &arboard::ImageData) -> u64 {
     img.width.hash(&mut hasher);
     img.height.hash(&mut hasher);
     img.bytes.len().hash(&mut hasher);
-    for b in img.bytes.iter().step_by(257).take(64) {
+    // Samples spread over the whole image: the first rows of two screenshots
+    // (the menu bar) are often identical.
+    let step = (img.bytes.len() / 4096).max(1);
+    for b in img.bytes.iter().step_by(step) {
         b.hash(&mut hasher);
     }
     hasher.finish()
@@ -373,11 +446,7 @@ fn handle_clipboard_image(
     steps: &[Step],
 ) -> Result<()> {
     // Write the raw RGBA pixels to a PNG (pure Rust, no ffmpeg), then optimise.
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let png = drop_dir.join(format!("clip-{ts}.png"));
+    let png = xpress_core::clipboard::unique_clip_path(drop_dir);
     xpress_core::image::save_rgba_png(&img.bytes, img.width as u32, img.height as u32, &png)?;
 
     // Optimise (or run the configured pipeline) on the saved PNG, in place.
@@ -392,8 +461,8 @@ fn handle_clipboard_image(
     };
     match result {
         Ok(r) => {
-            // Put the optimised PNG back on the clipboard so paste yields the smaller file.
-            let back = xpress_core::clipboard::set_clipboard_png(&r.output);
+            // Put the optimised result back on the clipboard so paste yields the smaller file.
+            let back = copy_back(&r.output);
             println!(
                 "{} clipboard image {} {}  (-{:.0}%){}",
                 render::CHECK,
@@ -406,6 +475,26 @@ fn handle_clipboard_image(
         Err(e) => bail!("{e}"),
     }
     Ok(())
+}
+
+/// Put an optimised clipboard image back. On macOS a PNG goes on as image
+/// data and any other format (after a converting pipeline) as the file
+/// itself; elsewhere as decoded pixels, which is what arboard can write.
+#[cfg(feature = "clipboard")]
+fn copy_back(path: &Path) -> bool {
+    if cfg!(target_os = "macos") {
+        return xpress_core::clipboard::copy_file(path);
+    }
+    let Ok(img) = xpress_core::image::open_oriented(path) else {
+        return false;
+    };
+    let rgba = img.to_rgba8();
+    let data = arboard::ImageData {
+        width: rgba.width() as usize,
+        height: rgba.height() as usize,
+        bytes: rgba.into_raw().into(),
+    };
+    arboard::Clipboard::new().is_ok_and(|mut c| c.set_image(data).is_ok())
 }
 
 #[cfg(feature = "clipboard")]
@@ -432,6 +521,32 @@ fn clipboard_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_and_downloading_folders_are_skipped() {
+        let root = Path::new("/w");
+        assert!(in_skipped_folder(Path::new("/w/.git/objects/a.png"), root));
+        assert!(in_skipped_folder(
+            Path::new("/w/photo.jpg.download/photo.jpg"),
+            root
+        ));
+        assert!(!in_skipped_folder(Path::new("/w/sub/a.png"), root));
+        // The watched folder itself may be hidden.
+        assert!(!in_skipped_folder(Path::new("/.w/a.png"), Path::new("/.w")));
+    }
+
+    #[test]
+    fn output_folder_is_resolved_per_file() {
+        let o = OptimiseOptions {
+            output: Some(PathBuf::from("out")),
+            ..OptimiseOptions::default()
+        };
+        let r = output_for(Path::new("/w/a.png"), &o);
+        assert_eq!(r.output, Some(PathBuf::from("out/a.png")));
+        assert!(r.output_follows_format);
+        let none = output_for(Path::new("/w/a.png"), &OptimiseOptions::default());
+        assert_eq!(none.output, None);
+    }
 
     fn tmpdir(name: &str) -> PathBuf {
         let dir =

@@ -5,7 +5,7 @@
 //! (most compression / smallest file). 0 is the "Auto" sentinel for video.
 //!
 //! The factor-to-parameter mappings below translate a single percentage into the
-//! native quality knobs each tool exposes (jpegoptim --max, pngquant --quality,
+//! native quality knobs of each encoder (JPEG quality, PNG palette size,
 //! gifsicle -O/--lossy, libx264 CRF/preset, audio bitrate).
 
 use serde::{Deserialize, Serialize};
@@ -87,25 +87,6 @@ impl CompressionQuality {
         )
     }
 
-    /// jpegoptim --max for the old-binary fallback / adaptive cross-test.
-    pub fn jpeg_secondary_max_quality(&self) -> i32 {
-        cq_clamp(
-            (90.0 - (self.factor - 30) as f64 * (60.0 / 70.0)).round() as i32,
-            25,
-            97,
-        )
-    }
-
-    /// pngquant --quality string "0-MAX".
-    pub fn pngquant_quality(&self) -> String {
-        let max = cq_clamp(
-            (100.0 - (self.factor - 30) as f64 * (75.0 / 70.0)).round() as i32,
-            25,
-            100,
-        );
-        format!("0-{max}")
-    }
-
     /// Palette size for lossy PNG quantisation: the full 256 colours up to the
     /// normal preset, falling linearly to 64 at factor 100.
     pub fn png_palette_size(&self) -> u16 {
@@ -117,16 +98,6 @@ impl CompressionQuality {
     /// kept lossless. factor 5 -> 37 dB, 30 -> 34.5 dB, 100 -> 27.5 dB.
     pub fn png_min_psnr(&self) -> f64 {
         37.0 - (self.factor.clamp(5, 100) - 5) as f64 * 0.1
-    }
-
-    /// pngquant --speed (1 = slowest/best, 11 = fastest).
-    pub fn pngquant_speed(&self) -> i32 {
-        match self.factor {
-            f if f < 40 => 4,
-            f if f < 60 => 3,
-            f if f < 85 => 2,
-            _ => 1,
-        }
     }
 
     /// gifsicle args. factor 30 -> -O2 --lossy=30; 64 -> -O3 --lossy=80 --colors=N.
@@ -311,8 +282,6 @@ mod tests {
     fn normal_preset_anchors() {
         let cq = CompressionQuality::normal();
         assert_eq!(cq.jpeg_max_quality(), 85);
-        assert_eq!(cq.pngquant_quality(), "0-100");
-        assert_eq!(cq.pngquant_speed(), 4);
         assert_eq!(cq.gifsicle_args(), vec!["-O2", "--lossy=30"]);
         assert_eq!(cq.conversion_quality(), 60);
     }

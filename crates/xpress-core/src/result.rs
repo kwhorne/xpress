@@ -76,6 +76,10 @@ pub struct OptimiseOptions {
     pub preserve_dates: bool,
     /// Optional explicit output path. When `None`, the file is optimised in place.
     pub output: Option<PathBuf>,
+    /// `output` was derived from the source's name (an output folder or a
+    /// `%f.%e` template), so a format change swaps its extension: converting
+    /// `photo.png` to WebP with `-o dist/` writes `dist/photo.webp`.
+    pub output_follows_format: bool,
     /// Allow the result to be written even if it is larger than the original.
     pub allow_larger: bool,
     /// Skip files already optimised with these settings, and mark new results
@@ -92,6 +96,7 @@ impl Default for OptimiseOptions {
             strip_location: false,
             preserve_dates: true,
             output: None,
+            output_follows_format: false,
             allow_larger: false,
             use_cache: true,
         }
@@ -153,12 +158,62 @@ pub fn original_for_backup(backup: &Path) -> Option<PathBuf> {
 }
 
 /// Backup `path` to a hidden sibling `.<name>.orig`. Returns the backup path.
+///
+/// An existing backup is kept (it holds the true original). A new one is
+/// written to a temp file, flushed and only then moved into place without
+/// clobbering, so an interrupted copy (full disk, Ctrl-C) never leaves a
+/// truncated `.orig` that a later run would trust.
 pub fn backup_file(path: &Path) -> std::io::Result<PathBuf> {
+    use std::io::{Error, ErrorKind};
     let backup = backup_path(path);
-    if !backup.exists() {
-        fs::copy(path, &backup)?;
+    match fs::symlink_metadata(&backup) {
+        Ok(m) if m.is_file() => return Ok(backup),
+        // A symlink (possibly dangling) or folder in the way: never write
+        // through it, and never overwrite the original without a backup.
+        Ok(_) => {
+            return Err(Error::new(
+                ErrorKind::AlreadyExists,
+                format!("{} exists but is not a regular file", backup.display()),
+            ))
+        }
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
     }
-    Ok(backup)
+    let dir = match backup.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    // `fs::copy` to a fresh path keeps APFS clones and the source's
+    // permissions/metadata.
+    let tmp = tempfile::Builder::new()
+        .prefix(".xpress-backup-")
+        .suffix(".tmp")
+        .make_in(dir, |p| {
+            fs::copy(path, p).map(|_| ()).inspect_err(|_| {
+                // A half-written copy must not linger.
+                let _ = fs::remove_file(p);
+            })
+        })?;
+    // Write access: Windows refuses to flush (FlushFileBuffers) a file
+    // opened read-only.
+    fs::OpenOptions::new()
+        .write(true)
+        .open(tmp.path())?
+        .sync_all()?;
+    match tmp.persist_noclobber(&backup) {
+        Ok(()) => Ok(backup),
+        // Another job made the backup in the meantime: keep theirs.
+        Err(e) if e.error.kind() == ErrorKind::AlreadyExists => Ok(backup),
+        Err(e) => Err(e.error),
+    }
+}
+
+/// Whether `a` and `b` name the same file on disk — not just byte-equal paths.
+/// On case-insensitive file systems (macOS APFS, Windows NTFS) `IMG.MP4` and
+/// `IMG.mp4` are one file; so are hard links. A path that doesn't exist is
+/// only "the same" as a byte-equal one.
+pub fn same_file(a: &Path, b: &Path) -> bool {
+    a == b || same_file::is_same_file(a, b).unwrap_or(false)
 }
 
 /// Find `.<name>.orig` backups under the given inputs (files or folders).
@@ -300,22 +355,57 @@ pub fn finish(
 ) -> Result<OptimisationResult, OptimiseError> {
     let new_size = file_size(staged);
     if placement.size_guard && !options.allow_larger && (new_size == 0 || new_size >= old_size) {
+        // Nothing smaller to write. An explicit `-o` still gets the file (the
+        // original, as is), like a cache hit does, so scripts find it there.
+        if let Some(out) = options.output.as_ref().filter(|o| !same_file(o, src)) {
+            place_file(src, out)?;
+            if options.preserve_dates {
+                copy_dates(src, out);
+            }
+            return Ok(OptimisationResult {
+                output: out.clone(),
+                ..unchanged(kind, src, old_size, aggressive)
+            });
+        }
         return Ok(unchanged(kind, src, old_size, aggressive));
     }
 
     let in_place = options.output.is_none();
-    let dest = options.output.clone().unwrap_or(default_dest);
-    let backup = if placement.backup && options.backup && in_place {
+    let dest = match &options.output {
+        Some(out) if options.output_follows_format => retarget_extension(out, src, &default_dest),
+        Some(out) => out.clone(),
+        None => default_dest,
+    };
+    // Decided before anything is written: afterwards both names may resolve
+    // to the new file. `IMG_0001.MP4` -> `IMG_0001.mp4` is the source itself
+    // on a case-insensitive file system.
+    let dest_is_src = same_file(&dest, src);
+    if in_place && placement.replace_source && !dest_is_src && dest.exists() {
+        // e.g. `clip.mov` -> `clip.mp4` while an unrelated `clip.mp4` exists.
+        return Err(OptimiseError::Other(format!(
+            "{} already exists; not overwriting it",
+            dest.display()
+        )));
+    }
+    // Back up whenever the source itself is about to be overwritten — even if
+    // the caller only compared path bytes, or `-o` names the source itself.
+    let backup = if options.backup && ((in_place && placement.backup) || dest_is_src) {
         Some(backup_file(src)?)
     } else {
         None
     };
 
+    // Read before placing: in place, `dest` *is* `src` and gets a new mtime.
+    let src_mtime = if options.preserve_dates {
+        fs::metadata(src).and_then(|m| m.modified()).ok()
+    } else {
+        None
+    };
     place_file(staged, &dest)?;
-    if options.preserve_dates {
-        copy_dates(src, &dest);
+    if let Some(mtime) = src_mtime {
+        let _ = filetime_set(&dest, mtime);
     }
-    if placement.replace_source && in_place && dest != src && src.exists() {
+    if placement.replace_source && in_place && !dest_is_src && src.exists() {
         let _ = fs::remove_file(src);
     }
 
@@ -332,6 +422,20 @@ pub fn finish(
     })
 }
 
+/// An output named after the source (`-o dist/` gives `dist/photo.png`, as
+/// does a `%f.%e` template) takes the extension of a format change, so a
+/// conversion to WebP is never written into a `.png`.
+fn retarget_extension(out: &Path, src: &Path, default_dest: &Path) -> PathBuf {
+    let ext_eq = |a: &Path, b: &Path| {
+        a.extension().map(|e| e.to_ascii_lowercase())
+            == b.extension().map(|e| e.to_ascii_lowercase())
+    };
+    match default_dest.extension() {
+        Some(ext) if ext_eq(out, src) && !ext_eq(default_dest, src) => out.with_extension(ext),
+        _ => out.to_path_buf(),
+    }
+}
+
 /// Copy creation/modification times from `src` to `dst` (mtime only, portably).
 pub fn copy_dates(src: &Path, dst: &Path) {
     if let Ok(meta) = fs::metadata(src) {
@@ -346,4 +450,206 @@ fn filetime_set(path: &Path, mtime: std::time::SystemTime) -> std::io::Result<()
     let file = fs::File::options().write(true).open(path)?;
     file.set_modified(mtime)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    fn opts(backup: bool) -> OptimiseOptions {
+        OptimiseOptions {
+            backup,
+            ..OptimiseOptions::default()
+        }
+    }
+
+    const REPLACE: Placement = Placement {
+        size_guard: false,
+        backup: true,
+        replace_source: true,
+    };
+
+    #[test]
+    fn upper_case_extension_is_replaced_not_deleted() {
+        // `IMG.MP4` -> `IMG.mp4`: one file on APFS/NTFS, two on ext4. Either
+        // way the optimised result must survive.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("IMG.MP4");
+        let staged = dir.path().join("staged");
+        fs::write(&src, b"original original").unwrap();
+        fs::write(&staged, b"optimised").unwrap();
+        let r = finish(
+            MediaKind::Video,
+            &src,
+            &staged,
+            src.with_extension("mp4"),
+            17,
+            false,
+            &opts(false),
+            REPLACE,
+        )
+        .unwrap();
+        assert_eq!(fs::read(&r.output).unwrap(), b"optimised");
+    }
+
+    #[test]
+    fn case_only_conversion_backs_up_the_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("PHOTO.JPG");
+        let staged = dir.path().join("staged");
+        fs::write(&src, b"original").unwrap();
+        fs::write(&staged, b"converted").unwrap();
+        let dest = src.with_extension("jpg");
+        let case_insensitive = same_file(&src, &dest);
+        let r = finish(
+            MediaKind::Image,
+            &src,
+            &staged,
+            dest,
+            8,
+            false,
+            &opts(true),
+            Placement {
+                size_guard: false,
+                backup: false, // what a byte-wise `default_dest == path` gives
+                replace_source: false,
+            },
+        )
+        .unwrap();
+        if case_insensitive {
+            let b = r.backup.expect("source overwritten without backup");
+            assert_eq!(fs::read(b).unwrap(), b"original");
+        }
+    }
+
+    #[test]
+    fn never_overwrites_an_unrelated_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("clip.mov");
+        let other = dir.path().join("clip.mp4");
+        let staged = dir.path().join("staged");
+        fs::write(&src, b"mov").unwrap();
+        fs::write(&other, b"someone else's mp4").unwrap();
+        fs::write(&staged, b"new").unwrap();
+        let err = finish(
+            MediaKind::Video,
+            &src,
+            &staged,
+            other.clone(),
+            3,
+            false,
+            &opts(false),
+            REPLACE,
+        );
+        assert!(err.is_err());
+        assert_eq!(fs::read(&src).unwrap(), b"mov");
+        assert_eq!(fs::read(&other).unwrap(), b"someone else's mp4");
+    }
+
+    #[test]
+    fn output_named_after_the_source_follows_a_format_change() {
+        let src = Path::new("a/photo.png");
+        let webp = Path::new("a/photo.webp");
+        assert_eq!(
+            retarget_extension(Path::new("dist/photo.png"), src, webp),
+            PathBuf::from("dist/photo.webp")
+        );
+        // An explicit, different name is kept.
+        assert_eq!(
+            retarget_extension(Path::new("dist/hero.webp"), src, webp),
+            PathBuf::from("dist/hero.webp")
+        );
+        // No format change: nothing to do.
+        assert_eq!(
+            retarget_extension(Path::new("dist/photo.png"), src, src),
+            PathBuf::from("dist/photo.png")
+        );
+    }
+
+    #[test]
+    fn explicit_output_is_written_even_when_nothing_shrinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("a.png");
+        let staged = dir.path().join("staged");
+        let out = dir.path().join("dist/a.png");
+        fs::write(&src, b"small").unwrap();
+        fs::write(&staged, b"not smaller").unwrap();
+        let r = finish(
+            MediaKind::Image,
+            &src,
+            &staged,
+            src.clone(),
+            5,
+            false,
+            &OptimiseOptions {
+                output: Some(out.clone()),
+                ..opts(false)
+            },
+            Placement {
+                size_guard: true,
+                backup: true,
+                replace_source: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(r.output, out);
+        assert_eq!(fs::read(&out).unwrap(), b"small");
+    }
+
+    #[test]
+    fn in_place_keeps_the_original_date() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("a.png");
+        let staged = dir.path().join("staged");
+        fs::write(&src, b"original!").unwrap();
+        fs::write(&staged, b"small").unwrap();
+        let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_500_000_000);
+        filetime_set(&src, old).unwrap();
+        finish(
+            MediaKind::Image,
+            &src,
+            &staged,
+            src.clone(),
+            9,
+            false,
+            &opts(false),
+            Placement {
+                size_guard: true,
+                backup: true,
+                replace_source: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(fs::read(&src).unwrap(), b"small");
+        assert_eq!(fs::metadata(&src).unwrap().modified().unwrap(), old);
+    }
+
+    #[test]
+    fn backup_is_complete_and_never_written_through_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("a.png");
+        fs::write(&src, b"data").unwrap();
+        let b = backup_file(&src).unwrap();
+        assert_eq!(fs::read(&b).unwrap(), b"data");
+        // An existing backup holds the true original and is kept.
+        fs::write(&src, b"changed").unwrap();
+        assert_eq!(fs::read(backup_file(&src).unwrap()).unwrap(), b"data");
+        // No temp files left behind.
+        let names: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(names.iter().all(|n| !n.ends_with(".tmp")), "{names:?}");
+
+        #[cfg(unix)]
+        {
+            let src = dir.path().join("b.png");
+            fs::write(&src, b"data").unwrap();
+            let target = dir.path().join("elsewhere");
+            std::os::unix::fs::symlink(&target, backup_path(&src)).unwrap();
+            assert!(backup_file(&src).is_err());
+            assert!(!target.exists());
+        }
+    }
 }

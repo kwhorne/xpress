@@ -5,7 +5,8 @@ on:
     tags: ["v*"]
   # A dry run — by hand, or for pull requests that change the packaging:
   # builds, signs and packages everything, named v0.0.0-dev, and keeps the
-  # files as workflow artifacts instead of publishing a release.
+  # files as workflow artifacts instead of publishing a release. Only the
+  # hand-started dry run is notarised (see NOTARIZE below).
   workflow_dispatch:
   pull_request:
     paths:
@@ -17,8 +18,10 @@ on:
       - scripts/fetch-static-tools.sh
       - scripts/build-xpress-ai.sh
 
+# Building (and pull-request dry runs) only reads the repository; only the
+# `publish` job, for a tag, may write the release.
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -33,6 +36,10 @@ jobs:
       TAG: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.0.0-dev' }}
       MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
       APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+      # Notarise tags and hand-started dry runs; pull requests still build
+      # and sign, but skip the notary service (it can be down or refuse the
+      # team for reasons that have nothing to do with the change).
+      NOTARIZE: ${{ github.event_name != 'pull_request' && secrets.APPLE_APP_PASSWORD != '' && '1' || '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -49,6 +56,15 @@ jobs:
             target: x86_64-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v4
+      - name: Tag matches the crate version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          crate="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [[ "${TAG#v}" != "$crate" ]]; then
+            echo "::error::tag $TAG does not match the version in Cargo.toml ($crate)"
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -72,6 +88,13 @@ jobs:
             cargo build --release --target ${{ matrix.target }} -p xpress-gui
           fi
 
+      # Third-party downloads are fetched (and checked against their pinned
+      # SHA-256) before any signing key is on this machine.
+      - name: Fetch bundled tools
+        if: runner.os == 'macOS'
+        shell: bash
+        run: scripts/fetch-static-tools.sh "${{ matrix.target }}" bundle-tools
+
       - name: Import signing certificate
         if: runner.os == 'macOS' && env.MACOS_CERT_P12 != ''
         env:
@@ -93,7 +116,7 @@ jobs:
         shell: bash
         env:
           XPRESS_SIGN_ID: ${{ secrets.MACOS_SIGN_IDENTITY }}
-          XPRESS_NOTARIZE: ${{ env.APPLE_APP_PASSWORD != '' && '1' || '0' }}
+          XPRESS_NOTARIZE: ${{ env.NOTARIZE }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
@@ -123,14 +146,17 @@ jobs:
         shell: bash
         env:
           XPRESS_SIGN_ID: ${{ secrets.MACOS_SIGN_IDENTITY }}
-          XPRESS_NOTARIZE: ${{ env.APPLE_APP_PASSWORD != '' && '1' || '0' }}
+          XPRESS_NOTARIZE: ${{ env.NOTARIZE }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
           bin_dir="target/${{ matrix.target }}/release"
-          # Download self-contained tools (ffmpeg) to bundle inside the .app.
-          scripts/fetch-static-tools.sh "${{ matrix.target }}" bundle-tools
+          # Release builds for Apple silicon must include the Apple
+          # Intelligence helper; a runner without the SDK fails the build.
+          if [[ "${{ matrix.target }}" == aarch64-* && "${{ github.ref_type }}" == tag ]]; then
+            export XPRESS_REQUIRE_AI=1
+          fi
           scripts/make-app.sh --gui "$bin_dir/xpress-gui" --bin-dir bundle-tools \
             --out dist-app --version "${TAG#v}"
           # Keep "-macos-" before the target: `xpress update` (self_update) takes
@@ -145,8 +171,14 @@ jobs:
           scripts/make-dmg.sh --app dist-app/xpress.app --out "$dmg" --version "${TAG#v}"
           shasum -a 256 "$dmg" > "$dmg.sha256"
 
-      - name: Keep the files (dry run)
-        if: github.ref_type != 'tag'
+      - name: Remove the signing keychain
+        if: always() && runner.os == 'macOS'
+        shell: bash
+        run: |
+          security delete-keychain "$RUNNER_TEMP/build.keychain" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: Keep the files
         uses: actions/upload-artifact@v4
         with:
           name: xpress-${{ matrix.target }}
@@ -155,8 +187,23 @@ jobs:
             xpress-*.zip*
             xpress-*.dmg*
 
+  publish:
+    name: publish release
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: xpress-*
+          merge-multiple: true
+      - name: Check the checksums
+        run: |
+          set -euo pipefail
+          for f in *.sha256; do sha256sum -c "$f"; done
       - name: Upload to release
-        if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: |

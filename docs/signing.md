@@ -27,7 +27,7 @@ Create an **app-specific password** at
 
 ```sh
 export APPLE_ID="you@example.com"
-export APPLE_TEAM_ID="7G383N3VY7"
+export APPLE_TEAM_ID="52AT44QFCM"
 export APPLE_APP_PASSWORD="xxxx-xxxx-xxxx-xxxx"
 export XPRESS_NOTARIZE=1
 scripts/make-app.sh            # signs, submits to Apple, staples the ticket
@@ -61,9 +61,9 @@ binaries locally: `scripts/sign-binaries.sh target/release/xpress`.
 |--------|------------|
 | `MACOS_CERT_P12` | Your Developer ID Application cert + key, exported as `.p12` and base64-encoded |
 | `MACOS_CERT_PASSWORD` | Password you set when exporting the `.p12` |
-| `MACOS_SIGN_IDENTITY` | e.g. `Developer ID Application: GETS AS (7G383N3VY7)` |
+| `MACOS_SIGN_IDENTITY` | e.g. `Developer ID Application: Knut Horne (52AT44QFCM)` |
 | `APPLE_ID` | Your Apple ID email (for notarisation) |
-| `APPLE_TEAM_ID` | e.g. `7G383N3VY7` |
+| `APPLE_TEAM_ID` | e.g. `52AT44QFCM` |
 | `APPLE_APP_PASSWORD` | App-specific password |
 
 ### Exporting the certificate
@@ -80,3 +80,16 @@ binaries locally: `scripts/sign-binaries.sh target/release/xpress`.
 
 Tag a release (`git tag vX.Y.Z && git push origin vX.Y.Z`) and the workflow
 produces a signed, notarised `.app` zip and `.dmg`.
+
+### Changing the signing team
+
+Releases up to v1.0.0 were signed by *GETS AS (7G383N3VY7)*; later ones by
+*Knut Horne (52AT44QFCM)*. Update `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`,
+`MACOS_SIGN_IDENTITY` and `APPLE_TEAM_ID` together, and `APPLE_ID` /
+`APPLE_APP_PASSWORD` too unless that Apple ID is a member of the new team
+(otherwise notarytool fails with HTTP 403, "Invalid or inaccessible developer
+team ID"). Check with a hand-started dry run (`gh workflow run release.yml`),
+which is notarised. After the switch the app
+only updates itself to builds from the same team (the self-update checks the
+Team ID), and macOS treats the new signature as a different app for
+permissions: users grant Accessibility (for "Paste directly") once more.

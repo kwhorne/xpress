@@ -5,17 +5,21 @@
 #
 # Usage:
 #   scripts/fetch-tools.sh                 # install into the per-user bundle dir
-#   scripts/fetch-tools.sh --vendor        # install into vendor/bin/<target> + link current/
-#   scripts/fetch-tools.sh --tools ffmpeg,pngquant
+#   scripts/fetch-tools.sh --vendor        # install into vendor/bin/<target> + copy to current/
+#   scripts/fetch-tools.sh --tools ffmpeg,gifski
 #
 # This script prefers a package manager when available (brew on macOS, apt/dnf on
 # Linux) and copies the resolved binaries into the destination so xpress ships
 # self-contained. For fully static/portable builds, drop prebuilt binaries into
 # the destination directory manually.
+#
+# exiftool is a Perl script with its library beside it: it can't be copied as
+# one file, so it is only installed (system-wide), never copied.
 
 set -euo pipefail
 
-TOOLS_DEFAULT="ffmpeg pngquant jpegoptim gifsicle gs vips gifski cwebp exiftool"
+# The tools xpress actually runs (images and PDFs need none).
+TOOLS_DEFAULT="ffmpeg gifsicle gifski gs heif-enc cjxl exiftool"
 TOOLS="$TOOLS_DEFAULT"
 MODE="bundle"
 
@@ -64,10 +68,10 @@ install_pkg() {
 # Map our tool names to package names where they differ.
 pkg_for() {
   case "$1" in
-    gs)    echo "ghostscript" ;;
-    cwebp) echo "webp" ;;
-    vips)  echo "vips" ;;
-    *)     echo "$1" ;;
+    gs)       echo "ghostscript" ;;
+    heif-enc) echo "libheif" ;;
+    cjxl)     echo "jpeg-xl" ;;
+    *)        echo "$1" ;;
   esac
 }
 
@@ -76,6 +80,14 @@ for tool in $TOOLS; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "==> $tool missing, attempting install ($(pkg_for "$tool"))"
     install_pkg "$(pkg_for "$tool")"
+  fi
+  if [[ "$tool" == "exiftool" ]]; then
+    if command -v exiftool >/dev/null 2>&1; then
+      echo "    ✓ exiftool installed system-wide (not copied: it needs its Perl library)"
+    else
+      echo "    ✗ exiftool not available" >&2
+    fi
+    continue
   fi
   if src="$(command -v "$tool" 2>/dev/null)"; then
     # Resolve symlinks so we copy the real binary.
@@ -90,8 +102,12 @@ for tool in $TOOLS; do
 done
 
 if [[ "$MODE" == "vendor" ]]; then
-  ln -sfn "$triple" "$root/vendor/bin/current"
-  echo "==> Linked vendor/bin/current -> $triple"
+  # `current/` is a tracked folder (it keeps a .gitkeep), so it gets a copy of
+  # this target's binaries — a symlink would land *inside* it.
+  current="$root/vendor/bin/current"
+  find "$current" -mindepth 1 ! -name .gitkeep -delete
+  find "$dest" -maxdepth 1 -type f -exec cp -f {} "$current/" \;
+  echo "==> Copied $triple into vendor/bin/current"
   echo "    Build a self-contained binary with: cargo build --release --features embed-tools"
 fi
 

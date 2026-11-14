@@ -242,9 +242,15 @@ fn verify_sha256(bytes: &[u8], sums: &str) -> Result<(), String> {
     }
 }
 
-fn parse(v: &str) -> (u64, u64, u64) {
-    // Ignore any pre-release/build suffix (e.g. "1.2.3-rc1").
-    let core = v.split(['-', '+']).next().unwrap_or(v);
+/// `(major, minor, patch, is_release)`: a release sorts after its
+/// pre-releases (`1.0.0` > `1.0.0-rc1`); build metadata (`+…`) is ignored.
+fn parse(v: &str) -> (u64, u64, u64, bool) {
+    let v = v.trim().trim_start_matches(['v', 'V']);
+    let v = v.split('+').next().unwrap_or(v);
+    let (core, pre) = match v.split_once('-') {
+        Some((core, _)) => (core, true),
+        None => (v, false),
+    };
     let mut it = core
         .split('.')
         .map(|p| p.trim().parse::<u64>().unwrap_or(0));
@@ -252,6 +258,7 @@ fn parse(v: &str) -> (u64, u64, u64) {
         it.next().unwrap_or(0),
         it.next().unwrap_or(0),
         it.next().unwrap_or(0),
+        !pre,
     )
 }
 
@@ -387,6 +394,10 @@ mod tests {
         assert!(!is_newer("0.4.0", "0.4.0"));
         assert!(!is_newer("0.3.9", "0.4.0"));
         assert!(is_newer("v0.5.0", "v0.4.0")); // tolerant of leading text stripped by caller
-        assert!(!is_newer("0.4.0-rc1", "0.4.0")); // pre-release ignored -> equal core
+        assert!(!is_newer("0.4.0-rc1", "0.4.0")); // a pre-release is older
+        assert!(is_newer("1.0.0", "1.0.0-rc1"));
+        assert!(is_newer("v1.1.0", "1.0.0"));
+        assert!(is_newer("1.10.0", "v1.9.0"));
+        assert!(!is_newer("1.0.0+build.5", "1.0.0"));
     }
 }

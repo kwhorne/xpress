@@ -752,3 +752,34 @@ fn reads_avif() {
     assert!(r.improved(), "{} -> {}", r.old_size, r.new_size);
     assert_eq!(&std::fs::read(&big).unwrap()[4..12], b"ftypavif");
 }
+
+#[test]
+fn has_alpha_sees_palette_transparency_and_other_formats() {
+    let dir = tempfile::tempdir().unwrap();
+    // Paletted PNG with a tRNS chunk (colour type 3, not 4/6).
+    let pal = dir.path().join("pal.png");
+    {
+        let file = std::fs::File::create(&pal).unwrap();
+        let mut enc = png::Encoder::new(file, 2, 1);
+        enc.set_color(png::ColorType::Indexed);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.set_palette(vec![255, 0, 0, 0, 0, 255]);
+        enc.set_trns(vec![0, 255]);
+        enc.write_header()
+            .unwrap()
+            .write_image_data(&[0, 1])
+            .unwrap();
+    }
+    assert!(ximage::has_alpha(&pal));
+
+    let rgba = image::RgbaImage::from_pixel(2, 2, image::Rgba([0, 0, 0, 0]));
+    let gif = dir.path().join("t.gif");
+    rgba.save(&gif).unwrap();
+    assert!(ximage::has_alpha(&gif));
+
+    let rgb = dir.path().join("o.jpg");
+    image::RgbImage::from_pixel(2, 2, image::Rgb([1, 2, 3]))
+        .save(&rgb)
+        .unwrap();
+    assert!(!ximage::has_alpha(&rgb));
+}

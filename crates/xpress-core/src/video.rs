@@ -40,6 +40,29 @@ pub fn metadata_args(options: &OptimiseOptions) -> Vec<String> {
     }
 }
 
+/// Whether removing metadata (all of it, or the location) was asked for.
+pub(crate) fn strips(options: &OptimiseOptions) -> bool {
+    options.strip_metadata || options.strip_location
+}
+
+/// Copy the audio/video streams of `src` into `out` unchanged (no
+/// re-encode), dropping metadata as [`metadata_args`] says. Data tracks
+/// (e.g. timed location on iPhone clips) are left out.
+pub(crate) fn remux_stripped(
+    src: &Path,
+    out: &Path,
+    options: &OptimiseOptions,
+) -> Result<(), OptimiseError> {
+    let mut args: Vec<std::ffi::OsString> = ["-y", "-i"].map(Into::into).to_vec();
+    args.push(tools::arg(src).into());
+    args.extend(["-map", "0:v?", "-map", "0:a?", "-c", "copy"].map(Into::into));
+    args.extend(metadata_args(options).into_iter().map(Into::into));
+    args.extend(["-hide_banner", "-nostats"].map(Into::into));
+    args.push(tools::arg(out).into());
+    tools::run(Tool::Ffmpeg, &args)?;
+    Ok(())
+}
+
 /// Whether ffmpeg's stream banner (its `-i` output) shows an HDR video stream,
 /// i.e. a PQ (`smpte2084`) or HLG (`arib-std-b67`) transfer.
 pub fn describes_hdr(ffmpeg_stderr: &str) -> bool {
@@ -107,10 +130,7 @@ pub fn parse_banner(stderr: &str) -> MediaInfo {
 /// Probe a media file with ffmpeg. `None` if ffmpeg can't be run.
 pub fn probe(path: &Path) -> Option<MediaInfo> {
     // With no output file ffmpeg prints the stream info and exits non-zero.
-    let stderr = match tools::run(
-        Tool::Ffmpeg,
-        ["-hide_banner", "-i", &path.display().to_string()],
-    ) {
+    let stderr = match tools::run(Tool::Ffmpeg, ["-hide_banner", "-i", &tools::arg(path)]) {
         Err(tools::ToolError::Failed { stderr, .. }) => stderr,
         Ok(out) => String::from_utf8_lossy(&out.stderr).into_owned(),
         Err(_) => return None,
@@ -198,7 +218,7 @@ pub fn encode_to_bitrate(
     let mut last = None;
     for vf in &filters {
         let common = |pass: &str| -> Vec<String> {
-            let mut a = vec![s("-y"), s("-i"), path.display().to_string()];
+            let mut a = vec![s("-y"), s("-i"), tools::arg(path)];
             if let Some(f) = vf {
                 a.extend([s("-vf"), f.clone()]);
             }
@@ -214,7 +234,7 @@ pub fn encode_to_bitrate(
                 s("-pass"),
                 s(pass),
                 s("-passlogfile"),
-                log.display().to_string(),
+                tools::arg(&log),
                 s("-hide_banner"),
                 s("-nostats"),
             ]);
@@ -222,7 +242,7 @@ pub fn encode_to_bitrate(
         };
         let mut pass1 = common("1");
         pass1.extend([s("-an"), s("-f"), s("mp4")]);
-        pass1.push(tmp.path().join("pass1.mp4").display().to_string());
+        pass1.push(tools::arg(&tmp.path().join("pass1.mp4")));
         let mut pass2 = common("2");
         match plan.audio_kbps {
             Some(a) => pass2.extend([s("-c:a"), s("aac"), s("-b:a"), format!("{a}k")]),
@@ -230,7 +250,7 @@ pub fn encode_to_bitrate(
         }
         pass2.extend(metadata_args(options));
         pass2.extend([s("-movflags"), s("+faststart")]);
-        pass2.push(out.display().to_string());
+        pass2.push(tools::arg(out));
 
         match tools::run(Tool::Ffmpeg, &pass1).and_then(|_| tools::run(Tool::Ffmpeg, &pass2)) {
             Ok(_) => return Ok(()),
@@ -290,13 +310,13 @@ pub fn remove_audio(src: &Path, dst: &Path) -> Result<(), OptimiseError> {
         [
             "-y",
             "-i",
-            &src.display().to_string(),
+            &tools::arg(src),
             "-c",
             "copy",
             "-an",
             "-hide_banner",
             "-nostats",
-            &dst.display().to_string(),
+            &tools::arg(dst),
         ],
     )?;
     Ok(())
@@ -315,17 +335,40 @@ pub fn change_speed(
     let mut args: Vec<String> = vec![
         "-y".into(),
         "-i".into(),
-        src.display().to_string(),
+        tools::arg(src),
         "-filter:v".into(),
         format!("setpts={pts:.5}*PTS"),
-        "-filter:a".into(),
-        format!("atempo={f:.5}"),
     ];
-    args.extend(options.compression.video_h264_args(tools::is_arm64()));
+    // A clip without sound has no audio to retime.
+    if probe(src).is_none_or(|i| i.has_audio) {
+        args.extend(["-filter:a".into(), atempo_chain(f)]);
+    }
+    args.extend(
+        options
+            .compression
+            .video_h264_args(tools::has_videotoolbox()),
+    );
     args.extend(["-hide_banner", "-nostats"].map(String::from));
-    args.push(dst.display().to_string());
+    args.push(tools::arg(dst));
     tools::run(Tool::Ffmpeg, &args)?;
     Ok(())
+}
+
+/// An `atempo` filter for `factor`. One `atempo` only takes 0.5–100, so
+/// slower speeds are a chain (0.25× = `atempo=0.5,atempo=0.5`).
+fn atempo_chain(factor: f64) -> String {
+    let mut f = factor;
+    let mut parts = Vec::new();
+    while f < 0.5 {
+        parts.push("atempo=0.5".to_string());
+        f /= 0.5;
+    }
+    while f > 100.0 {
+        parts.push("atempo=100".to_string());
+        f /= 100.0;
+    }
+    parts.push(format!("atempo={f:.5}"));
+    parts.join(",")
 }
 
 /// Target codecs for explicit video conversion.
@@ -370,7 +413,7 @@ pub fn convert_codec(
     let old_size = file_size(path);
     let cq = options.compression;
     let crf = cq.video_h264_crf(); // 17..32 baseline
-    let arm = tools::is_arm64();
+    let arm = tools::has_videotoolbox();
     let s = |v: &str| v.to_string();
 
     let ext = codec.container_ext();
@@ -432,7 +475,7 @@ pub fn convert_codec(
         .join(format!("{}.{ext}", crate::result::file_stem_lossy(path)));
 
     let build = |vf: Option<&str>, reencode_audio: bool| -> Vec<String> {
-        let mut args: Vec<String> = vec![s("-y"), s("-i"), path.display().to_string()];
+        let mut args: Vec<String> = vec![s("-y"), s("-i"), tools::arg(path)];
         if let Some(f) = vf {
             args.extend([s("-vf"), f.to_string()]);
         }
@@ -454,7 +497,7 @@ pub fn convert_codec(
         }
         args.extend(metadata_args(options));
         args.extend(["-hide_banner", "-nostats"].map(String::from));
-        args.push(temp_out.display().to_string());
+        args.push(tools::arg(&temp_out));
         args
     };
 
@@ -512,7 +555,11 @@ pub fn to_gif(
         .path()
         .join(format!("{}.gif", crate::result::file_stem_lossy(path)));
 
-    if tools::is_available(Tool::Gifski) {
+    // Frames are passed to gifski as arguments; past this many the command
+    // line gets too long (Windows allows 32 KB), so ffmpeg does it alone.
+    const GIFSKI_MAX_FRAMES: f64 = 2000.0;
+    let few_frames = probe(path).is_none_or(|i| i.duration * fps as f64 <= GIFSKI_MAX_FRAMES);
+    if tools::is_available(Tool::Gifski) && few_frames {
         // Extract frames, then assemble with gifski.
         let frames = tmp.path().join("frames");
         std::fs::create_dir_all(&frames)?;
@@ -525,15 +572,15 @@ pub fn to_gif(
             [
                 "-y",
                 "-i",
-                &path.display().to_string(),
+                &tools::arg(path),
                 "-vf",
                 &vf,
-                &frames.join("f%05d.png").display().to_string(),
+                &tools::arg(&frames.join("f%05d.png")),
             ],
         )?;
         let mut args: Vec<String> = vec![
             "-o".into(),
-            out.display().to_string(),
+            tools::arg(&out),
             "--fps".into(),
             fps.to_string(),
             "--quality".into(),
@@ -543,16 +590,18 @@ pub fn to_gif(
             args.push("--width".into());
             args.push(w.to_string());
         }
-        // Collect frame paths.
+        // Frame names relative to the frames folder (gifski runs there), to
+        // keep the command line short.
         let mut pngs: Vec<String> = std::fs::read_dir(&frames)?
-            .filter_map(|e| e.ok().map(|e| e.path().display().to_string()))
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         pngs.sort();
         if pngs.is_empty() {
             return Err(OptimiseError::Other("no frames extracted for GIF".into()));
         }
         args.extend(pngs);
-        tools::run(Tool::Gifski, &args)?;
+        tools::run_in(Tool::Gifski, &args, Some(&frames))?;
     } else {
         // Single ffmpeg pass.
         let mut vf = format!("fps={fps}");
@@ -564,12 +613,12 @@ pub fn to_gif(
             [
                 "-y",
                 "-i",
-                &path.display().to_string(),
+                &tools::arg(path),
                 "-vf",
                 &vf,
                 "-hide_banner",
                 "-nostats",
-                &out.display().to_string(),
+                &tools::arg(&out),
             ],
         )?;
     }
@@ -601,13 +650,17 @@ pub fn cap_fps(
     let mut args: Vec<String> = vec![
         "-y".into(),
         "-i".into(),
-        src.display().to_string(),
+        tools::arg(src),
         "-vf".into(),
         format!("fps=fps={}", fps.max(1)),
     ];
-    args.extend(options.compression.video_h264_args(tools::is_arm64()));
+    args.extend(
+        options
+            .compression
+            .video_h264_args(tools::has_videotoolbox()),
+    );
     args.extend(["-hide_banner", "-nostats"].map(String::from));
-    args.push(dst.display().to_string());
+    args.push(tools::arg(dst));
     tools::run(Tool::Ffmpeg, &args)?;
     Ok(())
 }
@@ -632,21 +685,50 @@ pub fn optimise_with_filter(
 
     let build = |vf: Option<&str>, reencode_audio: bool| -> Vec<String> {
         // ffmpeg -y -i <in> [-vf <filter>] <encoderArgs> [-c:a copy -map ...] -movflags +faststart <out>
-        let mut args: Vec<String> = vec!["-y".into(), "-i".into(), path.display().to_string()];
+        let mut args: Vec<String> = vec!["-y".into(), "-i".into(), tools::arg(path)];
         if let Some(f) = vf {
             args.extend(["-vf".to_string(), f.to_string()]);
         }
-        args.extend(cq.video_h264_args(tools::is_arm64()));
+        args.extend(cq.video_h264_args(tools::has_videotoolbox()));
         if !reencode_audio {
             args.extend(["-c:a", "copy", "-map", "0:v", "-map", "0:a?"].map(String::from));
         }
         args.extend(metadata_args(options));
         args.extend(["-movflags", "+faststart", "-hide_banner", "-nostats"].map(String::from));
-        args.push(temp_out.display().to_string());
+        args.push(tools::arg(&temp_out));
         args
     };
 
     run_h264_encode(path, vf, build)?;
+
+    // Not smaller, so the size guard would keep the original with all its
+    // metadata: when removing it was asked for, remux the original without it.
+    let new_size = file_size(&temp_out);
+    if vf.is_none()
+        && strips(options)
+        && !options.allow_larger
+        && (new_size == 0 || new_size >= old_size)
+    {
+        let stripped = tmp.path().join(format!(
+            "stripped-{}",
+            crate::result::file_name_lossy(path).to_string_lossy()
+        ));
+        remux_stripped(path, &stripped, options)?;
+        return finish(
+            MediaKind::Video,
+            path,
+            &stripped,
+            path.to_path_buf(),
+            old_size,
+            cq.image_is_aggressive(),
+            options,
+            Placement {
+                size_guard: false,
+                backup: true,
+                replace_source: false,
+            },
+        );
+    }
 
     // A plain optimise must never replace a video with a bigger one — including
     // a `.mov` that would become a larger `.mp4` (e.g. an iPhone HEVC clip
@@ -672,6 +754,13 @@ pub fn optimise_with_filter(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn atempo_is_chained_below_half_speed() {
+        assert_eq!(atempo_chain(0.25), "atempo=0.5,atempo=0.50000");
+        assert_eq!(atempo_chain(0.4), "atempo=0.5,atempo=0.80000");
+        assert_eq!(atempo_chain(2.0), "atempo=2.00000");
+    }
 
     const BANNER: &str = "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'clip.mov':
   Duration: 00:01:02.50, start: 0.000000, bitrate: 6400 kb/s

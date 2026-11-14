@@ -172,6 +172,17 @@ pub struct XpressApp {
     shortcut_errors: [Option<String>; 3],
     /// Waiting for the keys of a new shortcut.
     recording: Option<Action>,
+    /// Menu-bar, tray-icon and global-shortcut events, forwarded by handlers
+    /// that also wake the (otherwise idle) event loop.
+    events: Receiver<SystemEvent>,
+    /// Preferences that ask SQLite or launchd, refreshed every few seconds
+    /// instead of on every frame.
+    recent_sources: Recent<Vec<(String, Option<String>, usize)>>,
+    recent_ignored_counts: Recent<Vec<usize>>,
+    recent_login: Recent<bool>,
+    /// The shortcut settings were drawn this frame (a recording ends when
+    /// they aren't, see `logic`).
+    shortcut_settings_drawn: bool,
     /// Menu-bar items that show their shortcut.
     tray_items: Option<[MenuItem; 3]>,
 
@@ -182,6 +193,9 @@ pub struct XpressApp {
     last_update_check: Instant,
     update_dismissed: bool,
     updating: Arc<AtomicBool>,
+    /// Set by the update thread once the swap helper is running: the UI thread
+    /// saves settings and quits so the helper can replace the bundle.
+    restart_for_update: Arc<AtomicBool>,
     update_status: Arc<Mutex<Option<String>>>,
 
     _tray: Option<TrayIcon>,
@@ -246,6 +260,7 @@ impl XpressApp {
         } else {
             None
         };
+        let events = forward_system_events(ctx, integrations);
 
         let history = history_dir.and_then(|dir| match History::open(&dir) {
             Ok(h) => Some(Arc::new(Mutex::new(h))),
@@ -349,6 +364,11 @@ impl XpressApp {
             registered: [None, None, None],
             shortcut_errors: [None, None, None],
             recording: None,
+            events,
+            recent_sources: Recent::default(),
+            recent_ignored_counts: Recent::default(),
+            recent_login: Recent::default(),
+            shortcut_settings_drawn: false,
             tray_items,
             crop: None,
             update_info,
@@ -356,6 +376,7 @@ impl XpressApp {
             last_update_check: Instant::now(),
             update_dismissed: false,
             updating: Arc::new(AtomicBool::new(false)),
+            restart_for_update: Arc::new(AtomicBool::new(false)),
             update_status: Arc::new(Mutex::new(None)),
             _tray: tray,
             _services: services,
@@ -521,6 +542,18 @@ impl XpressApp {
         shortcuts::parse(&self.shortcuts[action.index()]).map(|h| shortcuts::display(&h))
     }
 
+    /// The global shortcuts are paused while a new one is recorded. Leaving
+    /// the settings (another tab, the window hidden or in the background)
+    /// before pressing a key cancels the recording, so they come back.
+    /// Called once per frame, before drawing.
+    fn end_stale_recording(&mut self, unfocused: bool) {
+        if self.recording.is_some() && (!self.shortcut_settings_drawn || unfocused) {
+            self.recording = None;
+            self.apply_shortcuts();
+        }
+        self.shortcut_settings_drawn = false;
+    }
+
     /// Take the keys of a new shortcut while recording one.
     fn record_shortcut(&mut self, ui: &egui::Ui) {
         let Some(action) = self.recording else { return };
@@ -573,6 +606,7 @@ impl XpressApp {
     }
 
     fn shortcut_settings(&mut self, ui: &mut egui::Ui) {
+        self.shortcut_settings_drawn = true;
         self.record_shortcut(ui);
         card(ui, |ui| {
             ui.label(RichText::new(tr("Shortcuts")).strong());
@@ -863,7 +897,19 @@ impl XpressApp {
         let Some(history) = self.history.clone() else {
             return;
         };
-        let sources = history.lock().unwrap().app_sources().unwrap_or_default();
+        let sources = self
+            .recent_sources
+            .get(|| history.lock().unwrap().app_sources().unwrap_or_default());
+        let counts = self.recent_ignored_counts.get(|| {
+            let h = history.lock().unwrap();
+            self.history_ignored
+                .iter()
+                .map(|app| {
+                    h.count_from_app(&app.name, app.bundle.as_deref())
+                        .unwrap_or(0)
+                })
+                .collect()
+        });
         let mut add = None;
         setting_row(
             ui,
@@ -900,15 +946,12 @@ impl XpressApp {
         );
         if let Some(app) = add {
             self.ignore_app(app);
+            self.recent_ignored_counts.invalidate();
         }
         let mut remove = None;
         let mut delete = None;
         for (i, app) in self.history_ignored.iter().enumerate() {
-            let count = history
-                .lock()
-                .unwrap()
-                .count_from_app(&app.name, app.bundle.as_deref())
-                .unwrap_or(0);
+            let count = counts.get(i).copied().unwrap_or(0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new(&app.name).strong());
                 if let Some(bundle) = &app.bundle {
@@ -951,11 +994,14 @@ impl XpressApp {
                 .delete_from_app(&app.name, app.bundle.as_deref());
             self.confirm_delete_app = None;
             self.history_panel.dirty = true;
+            self.recent_sources.invalidate();
+            self.recent_ignored_counts.invalidate();
         }
         if let Some(i) = remove {
             self.history_ignored.remove(i);
             self.confirm_delete_app = None;
             self.sync_capture();
+            self.recent_ignored_counts.invalidate();
         }
     }
 
@@ -1000,19 +1046,26 @@ impl XpressApp {
     }
 
     /// Download the latest release, replace this .app, and relaunch. macOS only.
-    fn start_self_update(&mut self, url: String) {
+    fn start_self_update(&mut self, url: String, ctx: &egui::Context) {
         if self.updating.swap(true, Ordering::SeqCst) {
             return;
         }
         *self.update_status.lock().unwrap() = Some(tr("Downloading update…").into());
         let updating = self.updating.clone();
+        let restart = self.restart_for_update.clone();
         let status = self.update_status.clone();
+        let ctx = ctx.clone();
         std::thread::spawn(move || {
-            if let Err(e) = perform_self_update(&url, &status) {
-                *status.lock().unwrap() = Some(trf("Update failed: {}", &[&e]));
-                updating.store(false, Ordering::SeqCst);
+            match perform_self_update(&url, &status) {
+                // The helper is waiting for us to quit; the UI thread does that
+                // (after saving settings) on its next frame.
+                Ok(()) => restart.store(true, Ordering::SeqCst),
+                Err(e) => {
+                    *status.lock().unwrap() = Some(trf("Update failed: {}", &[&e]));
+                    updating.store(false, Ordering::SeqCst);
+                }
             }
-            // On success the process re-launches and exits; nothing to do here.
+            ctx.request_repaint();
         });
     }
 
@@ -1029,6 +1082,7 @@ impl XpressApp {
             strip_location: self.strip_location,
             preserve_dates: true,
             output: None,
+            output_follows_format: false,
             allow_larger: false,
             use_cache: self.skip_optimised,
         }
@@ -1050,6 +1104,27 @@ impl XpressApp {
     }
 
     fn submit(&mut self, path: PathBuf, ctx: &egui::Context) {
+        // A folder: everything in it (and its subfolders) that xpress handles.
+        if path.is_dir() {
+            let files = xpress_core::collect_files(std::slice::from_ref(&path), true, &[]);
+            if files.is_empty() {
+                self.push_card(Card {
+                    title: xpress_core::result::file_name_lossy(&path)
+                        .to_string_lossy()
+                        .into_owned(),
+                    detail: tr("No supported files in this folder").into(),
+                    saved_pct: 0.0,
+                    ok: false,
+                    output: None,
+                    texture: None,
+                    pending_thumb: None,
+                });
+            }
+            for f in files {
+                self.submit(f, ctx);
+            }
+            return;
+        }
         if xpress_core::filetype::classify(&path).is_none() {
             return;
         }
@@ -1169,8 +1244,12 @@ impl XpressApp {
                     if let Some(score) = r.score {
                         detail.push_str(&format!("  ·  SSIMULACRA2 {score:.0}"));
                     }
-                    if from_clipboard && xpress_core::clipboard::set_clipboard_png(&r.output) {
-                        detail.push_str("  ·  copied back");
+                    if from_clipboard
+                        && crate::pasteboard::write(&xpress_core::clipboard::parts_for_file(
+                            &r.output,
+                        ))
+                    {
+                        detail.push_str(tr("  ·  copied back"));
                     }
                     Card {
                         title: name,
@@ -1249,8 +1328,23 @@ impl eframe::App for XpressApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
 
+        let unfocused = ctx.input(|i| i.viewport().focused) == Some(false);
+        self.end_stale_recording(unfocused);
+
+        let events: Vec<SystemEvent> = self.events.try_iter().collect();
+        let mut menu = Vec::new();
+        let mut tray = Vec::new();
+        let mut hotkeys = Vec::new();
+        for ev in events {
+            match ev {
+                SystemEvent::Menu(e) => menu.push(e),
+                SystemEvent::Tray(e) => tray.push(e),
+                SystemEvent::HotKey(e) => hotkeys.push(e),
+            }
+        }
+
         // Menu-bar icon: menu selections and clicks.
-        while let Ok(ev) = MenuEvent::receiver().try_recv() {
+        for ev in menu {
             let id = ev.id.0.as_str();
             if id == self.tray_open_id {
                 Self::show_window(ctx);
@@ -1271,14 +1365,14 @@ impl eframe::App for XpressApp {
                 std::process::exit(0);
             }
         }
-        while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
+        for ev in tray {
             if let TrayIconEvent::Click { .. } = ev {
                 Self::show_window(ctx);
             }
         }
 
         // Global hotkey events (poll once; dispatch by id).
-        while let Ok(ev) = GlobalHotKeyEvent::receiver().try_recv() {
+        for ev in hotkeys {
             if ev.state != HotKeyState::Pressed {
                 continue;
             }
@@ -1296,6 +1390,11 @@ impl eframe::App for XpressApp {
             }
         }
 
+        if self.restart_for_update.load(Ordering::SeqCst) {
+            self.persist_settings(true);
+            std::process::exit(0);
+        }
+
         self.drain_results();
         self.open_pending(ctx);
         self.sync_capture();
@@ -1307,10 +1406,18 @@ impl eframe::App for XpressApp {
             self.check_for_updates(ctx);
         }
 
-        // Poll steadily so menu-bar clicks and the global hotkey are handled even
-        // when the window is idle or in the background.
-        let interval = if self.in_flight > 0 { 120 } else { 250 };
-        ctx.request_repaint_after(Duration::from_millis(interval));
+        // Menu-bar clicks, shortcuts, finished jobs and history changes wake
+        // the loop themselves, so an idle (hidden) app sleeps — letting macOS
+        // App Nap it. Only timed work needs a wake-up: a pending settings
+        // save, and the periodic update check.
+        let wake = if self.settings_changed.is_some() {
+            SAVE_DELAY
+        } else {
+            UPDATE_INTERVAL
+                .saturating_sub(self.last_update_check.elapsed())
+                .clamp(Duration::from_secs(1), Duration::from_secs(5 * 60))
+        };
+        ctx.request_repaint_after(wake);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -1618,7 +1725,7 @@ impl XpressApp {
         let ctx = ui.ctx().clone();
         let Some(history) = self.history.clone() else {
             ui.heading(tr("History"));
-            ui.label(RichText::new("The history could not be opened.").color(ERR_RED));
+            ui.label(RichText::new(tr("The history could not be opened.")).color(ERR_RED));
             return;
         };
         if self.history_panel.dirty {
@@ -1899,8 +2006,9 @@ impl XpressApp {
                 "≡",
                 Color32::from_rgb(120, 120, 130),
                 tr("Lives in the menu bar"),
-                &format!(
-                    "Click the xpress icon in the menu bar{show}. Closing the window keeps it running."
+                &trf(
+                    "Click the xpress icon in the menu bar{}. Closing the window keeps it running.",
+                    &[&show],
                 ),
             );
             ui.separator();
@@ -2005,7 +2113,7 @@ impl XpressApp {
 
     /// "Open at login" (macOS 13+, installed app).
     fn login_row(&mut self, ui: &mut egui::Ui) {
-        let mut on = crate::login::enabled();
+        let mut on = self.recent_login.get(crate::login::enabled);
         setting_row(
             ui,
             tr("Open at login"),
@@ -2013,6 +2121,7 @@ impl XpressApp {
             |ui| {
                 if toggle(ui, &mut on).changed() {
                     self.login_error = crate::login::set(on).err();
+                    self.recent_login.invalidate();
                 }
             },
         );
@@ -2076,7 +2185,7 @@ impl XpressApp {
                         .width(230.0)
                         .show_ui(ui, |ui| {
                             for (i, (name, _)) in QUALITY_TARGETS.iter().enumerate() {
-                                ui.selectable_value(&mut self.quality_target, i, *name);
+                                ui.selectable_value(&mut self.quality_target, i, tr(name));
                             }
                         });
                 },
@@ -2241,7 +2350,7 @@ impl XpressApp {
                 self.check_for_updates(&ctx);
             }
             if let Some(url) = start_update {
-                self.start_self_update(url);
+                self.start_self_update(url, &ctx);
             }
         });
     }
@@ -2260,6 +2369,7 @@ impl XpressApp {
         let updating = self.updating.load(Ordering::Relaxed);
         let status = self.update_status.lock().unwrap().clone();
         let can_auto = can_self_update(&info);
+        let ctx = root.ctx().clone();
         let dl = info.download_url.clone();
         let mut start_update: Option<String> = None;
         egui::Panel::top("update_banner")
@@ -2309,7 +2419,7 @@ impl XpressApp {
                 });
             });
         if let Some(url) = start_update {
-            self.start_self_update(url);
+            self.start_self_update(url, &ctx);
         }
     }
 
@@ -2783,7 +2893,9 @@ fn result_card(ui: &mut egui::Ui, card: &Card, index: usize) -> Option<CardActio
                                             reveal_in_file_manager(out);
                                         }
                                         if ui.small_button(tr("Copy")).clicked() {
-                                            xpress_core::clipboard::set_clipboard_png(out);
+                                            crate::pasteboard::write(
+                                                &xpress_core::clipboard::parts_for_file(out),
+                                            );
                                         }
                                     });
                                 }
@@ -2821,7 +2933,7 @@ fn result_card(ui: &mut egui::Ui, card: &Card, index: usize) -> Option<CardActio
                 ui.close();
             }
             if ui.button(tr("Copy")).clicked() {
-                xpress_core::clipboard::set_clipboard_png(&out);
+                crate::pasteboard::write(&xpress_core::clipboard::parts_for_file(&out));
                 ui.close();
             }
         });
@@ -2860,9 +2972,9 @@ fn convert_note(format: ImageFormat) -> String {
         ImageFormat::Png | ImageFormat::Tiff => tr(" · lossless"),
         _ => "",
     };
-    format!(
-        "Images are saved as {} next to the originals{caveat}",
-        format.label()
+    trf(
+        "Images are saved as {} next to the originals{}",
+        &[&format.label(), &caveat],
     )
 }
 
@@ -3027,6 +3139,65 @@ fn tray_icon_image() -> Option<(Vec<u8>, u32, u32)> {
     Some((buf, size as u32, size as u32))
 }
 
+/// A value recomputed at most every couple of seconds — for what Preferences
+/// shows from SQLite or launchd, which would otherwise be asked every frame.
+struct Recent<T> {
+    value: Option<(Instant, T)>,
+}
+
+impl<T> Default for Recent<T> {
+    fn default() -> Self {
+        Recent { value: None }
+    }
+}
+
+impl<T: Clone> Recent<T> {
+    const FRESH: Duration = Duration::from_secs(2);
+
+    fn get(&mut self, compute: impl FnOnce() -> T) -> T {
+        if let Some((at, v)) = &self.value {
+            if at.elapsed() < Self::FRESH {
+                return v.clone();
+            }
+        }
+        let v = compute();
+        self.value = Some((Instant::now(), v.clone()));
+        v
+    }
+
+    fn invalidate(&mut self) {
+        self.value = None;
+    }
+}
+
+/// An event from the system side, see [`forward_system_events`].
+enum SystemEvent {
+    Menu(MenuEvent),
+    Tray(TrayIconEvent),
+    HotKey(GlobalHotKeyEvent),
+}
+
+/// Route menu-bar, tray-icon and global-shortcut events into one channel and
+/// wake the UI for each, instead of polling for them several times a second.
+/// (Without integrations — tests — nothing is installed; the channel stays
+/// empty.)
+fn forward_system_events(ctx: &egui::Context, integrations: bool) -> Receiver<SystemEvent> {
+    let (tx, rx) = channel::<SystemEvent>();
+    if integrations {
+        let send = move |tx: &Sender<SystemEvent>, ctx: &egui::Context, ev| {
+            let _ = tx.send(ev);
+            ctx.request_repaint();
+        };
+        let (t, c) = (tx.clone(), ctx.clone());
+        MenuEvent::set_event_handler(Some(move |e| send(&t, &c, SystemEvent::Menu(e))));
+        let (t, c) = (tx.clone(), ctx.clone());
+        TrayIconEvent::set_event_handler(Some(move |e| send(&t, &c, SystemEvent::Tray(e))));
+        let c = ctx.clone();
+        GlobalHotKeyEvent::set_event_handler(Some(move |e| send(&tx, &c, SystemEvent::HotKey(e))));
+    }
+    rx
+}
+
 /// The `.app` bundle this executable lives in, if any (…/xpress.app).
 fn app_bundle_path() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
@@ -3037,24 +3208,78 @@ fn app_bundle_path() -> Option<PathBuf> {
 
 /// True when we're running from an installed .app (so self-update makes sense).
 fn can_self_update(info: &xpress_core::update::UpdateInfo) -> bool {
-    cfg!(target_os = "macos") && info.download_url.is_some() && app_bundle_path().is_some()
+    cfg!(target_os = "macos")
+        && info.download_url.is_some()
+        && app_bundle_path().is_some_and(|app| self_update_blocker(&app).is_none())
 }
 
-/// Download the new .app zip, swap it into place, and relaunch. macOS only.
+/// Why this copy of the app can't replace itself, if it can't: run from a
+/// disk image or a translocated (quarantined) copy, managed by Homebrew, or
+/// in a folder we may not write to.
+fn self_update_blocker(app: &Path) -> Option<&'static str> {
+    let s = app.to_string_lossy();
+    if s.starts_with("/Volumes/") {
+        return Some("running from a disk image; copy xpress to Applications first");
+    }
+    if s.contains("/AppTranslocation/") {
+        return Some("macOS is running a quarantined copy; move xpress to Applications first");
+    }
+    let parent = app.parent()?;
+    if s.contains("/Caskroom/")
+        || Path::new("/opt/homebrew/Caskroom/xpress").exists()
+        || Path::new("/usr/local/Caskroom/xpress").exists()
+    {
+        return Some("installed with Homebrew; run `brew upgrade xpress`");
+    }
+    let probe = tempfile::Builder::new()
+        .prefix(".xpress-probe-")
+        .tempfile_in(parent);
+    if probe.is_err() {
+        return Some("no permission to replace the app in its folder");
+    }
+    None
+}
+
+/// The signing team of an app bundle (`TeamIdentifier=` in `codesign -dv`),
+/// or `None` when unsigned / ad-hoc signed.
+fn codesign_team(app: &Path) -> Option<String> {
+    let out = std::process::Command::new("codesign")
+        .args(["-dv", "--verbose=2"])
+        .arg(app)
+        .output()
+        .ok()?;
+    // codesign prints the details on stderr.
+    String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .find_map(|l| l.strip_prefix("TeamIdentifier="))
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && *t != "not set")
+        .map(str::to_owned)
+}
+
+/// Download the new .app zip, verify it, and start a helper that swaps it into
+/// place once we quit and relaunches it. macOS only. On `Ok` the caller must
+/// quit promptly (the helper waits for this process to exit).
 fn perform_self_update(url: &str, status: &Arc<Mutex<Option<String>>>) -> Result<(), String> {
     let old_app = app_bundle_path().ok_or("not running from an .app bundle")?;
+    if let Some(why) = self_update_blocker(&old_app) {
+        return Err(why.into());
+    }
 
     let bytes = xpress_core::update::download_verified(url)?;
     *status.lock().unwrap() = Some(tr("Installing update…").into());
 
-    let tmp = std::env::temp_dir().join(format!("xpress-update-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let zip = tmp.join("update.zip");
+    // A private, unpredictable folder. Kept after we return: the helper uses
+    // it after this process has exited and removes it when done.
+    let tmp = tempfile::Builder::new()
+        .prefix("xpress-update-")
+        .tempdir()
+        .map_err(|e| e.to_string())?;
+    let zip = tmp.path().join("update.zip");
     std::fs::write(&zip, &bytes).map_err(|e| e.to_string())?;
 
     // Extract with ditto (preserves signatures/permissions).
-    let extract = tmp.join("extract");
+    let extract = tmp.path().join("extract");
     std::fs::create_dir_all(&extract).map_err(|e| e.to_string())?;
     let ok = std::process::Command::new("ditto")
         .args(["-x", "-k"])
@@ -3072,14 +3297,54 @@ fn perform_self_update(url: &str, status: &Arc<Mutex<Option<String>>>) -> Result
         .find(|p| p.extension().map(|e| e == "app").unwrap_or(false))
         .ok_or("no .app found in update archive")?;
 
-    // A helper that waits for us to quit, swaps the bundle, and relaunches.
-    let script = tmp.join("apply.sh");
+    // The new bundle must be intact and, when this copy is Developer ID
+    // signed, signed by the same team.
+    let verified = std::process::Command::new("codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(&new_app)
+        .status()
+        .map_err(|e| e.to_string())?
+        .success();
+    if !verified {
+        return Err("the downloaded app's signature is invalid".into());
+    }
+    if let Some(team) = codesign_team(&old_app) {
+        if codesign_team(&new_app).as_deref() != Some(team.as_str()) {
+            return Err("the downloaded app is not signed by the same developer".into());
+        }
+    }
+
+    // A helper that waits for us to quit, then swaps the bundle without ever
+    // leaving the user with no app: the new bundle is copied next to the old
+    // one first, then two renames swap them; any failure puts the old back.
+    let script = tmp.path().join("apply.sh");
     let script_body = format!(
-        "#!/bin/bash\nset -e\nOLD={old}\nNEW={new}\nPID={pid}\n\
-for i in $(seq 1 200); do kill -0 \"$PID\" 2>/dev/null || break; sleep 0.1; done\n\
-rm -rf \"$OLD\"\nditto \"$NEW\" \"$OLD\"\nopen \"$OLD\"\n",
+        r#"#!/bin/bash
+OLD={old}
+NEW={new}
+TMP={tmp}
+PID={pid}
+STAGE="$OLD.xpress-new"
+BAK="$OLD.xpress-old"
+for i in $(seq 1 300); do kill -0 "$PID" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$PID" 2>/dev/null; then rm -rf "$TMP"; exit 1; fi
+rm -rf "$STAGE" "$BAK"
+if ditto "$NEW" "$STAGE"; then
+  if mv "$OLD" "$BAK"; then
+    if mv "$STAGE" "$OLD"; then
+      rm -rf "$BAK"
+    else
+      mv "$BAK" "$OLD"
+    fi
+  fi
+fi
+rm -rf "$STAGE"
+open "$OLD"
+rm -rf "$TMP"
+"#,
         old = shell_quote(&old_app),
         new = shell_quote(&new_app),
+        tmp = shell_quote(tmp.path()),
         pid = std::process::id(),
     );
     std::fs::write(&script, script_body).map_err(|e| e.to_string())?;
@@ -3089,10 +3354,9 @@ rm -rf \"$OLD\"\nditto \"$NEW\" \"$OLD\"\nopen \"$OLD\"\n",
         .arg(&script)
         .spawn()
         .map_err(|e| e.to_string())?;
-
-    // Give the helper a moment to start, then quit so it can replace us.
-    std::thread::sleep(Duration::from_millis(300));
-    std::process::exit(0);
+    // From here on the helper owns the folder.
+    let _ = tmp.keep();
+    Ok(())
 }
 
 fn shell_quote(p: &Path) -> String {
@@ -3161,11 +3425,7 @@ fn clipboard_image_to_file() -> Result<PathBuf, String> {
 
     let dir = clipboard_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let path = dir.join(format!("clip-{ts}.png"));
+    let path = xpress_core::clipboard::unique_clip_path(&dir);
     buf.save(&path).map_err(|e| e.to_string())?;
     Ok(path)
 }
@@ -3658,6 +3918,30 @@ mod tests {
             command: true,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn leaving_the_settings_cancels_a_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = preferences(dir.path());
+        h.get_by_label("⌃⌘V").click();
+        h.run();
+        assert_eq!(h.state().recording, Some(Action::History));
+        assert!(h.state().registered.iter().all(Option::is_none));
+        // Still on screen: the recording goes on.
+        h.state_mut().end_stale_recording(false);
+        h.run();
+        assert_eq!(h.state().recording, Some(Action::History));
+
+        h.state_mut().end_stale_recording(false);
+        h.state_mut().tab = Tab::Optimise;
+        h.run();
+        h.state_mut().end_stale_recording(false);
+        assert_eq!(h.state().recording, None);
+        assert!(
+            h.state().registered.iter().all(Option::is_some),
+            "shortcuts back on"
+        );
     }
 
     #[test]
