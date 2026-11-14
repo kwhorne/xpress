@@ -42,7 +42,7 @@ png = "0.17"
 oxipng = { version = "9", default-features = false, features = ["parallel", "zopfli"] }
 include_dir = { version = "0.7", optional = true }
 # Clipboard history: SQLite (public domain) with FTS5 full-text search.
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 [dev-dependencies]
 lopdf = { version = "0.45", default-features = false }

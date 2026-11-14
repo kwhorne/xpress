@@ -1099,7 +1099,7 @@ fn readable_source(path: &Path, tmp: &TempDir) -> Result<PathBuf, OptimiseError>
                 "-y",
                 "-hide_banner",
                 "-i",
-                &tools::arg(&path),
+                &tools::arg(path),
                 "-frames:v",
                 "1",
                 &tools::arg(&out),
