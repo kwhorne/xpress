@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-11-14
+
+A redistributable ffmpeg in the app, and Apple silicon only on macOS.
+
+> Updating straight from **1.0.0**? The app is signed by a new team since
+> 1.0.1: turn **xpress** on again in System Settings → Privacy & Security →
+> Accessibility (for "Paste directly").
+
 ### Changed
 - The app bundles **ffmpeg 9.0.2** (was 6.0), Martin Riedl's static macOS
   build. The previous build for Apple silicon was marked by ffmpeg itself as
@@ -612,7 +620,8 @@ Intel), and the command line for macOS, Linux and now Windows.
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/kwhorne/xpress/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/kwhorne/xpress/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/kwhorne/xpress/compare/v0.9.4...v1.0.0
 [0.9.4]: https://github.com/kwhorne/xpress/compare/v0.9.3...v0.9.4
