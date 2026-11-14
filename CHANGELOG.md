@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+- **Intel Macs**: releases no longer include the app, `.dmg` or command line
+  for Intel Macs, and the GitHub Action no longer runs on Intel macOS
+  runners. Intel Macs can keep 1.0.1 or build xpress from source.
+
 ## [1.0.1] - 2026-11-14
 
 Fixes from a full code review: no more lost files, metadata that is really

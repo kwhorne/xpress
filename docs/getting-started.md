@@ -12,7 +12,7 @@ what xpress does to your files so there are no surprises.
 `xpress-<version>-macos-aarch64-apple-darwin.dmg` from the
 [releases page](https://github.com/kwhorne/xpress/releases/latest), open it and
 drag **xpress** into *Applications*. It is signed and notarised by Apple, needs
-an Apple silicon or Intel Mac (pick the matching download), and includes everything it needs (also `ffmpeg` for video and
+an Apple silicon Mac, and includes everything it needs (also `ffmpeg` for video and
 audio). The first time it opens, a short welcome tour shows the basics.
 
 **Command line (macOS or Linux).** Download the `.tar.gz` for your platform from

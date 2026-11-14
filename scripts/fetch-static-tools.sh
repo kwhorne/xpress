@@ -8,7 +8,7 @@
 #
 # Usage:
 #   scripts/fetch-static-tools.sh <target-triple> <dest-dir>
-#     target-triple: aarch64-apple-darwin | x86_64-apple-darwin
+#     target-triple: aarch64-apple-darwin (releases are Apple silicon only)
 #
 # ffmpeg builds come from the eugeneware/ffmpeg-static project and link only
 # against macOS system frameworks. Each download is checked against the
@@ -31,9 +31,6 @@ case "$target" in
   aarch64-apple-darwin)
     ff_url="$base/ffmpeg-darwin-arm64"
     ff_sha256="a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584" ;;
-  x86_64-apple-darwin)
-    ff_url="$base/ffmpeg-darwin-x64"
-    ff_sha256="cfe20936c83ecf5d68e424b87e8cc45b24dd6be81787810123bb964a0df686f9" ;;
   *) echo "unsupported target: $target" >&2; exit 1 ;;
 esac
 
