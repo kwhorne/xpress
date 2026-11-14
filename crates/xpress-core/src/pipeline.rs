@@ -18,7 +18,6 @@ use crate::image::{self, ImageFormat};
 use crate::result::{
     file_size, finish, OptimisationResult, OptimiseError, OptimiseOptions, Placement,
 };
-use crate::tools;
 use crate::{scale, video};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -414,8 +413,9 @@ fn apply_step(
             }
         }
         Step::StripExif => {
-            std::fs::copy(current, target)?;
-            tools::copy_exif(current, target, true, &[]);
+            if !crate::strip::strip_file(current, target, crate::image::Strip::All)? {
+                std::fs::copy(current, target)?;
+            }
         }
         Step::RemoveAudio => {
             video::remove_audio(current, target)?;
@@ -461,8 +461,12 @@ fn apply_step(
         }
         Step::CopyToClipboard => {
             // Pass the file through unchanged, and copy it to the clipboard.
+            // `target` is a temporary file, so the clipboard gets the image
+            // itself (as PNG), never a link to a file about to disappear.
             std::fs::copy(current, target)?;
-            crate::clipboard::set_clipboard_png(target);
+            if let Some(png) = crate::clipboard::png_data(target) {
+                crate::clipboard::write(&[crate::clipboard::Part::Png(png)]);
+            }
         }
         Step::RunScript { code, path } => {
             // Pass the file through; run the user's script with $FILE set to it.

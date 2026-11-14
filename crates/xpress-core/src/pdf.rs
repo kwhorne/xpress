@@ -411,6 +411,22 @@ pub fn optimise(
         stream.set_content(buf);
     }
 
+    // Document info (author, title, producer, dates) and XMP packets — on the
+    // catalog, pages and images alike.
+    let mut removed_metadata = false;
+    if options.strip_metadata {
+        removed_metadata |= doc.trailer.remove(b"Info").is_some();
+        for obj in doc.objects.values_mut() {
+            let dict = match obj {
+                lopdf::Object::Dictionary(d) => d,
+                lopdf::Object::Stream(s) => &mut s.dict,
+                _ => continue,
+            };
+            removed_metadata |= dict.remove(b"Metadata").is_some();
+            removed_metadata |= dict.remove(b"PieceInfo").is_some();
+        }
+    }
+
     // Lossless structural gains: drop orphans and Flate-compress plain streams.
     let _ = doc.prune_objects();
     doc.compress();
@@ -429,7 +445,9 @@ pub fn optimise(
         cq.image_is_aggressive(),
         options,
         Placement {
-            size_guard: true,
+            // Removing metadata was asked for: never keep the original for
+            // want of a smaller file.
+            size_guard: !removed_metadata,
             backup: true,
             replace_source: false,
         },

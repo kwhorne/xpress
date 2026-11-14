@@ -172,6 +172,9 @@ pub struct XpressApp {
     shortcut_errors: [Option<String>; 3],
     /// Waiting for the keys of a new shortcut.
     recording: Option<Action>,
+    /// The shortcut settings were drawn this frame (a recording ends when
+    /// they aren't, see `logic`).
+    shortcut_settings_drawn: bool,
     /// Menu-bar items that show their shortcut.
     tray_items: Option<[MenuItem; 3]>,
 
@@ -352,6 +355,7 @@ impl XpressApp {
             registered: [None, None, None],
             shortcut_errors: [None, None, None],
             recording: None,
+            shortcut_settings_drawn: false,
             tray_items,
             crop: None,
             update_info,
@@ -525,6 +529,18 @@ impl XpressApp {
         shortcuts::parse(&self.shortcuts[action.index()]).map(|h| shortcuts::display(&h))
     }
 
+    /// The global shortcuts are paused while a new one is recorded. Leaving
+    /// the settings (another tab, the window hidden or in the background)
+    /// before pressing a key cancels the recording, so they come back.
+    /// Called once per frame, before drawing.
+    fn end_stale_recording(&mut self, unfocused: bool) {
+        if self.recording.is_some() && (!self.shortcut_settings_drawn || unfocused) {
+            self.recording = None;
+            self.apply_shortcuts();
+        }
+        self.shortcut_settings_drawn = false;
+    }
+
     /// Take the keys of a new shortcut while recording one.
     fn record_shortcut(&mut self, ui: &egui::Ui) {
         let Some(action) = self.recording else { return };
@@ -577,6 +593,7 @@ impl XpressApp {
     }
 
     fn shortcut_settings(&mut self, ui: &mut egui::Ui) {
+        self.shortcut_settings_drawn = true;
         self.record_shortcut(ui);
         card(ui, |ui| {
             ui.label(RichText::new(tr("Shortcuts")).strong());
@@ -1062,6 +1079,27 @@ impl XpressApp {
     }
 
     fn submit(&mut self, path: PathBuf, ctx: &egui::Context) {
+        // A folder: everything in it (and its subfolders) that xpress handles.
+        if path.is_dir() {
+            let files = xpress_core::collect_files(std::slice::from_ref(&path), true, &[]);
+            if files.is_empty() {
+                self.push_card(Card {
+                    title: xpress_core::result::file_name_lossy(&path)
+                        .to_string_lossy()
+                        .into_owned(),
+                    detail: tr("No supported files in this folder").into(),
+                    saved_pct: 0.0,
+                    ok: false,
+                    output: None,
+                    texture: None,
+                    pending_thumb: None,
+                });
+            }
+            for f in files {
+                self.submit(f, ctx);
+            }
+            return;
+        }
         if xpress_core::filetype::classify(&path).is_none() {
             return;
         }
@@ -1181,8 +1219,12 @@ impl XpressApp {
                     if let Some(score) = r.score {
                         detail.push_str(&format!("  ·  SSIMULACRA2 {score:.0}"));
                     }
-                    if from_clipboard && xpress_core::clipboard::set_clipboard_png(&r.output) {
-                        detail.push_str("  ·  copied back");
+                    if from_clipboard
+                        && crate::pasteboard::write(&xpress_core::clipboard::parts_for_file(
+                            &r.output,
+                        ))
+                    {
+                        detail.push_str(tr("  ·  copied back"));
                     }
                     Card {
                         title: name,
@@ -1260,6 +1302,9 @@ impl eframe::App for XpressApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
+
+        let unfocused = ctx.input(|i| i.viewport().focused) == Some(false);
+        self.end_stale_recording(unfocused);
 
         // Menu-bar icon: menu selections and clicks.
         while let Ok(ev) = MenuEvent::receiver().try_recv() {
@@ -1635,7 +1680,7 @@ impl XpressApp {
         let ctx = ui.ctx().clone();
         let Some(history) = self.history.clone() else {
             ui.heading(tr("History"));
-            ui.label(RichText::new("The history could not be opened.").color(ERR_RED));
+            ui.label(RichText::new(tr("The history could not be opened.")).color(ERR_RED));
             return;
         };
         if self.history_panel.dirty {
@@ -1916,8 +1961,9 @@ impl XpressApp {
                 "≡",
                 Color32::from_rgb(120, 120, 130),
                 tr("Lives in the menu bar"),
-                &format!(
-                    "Click the xpress icon in the menu bar{show}. Closing the window keeps it running."
+                &trf(
+                    "Click the xpress icon in the menu bar{}. Closing the window keeps it running.",
+                    &[&show],
                 ),
             );
             ui.separator();
@@ -2093,7 +2139,7 @@ impl XpressApp {
                         .width(230.0)
                         .show_ui(ui, |ui| {
                             for (i, (name, _)) in QUALITY_TARGETS.iter().enumerate() {
-                                ui.selectable_value(&mut self.quality_target, i, *name);
+                                ui.selectable_value(&mut self.quality_target, i, tr(name));
                             }
                         });
                 },
@@ -2801,7 +2847,9 @@ fn result_card(ui: &mut egui::Ui, card: &Card, index: usize) -> Option<CardActio
                                             reveal_in_file_manager(out);
                                         }
                                         if ui.small_button(tr("Copy")).clicked() {
-                                            xpress_core::clipboard::set_clipboard_png(out);
+                                            crate::pasteboard::write(
+                                                &xpress_core::clipboard::parts_for_file(out),
+                                            );
                                         }
                                     });
                                 }
@@ -2839,7 +2887,7 @@ fn result_card(ui: &mut egui::Ui, card: &Card, index: usize) -> Option<CardActio
                 ui.close();
             }
             if ui.button(tr("Copy")).clicked() {
-                xpress_core::clipboard::set_clipboard_png(&out);
+                crate::pasteboard::write(&xpress_core::clipboard::parts_for_file(&out));
                 ui.close();
             }
         });
@@ -2878,9 +2926,9 @@ fn convert_note(format: ImageFormat) -> String {
         ImageFormat::Png | ImageFormat::Tiff => tr(" · lossless"),
         _ => "",
     };
-    format!(
-        "Images are saved as {} next to the originals{caveat}",
-        format.label()
+    trf(
+        "Images are saved as {} next to the originals{}",
+        &[&format.label(), &caveat],
     )
 }
 
@@ -3272,11 +3320,7 @@ fn clipboard_image_to_file() -> Result<PathBuf, String> {
 
     let dir = clipboard_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let path = dir.join(format!("clip-{ts}.png"));
+    let path = xpress_core::clipboard::unique_clip_path(&dir);
     buf.save(&path).map_err(|e| e.to_string())?;
     Ok(path)
 }
@@ -3769,6 +3813,30 @@ mod tests {
             command: true,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn leaving_the_settings_cancels_a_recording() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = preferences(dir.path());
+        h.get_by_label("⌃⌘V").click();
+        h.run();
+        assert_eq!(h.state().recording, Some(Action::History));
+        assert!(h.state().registered.iter().all(Option::is_none));
+        // Still on screen: the recording goes on.
+        h.state_mut().end_stale_recording(false);
+        h.run();
+        assert_eq!(h.state().recording, Some(Action::History));
+
+        h.state_mut().end_stale_recording(false);
+        h.state_mut().tab = Tab::Optimise;
+        h.run();
+        h.state_mut().end_stale_recording(false);
+        assert_eq!(h.state().recording, None);
+        assert!(
+            h.state().registered.iter().all(Option::is_some),
+            "shortcuts back on"
+        );
     }
 
     #[test]

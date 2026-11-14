@@ -68,3 +68,21 @@ fn same_name_in_two_folders_is_refused() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("hero.png"));
     assert!(!d.join("dist/hero.png").exists());
 }
+
+#[test]
+fn a_failed_or_missing_file_fails_the_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    fs::copy(PNG, d.join("good.png")).unwrap();
+    fs::write(d.join("broken.png"), b"not a png").unwrap();
+
+    let out = xpress(d, &["optimise", "--no-backup", "good.png", "broken.png"]);
+    assert_eq!(out.status.code(), Some(1), "a broken file");
+
+    let out = xpress(d, &["optimise", "--no-backup", "good.png", "typo.png"]);
+    assert_eq!(out.status.code(), Some(1), "a missing file");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("typo.png"));
+
+    let out = xpress(d, &["optimise", "--no-backup", "--force", "good.png"]);
+    assert!(out.status.success());
+}

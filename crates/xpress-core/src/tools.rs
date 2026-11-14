@@ -7,7 +7,7 @@
 //!  4. the system `PATH` (via `which`)
 
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -272,30 +272,4 @@ where
         }
     }
     Err(last_err.unwrap())
-}
-
-/// Copy EXIF metadata from `src` to `dst` using exiftool, optionally stripping
-/// all metadata first. Best-effort: a missing exiftool is not fatal.
-pub fn copy_exif(src: &Path, dst: &Path, strip_metadata: bool, exclude_tags: &[&str]) {
-    if !is_available(Tool::Exiftool) {
-        return;
-    }
-    let mut args: Vec<String> = vec![
-        "-overwrite_original".into(),
-        "-TagsFromFile".into(),
-        src.display().to_string(),
-    ];
-    if strip_metadata {
-        // Keep only orientation/colour-critical tags when stripping.
-        args.push("-all=".into());
-        args.push("-icc_profile".into());
-        args.push("-Orientation".into());
-    } else {
-        args.push("-all:all".into());
-    }
-    for tag in exclude_tags {
-        args.push(format!("--{tag}"));
-    }
-    args.push(dst.display().to_string());
-    let _ = run(Tool::Exiftool, &args);
 }

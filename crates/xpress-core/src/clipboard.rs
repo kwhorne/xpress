@@ -6,12 +6,53 @@
 
 use std::path::{Path, PathBuf};
 
-/// Put the PNG at `path` onto the clipboard. Returns true on success.
-pub fn set_clipboard_png(path: &Path) -> bool {
-    match std::fs::read(path) {
-        Ok(bytes) => write(&[Part::Png(bytes)]),
-        Err(_) => false,
+/// What to put on the clipboard for the file at `path`: a PNG as image data
+/// (pastes into anything that takes a picture); any other file — JPEG, WebP,
+/// video, PDF, audio — as the file itself, so the paste is that exact (small)
+/// file rather than bytes mislabelled as PNG.
+pub fn parts_for_file(path: &Path) -> Vec<Part> {
+    let is_png = crate::filetype::extension_lower(path).as_deref() == Some("png");
+    if is_png {
+        if let Ok(bytes) = std::fs::read(path) {
+            return vec![Part::Png(bytes)];
+        }
     }
+    vec![Part::File(path.to_path_buf())]
+}
+
+/// The image at `path` as PNG bytes: a PNG as is, any other image decoded
+/// and re-encoded. `None` for files that aren't images.
+pub fn png_data(path: &Path) -> Option<Vec<u8>> {
+    if crate::filetype::extension_lower(path).as_deref() == Some("png") {
+        return std::fs::read(path).ok();
+    }
+    let img = crate::image::open_oriented(path).ok()?;
+    let mut out = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .ok()?;
+    Some(out)
+}
+
+/// Put the file at `path` on the clipboard (see [`parts_for_file`]).
+/// Returns true on success; always false off macOS (see [`write`]).
+pub fn copy_file(path: &Path) -> bool {
+    write(&parts_for_file(path))
+}
+
+/// `clip-<unix ms>.png` in `dir`, with a `-2`, `-3`, … suffix if two clips
+/// arrive within the same millisecond.
+pub fn unique_clip_path(dir: &Path) -> PathBuf {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mut path = dir.join(format!("clip-{ms}.png"));
+    let mut n = 2;
+    while path.exists() {
+        path = dir.join(format!("clip-{ms}-{n}.png"));
+        n += 1;
+    }
+    path
 }
 
 /// A pasteboard type xpress adds to everything it puts on the clipboard, so

@@ -378,7 +378,13 @@ fn write_webp(
 /// Rewrite a WebP file's metadata: drop any existing `ICCP`/`EXIF`/`XMP `
 /// chunks and add the ones in `meta`, with a `VP8X` header whose flags match.
 /// Returns `None` (keep the input) when it isn't a WebP we understand.
-fn webp_with_meta(webp: &[u8], meta: &Meta, w: u32, h: u32, alpha: bool) -> Option<Vec<u8>> {
+pub(crate) fn webp_with_meta(
+    webp: &[u8],
+    meta: &Meta,
+    w: u32,
+    h: u32,
+    alpha: bool,
+) -> Option<Vec<u8>> {
     if webp.len() < 12 || &webp[0..4] != b"RIFF" || &webp[8..12] != b"WEBP" {
         return None;
     }
@@ -602,6 +608,14 @@ pub fn optimise(
             #[cfg(target_os = "macos")]
             {
                 heic_encode(path, &temp_out, cq)?;
+                // `sips` carries all metadata (GPS included) over.
+                let stripped = tmp.path().join(format!(
+                    "stripped-{}",
+                    file_name_lossy(path).to_string_lossy()
+                ));
+                if crate::strip::strip_file(&temp_out, &stripped, strip)? {
+                    std::fs::rename(&stripped, &temp_out)?;
+                }
             }
             #[cfg(not(target_os = "macos"))]
             {
@@ -788,6 +802,33 @@ fn finalise(
     cq: CompressionQuality,
     options: &OptimiseOptions,
 ) -> Result<OptimisationResult, OptimiseError> {
+    // Not smaller, so the size guard would keep the original — metadata and
+    // all. When removing metadata was asked for, take it out of the original
+    // without re-encoding instead.
+    let strip = Strip::from_options(options);
+    let new_size = file_size(temp_out);
+    if strip != Strip::Keep && !options.allow_larger && (new_size == 0 || new_size >= old_size) {
+        let stripped = temp_out.with_file_name(format!(
+            "stripped-{}",
+            file_name_lossy(src).to_string_lossy()
+        ));
+        if crate::strip::strip_file(src, &stripped, strip)? {
+            return finish(
+                MediaKind::Image,
+                src,
+                &stripped,
+                src.to_path_buf(),
+                old_size,
+                cq.image_is_aggressive(),
+                options,
+                Placement {
+                    size_guard: false,
+                    backup: true,
+                    replace_source: false,
+                },
+            );
+        }
+    }
     finish(
         MediaKind::Image,
         src,

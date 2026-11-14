@@ -3,12 +3,14 @@
 //! [`trf`] fills `{}` placeholders in a translated template. Anything without
 //! a translation (messages from the engine, for one) stays English.
 //!
-//! The language is per thread: the UI thread sets it, background threads stay
-//! English (so text made there is translated when it's shown), and tests can
-//! use Norwegian without affecting tests running alongside.
+//! The language is process-wide, so text made on background threads ("Update
+//! failed: …", sync errors) is in the same language as the window. A thread
+//! that calls [`set`] keeps its own choice too; in tests only that, so a test
+//! can use Norwegian without affecting tests running alongside.
 
 use std::cell::Cell;
 use std::fmt::Display;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Lang {
@@ -16,16 +18,29 @@ pub enum Lang {
     Norwegian,
 }
 
+/// The app's language, for every thread (0 = English, 1 = Norwegian).
+static GLOBAL: AtomicU8 = AtomicU8::new(0);
+
 thread_local! {
-    static LANG: Cell<Lang> = const { Cell::new(Lang::English) };
+    /// This thread's own choice, if it made one.
+    static LANG: Cell<Option<Lang>> = const { Cell::new(None) };
 }
 
 pub fn set(lang: Lang) {
-    LANG.with(|l| l.set(lang));
+    LANG.with(|l| l.set(Some(lang)));
+    // Tests run in parallel: keep their choice to their own thread.
+    #[cfg(not(test))]
+    GLOBAL.store(lang as u8, Ordering::Relaxed);
 }
 
 pub fn current() -> Lang {
-    LANG.with(Cell::get)
+    LANG.with(Cell::get).unwrap_or_else(|| {
+        if GLOBAL.load(Ordering::Relaxed) == Lang::Norwegian as u8 {
+            Lang::Norwegian
+        } else {
+            Lang::English
+        }
+    })
 }
 
 /// The language for a setting: `en`, `nb`, or anything else for the
@@ -171,6 +186,8 @@ fn nb(s: &str) -> Option<&'static str> {
         "{}  ·  already optimised — skipped" => "{}  ·  allerede optimalisert — hoppet over",
         "  ·  aggressive" => "  ·  aggressiv",
         "  ·  copied back" => "  ·  kopiert tilbake",
+        "No supported files in this folder" => "Ingen støttede filer i denne mappen",
+        "The history could not be opened." => "Historikken kunne ikke åpnes.",
         "Image" => "Bilde",
         "Convert to another format" => "Konverter til et annet format",
         "Reveal" => "Vis",
@@ -557,12 +574,17 @@ mod tests {
     fn every_template_keeps_its_placeholders() {
         let source = include_str!("i18n.rs");
         let table = &source[source.find("fn nb(").unwrap()..source.find("#[cfg(test)]").unwrap()];
-        for line in table.lines().filter(|l| l.contains("\" => ")) {
-            let (en, nb) = line.split_once("\" => ").unwrap();
-            if !nb.contains('"') {
-                continue; // a long translation on the next line
-            }
+        let lines: Vec<&str> = table.lines().collect();
+        let mut checked = 0;
+        for (i, line) in lines.iter().enumerate() {
+            let Some((en, nb)) = line.split_once("\" => ") else {
+                continue;
+            };
+            // A long translation sits on the next line (`"…" => {`).
+            let nb = if nb.contains('"') { nb } else { lines[i + 1] };
             assert_eq!(en.matches("{}").count(), nb.matches("{}").count(), "{line}");
+            checked += 1;
         }
+        assert!(checked > 100, "parsed only {checked} entries");
     }
 }

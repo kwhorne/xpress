@@ -40,6 +40,29 @@ pub fn metadata_args(options: &OptimiseOptions) -> Vec<String> {
     }
 }
 
+/// Whether removing metadata (all of it, or the location) was asked for.
+pub(crate) fn strips(options: &OptimiseOptions) -> bool {
+    options.strip_metadata || options.strip_location
+}
+
+/// Copy the audio/video streams of `src` into `out` unchanged (no
+/// re-encode), dropping metadata as [`metadata_args`] says. Data tracks
+/// (e.g. timed location on iPhone clips) are left out.
+pub(crate) fn remux_stripped(
+    src: &Path,
+    out: &Path,
+    options: &OptimiseOptions,
+) -> Result<(), OptimiseError> {
+    let mut args: Vec<std::ffi::OsString> = ["-y", "-i"].map(Into::into).to_vec();
+    args.push(src.as_os_str().to_owned());
+    args.extend(["-map", "0:v?", "-map", "0:a?", "-c", "copy"].map(Into::into));
+    args.extend(metadata_args(options).into_iter().map(Into::into));
+    args.extend(["-hide_banner", "-nostats"].map(Into::into));
+    args.push(out.as_os_str().to_owned());
+    tools::run(Tool::Ffmpeg, &args)?;
+    Ok(())
+}
+
 /// Whether ffmpeg's stream banner (its `-i` output) shows an HDR video stream,
 /// i.e. a PQ (`smpte2084`) or HLG (`arib-std-b67`) transfer.
 pub fn describes_hdr(ffmpeg_stderr: &str) -> bool {
@@ -647,6 +670,35 @@ pub fn optimise_with_filter(
     };
 
     run_h264_encode(path, vf, build)?;
+
+    // Not smaller, so the size guard would keep the original with all its
+    // metadata: when removing it was asked for, remux the original without it.
+    let new_size = file_size(&temp_out);
+    if vf.is_none()
+        && strips(options)
+        && !options.allow_larger
+        && (new_size == 0 || new_size >= old_size)
+    {
+        let stripped = tmp.path().join(format!(
+            "stripped-{}",
+            crate::result::file_name_lossy(path).to_string_lossy()
+        ));
+        remux_stripped(path, &stripped, options)?;
+        return finish(
+            MediaKind::Video,
+            path,
+            &stripped,
+            path.to_path_buf(),
+            old_size,
+            cq.image_is_aggressive(),
+            options,
+            Placement {
+                size_guard: false,
+                backup: true,
+                replace_source: false,
+            },
+        );
+    }
 
     // A plain optimise must never replace a video with a bigger one — including
     // a `.mov` that would become a larger `.mp4` (e.g. an iPhone HEVC clip

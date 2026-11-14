@@ -20,11 +20,9 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, CommandFactory, Parser, Subcommand};
 
 use xpress_core::audio::AudioFormat;
-use xpress_core::collect_files;
 use xpress_core::compression::{CompressionQuality, CompressionTier};
 use xpress_core::filetype::MediaKind;
 use xpress_core::result::OptimiseOptions;
-use xpress_core::tools::{self, Tool};
 
 const CREDITS: &str = "Developed by Knut W. Horne · https://kwhorne.com";
 const LONG_VERSION: &str = concat!(
@@ -569,6 +567,26 @@ fn main() {
         eprintln!("{} {e:#}", render::ERROR_X);
         std::process::exit(1);
     }
+    // Scripts and CI must see a failed file, not just read the ❌.
+    if render::failures() > 0 {
+        std::process::exit(1);
+    }
+}
+
+/// [`xpress_core::collect_files`], warning (once) about inputs that don't
+/// exist — a typo must not pass silently — and counting them as failures.
+fn collect_files(items: &[PathBuf], recursive: bool, kinds: &[MediaKind]) -> Vec<PathBuf> {
+    static WARNED: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+    for item in items {
+        if !item.exists() {
+            let mut warned = WARNED.lock().unwrap_or_else(|e| e.into_inner());
+            if !warned.contains(item) {
+                warned.push(item.clone());
+                render::file_error(item, "no such file or folder");
+            }
+        }
+    }
+    xpress_core::collect_files(items, recursive, kinds)
 }
 
 fn run() -> Result<()> {
@@ -684,9 +702,8 @@ fn run_update(check_only: bool) -> Result<()> {
             Ok(())
         }
         Err(e) => {
-            eprintln!("{} automatic update failed: {e:#}", render::WARN);
             eprintln!("    download it manually from {}", info.url);
-            Ok(())
+            Err(e.context("automatic update failed"))
         }
     }
 }
@@ -1219,7 +1236,7 @@ fn run_crop_pdf(args: CropPdfArgs) -> Result<()> {
                     out.display()
                 );
             }
-            Err(e) => eprintln!("{} {} {} {e}", render::ERROR_X, f.display(), render::ARROW),
+            Err(e) => render::file_error(f, e),
         }
     }
     println!("\n{n} cropped");
@@ -1243,7 +1260,7 @@ fn run_uncrop_pdf(args: FilesArg) -> Result<()> {
                 n += 1;
                 println!("{} uncropped {}", render::CHECK, f.display());
             }
-            Err(e) => eprintln!("{} {} {} {e}", render::ERROR_X, f.display(), render::ARROW),
+            Err(e) => render::file_error(f, e),
         }
     }
     println!("\n{n} uncropped");
@@ -1256,10 +1273,10 @@ fn run_extract_pages(args: ExtractPagesArgs) -> Result<()> {
         bail!("no PDFs found");
     }
     for f in &files {
-        let out_dir = args
-            .out
-            .clone()
-            .unwrap_or_else(|| f.parent().map(|p| p.to_path_buf()).unwrap_or_default());
+        let out_dir = args.out.clone().unwrap_or_else(|| match f.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p.to_path_buf(),
+            _ => PathBuf::from("."),
+        });
         match xpress_core::pdf::extract_pages(f, &out_dir, &args.format, args.dpi) {
             Ok(pages) => println!(
                 "{} {} {} {} page(s)",
@@ -1268,7 +1285,7 @@ fn run_extract_pages(args: ExtractPagesArgs) -> Result<()> {
                 render::ARROW,
                 pages.len()
             ),
-            Err(e) => eprintln!("{} {} {} {e}", render::ERROR_X, f.display(), render::ARROW),
+            Err(e) => render::file_error(f, e),
         }
     }
     Ok(())
@@ -1286,12 +1303,7 @@ fn run_restore(args: FilesArg) -> Result<()> {
                 n += 1;
                 println!("{} restored {}", render::CHECK, original.display());
             }
-            Err(e) => eprintln!(
-                "{} {} {} {e}",
-                render::ERROR_X,
-                original.display(),
-                render::ARROW
-            ),
+            Err(e) => render::file_error(original, e),
         }
     }
     println!("\n{n} restored");
@@ -1310,12 +1322,7 @@ fn run_clean_backups(args: FilesArg) -> Result<()> {
                 n += 1;
                 println!("{} removed {}", render::CHECK, backup.display());
             }
-            Err(e) => eprintln!(
-                "{} {} {} {e}",
-                render::ERROR_X,
-                backup.display(),
-                render::ARROW
-            ),
+            Err(e) => render::file_error(backup, e),
         }
     }
     println!("\n{n} backups deleted");
@@ -1323,18 +1330,38 @@ fn run_clean_backups(args: FilesArg) -> Result<()> {
 }
 
 fn run_strip_exif(args: FilesArg) -> Result<()> {
-    if !tools::is_available(Tool::Exiftool) {
-        bail!("exiftool not found — install it (e.g. `brew install exiftool`)");
-    }
     let files = collect_files(&args.items, args.recursive, &[MediaKind::Image]);
     if files.is_empty() {
         bail!("no images found");
     }
+    let staging = tempfile::tempdir()?;
     for f in &files {
-        tools::copy_exif(f, f, true, &[]);
-        println!("{} stripped metadata from {}", render::CHECK, f.display());
+        let staged = staging.path().join(xpress_core::result::file_name_lossy(f));
+        match strip_exif_one(f, &staged) {
+            Ok(true) => println!("{} stripped metadata from {}", render::CHECK, f.display()),
+            Ok(false) => println!("{} no metadata to strip in {}", render::WARN, f.display()),
+            Err(e) => render::file_error(f, e),
+        }
     }
     Ok(())
+}
+
+/// Remove EXIF/XMP/IPTC/comments from `f` in place without re-encoding it
+/// (the colour profile and orientation stay), keeping its date.
+fn strip_exif_one(f: &Path, staged: &Path) -> Result<bool> {
+    use xpress_core::image::Strip;
+    let mtime = std::fs::metadata(f)?.modified().ok();
+    if !xpress_core::strip::strip_file(f, staged, Strip::All)? {
+        return Ok(false);
+    }
+    xpress_core::result::place_file(staged, f)?;
+    if let Some(t) = mtime {
+        let _ = std::fs::File::options()
+            .write(true)
+            .open(f)?
+            .set_modified(t);
+    }
+    Ok(true)
 }
 
 #[cfg(test)]

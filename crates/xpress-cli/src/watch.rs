@@ -359,7 +359,10 @@ fn clipboard_hash(img: &arboard::ImageData) -> u64 {
     img.width.hash(&mut hasher);
     img.height.hash(&mut hasher);
     img.bytes.len().hash(&mut hasher);
-    for b in img.bytes.iter().step_by(257).take(64) {
+    // Samples spread over the whole image: the first rows of two screenshots
+    // (the menu bar) are often identical.
+    let step = (img.bytes.len() / 4096).max(1);
+    for b in img.bytes.iter().step_by(step) {
         b.hash(&mut hasher);
     }
     hasher.finish()
@@ -373,11 +376,7 @@ fn handle_clipboard_image(
     steps: &[Step],
 ) -> Result<()> {
     // Write the raw RGBA pixels to a PNG (pure Rust, no ffmpeg), then optimise.
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let png = drop_dir.join(format!("clip-{ts}.png"));
+    let png = xpress_core::clipboard::unique_clip_path(drop_dir);
     xpress_core::image::save_rgba_png(&img.bytes, img.width as u32, img.height as u32, &png)?;
 
     // Optimise (or run the configured pipeline) on the saved PNG, in place.
@@ -392,8 +391,8 @@ fn handle_clipboard_image(
     };
     match result {
         Ok(r) => {
-            // Put the optimised PNG back on the clipboard so paste yields the smaller file.
-            let back = xpress_core::clipboard::set_clipboard_png(&r.output);
+            // Put the optimised result back on the clipboard so paste yields the smaller file.
+            let back = copy_back(&r.output);
             println!(
                 "{} clipboard image {} {}  (-{:.0}%){}",
                 render::CHECK,
@@ -406,6 +405,26 @@ fn handle_clipboard_image(
         Err(e) => bail!("{e}"),
     }
     Ok(())
+}
+
+/// Put an optimised clipboard image back. On macOS a PNG goes on as image
+/// data and any other format (after a converting pipeline) as the file
+/// itself; elsewhere as decoded pixels, which is what arboard can write.
+#[cfg(feature = "clipboard")]
+fn copy_back(path: &Path) -> bool {
+    if cfg!(target_os = "macos") {
+        return xpress_core::clipboard::copy_file(path);
+    }
+    let Ok(img) = xpress_core::image::open_oriented(path) else {
+        return false;
+    };
+    let rgba = img.to_rgba8();
+    let data = arboard::ImageData {
+        width: rgba.width() as usize,
+        height: rgba.height() as usize,
+        bytes: rgba.into_raw().into(),
+    };
+    arboard::Clipboard::new().is_ok_and(|mut c| c.set_image(data).is_ok())
 }
 
 #[cfg(feature = "clipboard")]
