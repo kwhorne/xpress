@@ -85,7 +85,11 @@ produces a signed, notarised `.app` zip and `.dmg`.
 
 Releases up to v1.0.0 were signed by *GETS AS (7G383N3VY7)*; later ones by
 *Knut Horne (52AT44QFCM)*. Update `MACOS_CERT_P12`, `MACOS_CERT_PASSWORD`,
-`MACOS_SIGN_IDENTITY` and `APPLE_TEAM_ID` together. After the switch the app
+`MACOS_SIGN_IDENTITY` and `APPLE_TEAM_ID` together, and `APPLE_ID` /
+`APPLE_APP_PASSWORD` too unless that Apple ID is a member of the new team
+(otherwise notarytool fails with HTTP 403, "Invalid or inaccessible developer
+team ID"). Check with a hand-started dry run (`gh workflow run release.yml`),
+which is notarised. After the switch the app
 only updates itself to builds from the same team (the self-update checks the
 Team ID), and macOS treats the new signature as a different app for
 permissions: users grant Accessibility (for "Paste directly") once more.
