@@ -72,16 +72,20 @@ making their corresponding source available).
 The macOS `xpress.app` (and `.dmg`) ships two helper programs in
 `Contents/Resources/bin`, run as separate processes:
 
-- **ffmpeg 6.0**, the macOS build published by the
-  [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) project (release
-  `b6.0`, pinned by SHA-256 in `scripts/fetch-static-tools.sh`). It is configured
-  with `--enable-gpl --enable-version3` (and includes libx264/libx265), so this
-  binary is licensed under the **GNU General Public License, version 3**. The
-  licence texts are in `Contents/Resources/licenses/` (`GPL-3.0.txt`,
-  `FFmpeg-LICENSE.md`). Corresponding source: FFmpeg 6.0 at
-  <https://ffmpeg.org/releases/ffmpeg-6.0.tar.xz>, with the build configuration
-  printed by `ffmpeg -version`; the GPL components from their upstream projects
-  (x264, x265, libvpx, …).
+- **ffmpeg 9.0.2**, the static macOS (Apple silicon) release build by
+  [Martin Riedl](https://ffmpeg.martin-riedl.de) (pinned by SHA-256 in
+  `scripts/fetch-static-tools.sh`). It is configured with `--enable-gpl
+  --enable-version3` (and includes libx264/libx265), so this binary is
+  licensed under the **GNU General Public License, version 3**. The licence
+  texts are in `Contents/Resources/licenses/` (`GPL-3.0.txt`,
+  `FFmpeg-LICENSE.md`). **Corresponding source**: the
+  [`ffmpeg-9.0.2-source`](https://github.com/kwhorne/xpress/releases/tag/ffmpeg-9.0.2-source)
+  release holds FFmpeg 9.0.2, every library linked into the binary at the
+  version used, and the build script that configured and built it
+  (collected by `scripts/ffmpeg-source.sh`). xpress 1.0.1 and earlier
+  bundled ffmpeg 6.0 from the ffmpeg-static project; its source is
+  FFmpeg 6.0 (<https://ffmpeg.org/releases/ffmpeg-6.0.tar.xz>) with the
+  libraries listed by its `ffmpeg -version`.
 - **xpress-ai**, xpress's own Apple Intelligence helper (MIT, built from
   `tools/xpress-ai`).
 

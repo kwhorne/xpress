@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- The app bundles **ffmpeg 9.0.2** (was 6.0), Martin Riedl's static macOS
+  build. The previous build for Apple silicon was marked by ffmpeg itself as
+  not redistributable (`--enable-nonfree`); the new one is plain GPL-3.0,
+  and its complete source is published in the
+  [`ffmpeg-9.0.2-source`](https://github.com/kwhorne/xpress/releases/tag/ffmpeg-9.0.2-source)
+  release. Release builds now check every encoder xpress uses against the
+  bundled ffmpeg, and refuse an ffmpeg build that isn't redistributable.
+
 ### Removed
 - **Intel Macs**: releases no longer include the app, `.dmg` or command line
   for Intel Macs, and the GitHub Action no longer runs on Intel macOS

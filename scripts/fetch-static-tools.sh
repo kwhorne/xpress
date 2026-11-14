@@ -10,11 +10,15 @@
 #   scripts/fetch-static-tools.sh <target-triple> <dest-dir>
 #     target-triple: aarch64-apple-darwin (releases are Apple silicon only)
 #
-# ffmpeg builds come from the eugeneware/ffmpeg-static project and link only
-# against macOS system frameworks. Each download is checked against the
-# SHA-256 pinned below *before* it is made executable or run; a changed or
-# tampered file stops the build. To move to a new build, download it, review
-# it, and update the tag and both checksums together.
+# ffmpeg is Martin Riedl's static macOS release build
+# (https://ffmpeg.martin-riedl.de, build script:
+# https://git.martin-riedl.de/ffmpeg/build-script); it links only against
+# macOS system frameworks. The download is checked against the SHA-256 pinned
+# below *before* it is unpacked or run; a changed or tampered file stops the
+# build. To move to a new build: download it, check that `ffmpeg -L` doesn't
+# say "nonfree" / "not legally redistributable", update FFMPEG_VERSION,
+# FFMPEG_BUILD and the checksum together, and publish a matching source
+# release (see NOTICE.md).
 #
 # Licence: this ffmpeg is configured with --enable-gpl --enable-version3
 # (GPL-3.0). make-app.sh ships the licence texts from assets/licenses/ in the
@@ -25,23 +29,23 @@ set -euo pipefail
 target="${1:?usage: fetch-static-tools.sh <target-triple> <dest-dir>}"
 dest="${2:?usage: fetch-static-tools.sh <target-triple> <dest-dir>}"
 
-FFMPEG_TAG="b6.0"
-base="https://github.com/eugeneware/ffmpeg-static/releases/download/${FFMPEG_TAG}"
+FFMPEG_VERSION="9.0.2"
+FFMPEG_BUILD="1789931890"
 case "$target" in
   aarch64-apple-darwin)
-    ff_url="$base/ffmpeg-darwin-arm64"
-    ff_sha256="a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584" ;;
-  *) echo "unsupported target: $target" >&2; exit 1 ;;
+    ff_url="https://ffmpeg.martin-riedl.de/download/macos/arm64/${FFMPEG_BUILD}_${FFMPEG_VERSION}/ffmpeg.zip"
+    ff_sha256="c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924" ;;
+  *) echo "unsupported target: $target (bundled ffmpeg is Apple silicon only)" >&2; exit 1 ;;
 esac
 
 mkdir -p "$dest"
-tmp="$(mktemp "$dest/.ffmpeg.XXXXXX")"
-trap 'rm -f "$tmp"' EXIT
+tmp="$(mktemp -d "$dest/.ffmpeg.XXXXXX")"
+trap 'rm -rf "$tmp"' EXIT
 
 echo "==> Downloading ffmpeg ($target)"
-curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp" "$ff_url"
+curl -fsSL --proto '=https' --tlsv1.2 -o "$tmp/ffmpeg.zip" "$ff_url"
 
-actual="$(shasum -a 256 "$tmp" | awk '{print $1}')"
+actual="$(shasum -a 256 "$tmp/ffmpeg.zip" | awk '{print $1}')"
 if [[ "$actual" != "$ff_sha256" ]]; then
   echo "ffmpeg checksum mismatch for $ff_url" >&2
   echo "  expected $ff_sha256" >&2
@@ -50,10 +54,17 @@ if [[ "$actual" != "$ff_sha256" ]]; then
 fi
 echo "    ✓ sha256 $actual"
 
-mv "$tmp" "$dest/ffmpeg"
-trap - EXIT
+unzip -q "$tmp/ffmpeg.zip" ffmpeg -d "$tmp"
+mv -f "$tmp/ffmpeg" "$dest/ffmpeg"
 chmod +x "$dest/ffmpeg"
 "$dest/ffmpeg" -version | head -1
+# Never bundle a build that ffmpeg itself calls unredistributable.
+if "$dest/ffmpeg" -hide_banner -L 2>&1 | grep -qi 'nonfree\|not legally redistributable'; then
+  echo "ffmpeg build has nonfree parts and may not be redistributed" >&2
+  rm -f "$dest/ffmpeg"
+  exit 1
+fi
+echo "    ✓ licence: GPL-3.0 (no nonfree parts)"
 
 echo "==> Done. Bundled tools in: $dest"
 echo "    (PDF/ghostscript is not bundled; install 'gs' for PDF optimisation.)"

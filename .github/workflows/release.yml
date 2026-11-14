@@ -16,6 +16,7 @@ on:
       - scripts/sign-binaries.sh
       - scripts/notarize.sh
       - scripts/fetch-static-tools.sh
+      - scripts/smoke-bundled-ffmpeg.sh
       - scripts/build-xpress-ai.sh
 
 # Building (and pull-request dry runs) only reads the repository; only the
@@ -91,6 +92,12 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: scripts/fetch-static-tools.sh "${{ matrix.target }}" bundle-tools
+
+      # Every encoder xpress uses, through the ffmpeg the app will bundle.
+      - name: Check xpress with the bundled ffmpeg
+        if: runner.os == 'macOS'
+        shell: bash
+        run: scripts/smoke-bundled-ffmpeg.sh "target/${{ matrix.target }}/release/xpress" bundle-tools
 
       - name: Import signing certificate
         if: runner.os == 'macOS' && env.MACOS_CERT_P12 != ''
