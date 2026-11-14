@@ -17,6 +17,9 @@ serde.workspace = true
 serde_json.workspace = true
 regex.workspace = true
 tempfile.workspace = true
+# Physical file identity (inode / file index): `IMG.MP4` and `IMG.mp4` are the
+# same file on case-insensitive APFS/NTFS.
+same-file = "1"
 imagesize = "0.13"
 lopdf = { version = "0.45", default-features = false }
 ureq = "2"

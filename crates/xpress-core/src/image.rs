@@ -395,6 +395,8 @@ fn webp_with_meta(webp: &[u8], meta: &Meta, w: u32, h: u32, alpha: bool) -> Opti
             return None;
         }
         match fourcc {
+            // VP8X is always 10 bytes; anything else isn't a WebP we understand.
+            b"VP8X" if size != 10 => return None,
             b"VP8X" => vp8x = Some(webp[pos + 8..end].to_vec()),
             b"ICCP" | b"EXIF" | b"XMP " => {}
             _ => {
@@ -414,8 +416,8 @@ fn webp_with_meta(webp: &[u8], meta: &Meta, w: u32, h: u32, alpha: bool) -> Opti
     const XMP_FLAG: u8 = 0x04;
     let mut header = vp8x.unwrap_or_else(|| {
         let mut v = vec![0u8; 10];
-        v[4..7].copy_from_slice(&(w - 1).to_le_bytes()[..3]);
-        v[7..10].copy_from_slice(&(h - 1).to_le_bytes()[..3]);
+        v[4..7].copy_from_slice(&w.saturating_sub(1).to_le_bytes()[..3]);
+        v[7..10].copy_from_slice(&h.saturating_sub(1).to_le_bytes()[..3]);
         v
     });
     header[0] &= !(ICC_FLAG | EXIF_FLAG | XMP_FLAG);
@@ -815,6 +817,7 @@ pub(crate) fn finish_transformed(
     let optimised = tmp.path().join(file_name_lossy(transformed));
     let staged_opts = OptimiseOptions {
         output: Some(optimised),
+        output_follows_format: false,
         backup: false,
         allow_larger: true,
         preserve_dates: false,
@@ -878,6 +881,7 @@ pub fn optimise_adaptive(
     let c_same = tmp.path().join(format!("c0_same.{src_ext}"));
     let same_opts = OptimiseOptions {
         output: Some(c_same.clone()),
+        output_follows_format: false,
         backup: false,
         allow_larger: true,
         ..options.clone()
@@ -897,6 +901,7 @@ pub fn optimise_adaptive(
         let c = tmp.path().join(format!("c{}.{}", i + 1, fmt.extension()));
         let opts = OptimiseOptions {
             output: Some(c.clone()),
+            output_follows_format: false,
             backup: false,
             allow_larger: true,
             ..options.clone()

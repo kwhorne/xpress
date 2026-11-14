@@ -376,6 +376,7 @@ fn apply_step(
     // Per-step options: write to `target`, never back up intermediates.
     let opts = OptimiseOptions {
         output: Some(target.to_path_buf()),
+        output_follows_format: false,
         backup: false,
         allow_larger: true,
         ..base.clone()

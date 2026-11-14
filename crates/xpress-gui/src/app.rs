@@ -182,6 +182,9 @@ pub struct XpressApp {
     last_update_check: Instant,
     update_dismissed: bool,
     updating: Arc<AtomicBool>,
+    /// Set by the update thread once the swap helper is running: the UI thread
+    /// saves settings and quits so the helper can replace the bundle.
+    restart_for_update: Arc<AtomicBool>,
     update_status: Arc<Mutex<Option<String>>>,
 
     _tray: Option<TrayIcon>,
@@ -356,6 +359,7 @@ impl XpressApp {
             last_update_check: Instant::now(),
             update_dismissed: false,
             updating: Arc::new(AtomicBool::new(false)),
+            restart_for_update: Arc::new(AtomicBool::new(false)),
             update_status: Arc::new(Mutex::new(None)),
             _tray: tray,
             _services: services,
@@ -1000,19 +1004,26 @@ impl XpressApp {
     }
 
     /// Download the latest release, replace this .app, and relaunch. macOS only.
-    fn start_self_update(&mut self, url: String) {
+    fn start_self_update(&mut self, url: String, ctx: &egui::Context) {
         if self.updating.swap(true, Ordering::SeqCst) {
             return;
         }
         *self.update_status.lock().unwrap() = Some(tr("Downloading update…").into());
         let updating = self.updating.clone();
+        let restart = self.restart_for_update.clone();
         let status = self.update_status.clone();
+        let ctx = ctx.clone();
         std::thread::spawn(move || {
-            if let Err(e) = perform_self_update(&url, &status) {
-                *status.lock().unwrap() = Some(trf("Update failed: {}", &[&e]));
-                updating.store(false, Ordering::SeqCst);
+            match perform_self_update(&url, &status) {
+                // The helper is waiting for us to quit; the UI thread does that
+                // (after saving settings) on its next frame.
+                Ok(()) => restart.store(true, Ordering::SeqCst),
+                Err(e) => {
+                    *status.lock().unwrap() = Some(trf("Update failed: {}", &[&e]));
+                    updating.store(false, Ordering::SeqCst);
+                }
             }
-            // On success the process re-launches and exits; nothing to do here.
+            ctx.request_repaint();
         });
     }
 
@@ -1029,6 +1040,7 @@ impl XpressApp {
             strip_location: self.strip_location,
             preserve_dates: true,
             output: None,
+            output_follows_format: false,
             allow_larger: false,
             use_cache: self.skip_optimised,
         }
@@ -1294,6 +1306,11 @@ impl eframe::App for XpressApp {
                 Some(Action::History) => self.open_history(ctx),
                 None => {}
             }
+        }
+
+        if self.restart_for_update.load(Ordering::SeqCst) {
+            self.persist_settings(true);
+            std::process::exit(0);
         }
 
         self.drain_results();
@@ -2241,7 +2258,7 @@ impl XpressApp {
                 self.check_for_updates(&ctx);
             }
             if let Some(url) = start_update {
-                self.start_self_update(url);
+                self.start_self_update(url, &ctx);
             }
         });
     }
@@ -2260,6 +2277,7 @@ impl XpressApp {
         let updating = self.updating.load(Ordering::Relaxed);
         let status = self.update_status.lock().unwrap().clone();
         let can_auto = can_self_update(&info);
+        let ctx = root.ctx().clone();
         let dl = info.download_url.clone();
         let mut start_update: Option<String> = None;
         egui::Panel::top("update_banner")
@@ -2309,7 +2327,7 @@ impl XpressApp {
                 });
             });
         if let Some(url) = start_update {
-            self.start_self_update(url);
+            self.start_self_update(url, &ctx);
         }
     }
 
@@ -3037,24 +3055,78 @@ fn app_bundle_path() -> Option<PathBuf> {
 
 /// True when we're running from an installed .app (so self-update makes sense).
 fn can_self_update(info: &xpress_core::update::UpdateInfo) -> bool {
-    cfg!(target_os = "macos") && info.download_url.is_some() && app_bundle_path().is_some()
+    cfg!(target_os = "macos")
+        && info.download_url.is_some()
+        && app_bundle_path().is_some_and(|app| self_update_blocker(&app).is_none())
 }
 
-/// Download the new .app zip, swap it into place, and relaunch. macOS only.
+/// Why this copy of the app can't replace itself, if it can't: run from a
+/// disk image or a translocated (quarantined) copy, managed by Homebrew, or
+/// in a folder we may not write to.
+fn self_update_blocker(app: &Path) -> Option<&'static str> {
+    let s = app.to_string_lossy();
+    if s.starts_with("/Volumes/") {
+        return Some("running from a disk image; copy xpress to Applications first");
+    }
+    if s.contains("/AppTranslocation/") {
+        return Some("macOS is running a quarantined copy; move xpress to Applications first");
+    }
+    let parent = app.parent()?;
+    if s.contains("/Caskroom/")
+        || Path::new("/opt/homebrew/Caskroom/xpress").exists()
+        || Path::new("/usr/local/Caskroom/xpress").exists()
+    {
+        return Some("installed with Homebrew; run `brew upgrade xpress`");
+    }
+    let probe = tempfile::Builder::new()
+        .prefix(".xpress-probe-")
+        .tempfile_in(parent);
+    if probe.is_err() {
+        return Some("no permission to replace the app in its folder");
+    }
+    None
+}
+
+/// The signing team of an app bundle (`TeamIdentifier=` in `codesign -dv`),
+/// or `None` when unsigned / ad-hoc signed.
+fn codesign_team(app: &Path) -> Option<String> {
+    let out = std::process::Command::new("codesign")
+        .args(["-dv", "--verbose=2"])
+        .arg(app)
+        .output()
+        .ok()?;
+    // codesign prints the details on stderr.
+    String::from_utf8_lossy(&out.stderr)
+        .lines()
+        .find_map(|l| l.strip_prefix("TeamIdentifier="))
+        .map(str::trim)
+        .filter(|t| !t.is_empty() && *t != "not set")
+        .map(str::to_owned)
+}
+
+/// Download the new .app zip, verify it, and start a helper that swaps it into
+/// place once we quit and relaunches it. macOS only. On `Ok` the caller must
+/// quit promptly (the helper waits for this process to exit).
 fn perform_self_update(url: &str, status: &Arc<Mutex<Option<String>>>) -> Result<(), String> {
     let old_app = app_bundle_path().ok_or("not running from an .app bundle")?;
+    if let Some(why) = self_update_blocker(&old_app) {
+        return Err(why.into());
+    }
 
     let bytes = xpress_core::update::download_verified(url)?;
     *status.lock().unwrap() = Some(tr("Installing update…").into());
 
-    let tmp = std::env::temp_dir().join(format!("xpress-update-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&tmp);
-    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    let zip = tmp.join("update.zip");
+    // A private, unpredictable folder. Kept after we return: the helper uses
+    // it after this process has exited and removes it when done.
+    let tmp = tempfile::Builder::new()
+        .prefix("xpress-update-")
+        .tempdir()
+        .map_err(|e| e.to_string())?;
+    let zip = tmp.path().join("update.zip");
     std::fs::write(&zip, &bytes).map_err(|e| e.to_string())?;
 
     // Extract with ditto (preserves signatures/permissions).
-    let extract = tmp.join("extract");
+    let extract = tmp.path().join("extract");
     std::fs::create_dir_all(&extract).map_err(|e| e.to_string())?;
     let ok = std::process::Command::new("ditto")
         .args(["-x", "-k"])
@@ -3072,14 +3144,54 @@ fn perform_self_update(url: &str, status: &Arc<Mutex<Option<String>>>) -> Result
         .find(|p| p.extension().map(|e| e == "app").unwrap_or(false))
         .ok_or("no .app found in update archive")?;
 
-    // A helper that waits for us to quit, swaps the bundle, and relaunches.
-    let script = tmp.join("apply.sh");
+    // The new bundle must be intact and, when this copy is Developer ID
+    // signed, signed by the same team.
+    let verified = std::process::Command::new("codesign")
+        .args(["--verify", "--deep", "--strict"])
+        .arg(&new_app)
+        .status()
+        .map_err(|e| e.to_string())?
+        .success();
+    if !verified {
+        return Err("the downloaded app's signature is invalid".into());
+    }
+    if let Some(team) = codesign_team(&old_app) {
+        if codesign_team(&new_app).as_deref() != Some(team.as_str()) {
+            return Err("the downloaded app is not signed by the same developer".into());
+        }
+    }
+
+    // A helper that waits for us to quit, then swaps the bundle without ever
+    // leaving the user with no app: the new bundle is copied next to the old
+    // one first, then two renames swap them; any failure puts the old back.
+    let script = tmp.path().join("apply.sh");
     let script_body = format!(
-        "#!/bin/bash\nset -e\nOLD={old}\nNEW={new}\nPID={pid}\n\
-for i in $(seq 1 200); do kill -0 \"$PID\" 2>/dev/null || break; sleep 0.1; done\n\
-rm -rf \"$OLD\"\nditto \"$NEW\" \"$OLD\"\nopen \"$OLD\"\n",
+        r#"#!/bin/bash
+OLD={old}
+NEW={new}
+TMP={tmp}
+PID={pid}
+STAGE="$OLD.xpress-new"
+BAK="$OLD.xpress-old"
+for i in $(seq 1 300); do kill -0 "$PID" 2>/dev/null || break; sleep 0.1; done
+if kill -0 "$PID" 2>/dev/null; then rm -rf "$TMP"; exit 1; fi
+rm -rf "$STAGE" "$BAK"
+if ditto "$NEW" "$STAGE"; then
+  if mv "$OLD" "$BAK"; then
+    if mv "$STAGE" "$OLD"; then
+      rm -rf "$BAK"
+    else
+      mv "$BAK" "$OLD"
+    fi
+  fi
+fi
+rm -rf "$STAGE"
+open "$OLD"
+rm -rf "$TMP"
+"#,
         old = shell_quote(&old_app),
         new = shell_quote(&new_app),
+        tmp = shell_quote(tmp.path()),
         pid = std::process::id(),
     );
     std::fs::write(&script, script_body).map_err(|e| e.to_string())?;
@@ -3089,10 +3201,9 @@ rm -rf \"$OLD\"\nditto \"$NEW\" \"$OLD\"\nopen \"$OLD\"\n",
         .arg(&script)
         .spawn()
         .map_err(|e| e.to_string())?;
-
-    // Give the helper a moment to start, then quit so it can replace us.
-    std::thread::sleep(Duration::from_millis(300));
-    std::process::exit(0);
+    // From here on the helper owns the folder.
+    let _ = tmp.keep();
+    Ok(())
 }
 
 fn shell_quote(p: &Path) -> String {

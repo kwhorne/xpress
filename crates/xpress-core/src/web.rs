@@ -185,6 +185,7 @@ pub fn generate(
                 .join(format!("{stem}-{w}.{}", format.extension()));
             let opts = OptimiseOptions {
                 output: Some(out.clone()),
+                output_follows_format: false,
                 backup: false,
                 ..base.clone()
             };

@@ -147,6 +147,7 @@ fn audio_to_budget(
         let out = tmp.join(format!("rate{attempt}.{}", format.file_extension()));
         let opts = OptimiseOptions {
             output: Some(out.clone()),
+            output_follows_format: false,
             backup: false,
             allow_larger: true,
             ..base.clone()
@@ -194,6 +195,7 @@ fn ladder(
         let opts = OptimiseOptions {
             compression: CompressionQuality::new(CompressionTier::Custom, factor),
             output: Some(candidate.clone()),
+            output_follows_format: false,
             backup: false,
             allow_larger: true,
             ..base.clone()

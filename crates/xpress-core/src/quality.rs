@@ -135,6 +135,7 @@ fn staged(base: &OptimiseOptions, factor: i32, out: &Path) -> OptimiseOptions {
     OptimiseOptions {
         compression: CompressionQuality::factor(factor),
         output: Some(out.to_path_buf()),
+        output_follows_format: false,
         backup: false,
         allow_larger: true,
         preserve_dates: false,
