@@ -84,9 +84,14 @@ impl Task {
                  and formatting."
             }
         };
+        // Translating changes the language by definition; everything else
+        // must answer in the language it was given.
+        let language = match self {
+            Task::TranslateToEnglish => "",
+            _ => " Keep the language of the text unless asked otherwise.",
+        };
         format!(
-            "{what} Keep the language of the text unless asked otherwise. Reply with the \
-             result only — no introduction, no quotes, no notes."
+            "{what}{language} Reply with the result only — no introduction, no quotes, no notes."
         )
     }
 }
@@ -214,25 +219,44 @@ fn run_helper(
             let _ = pipe.write_all(text.as_bytes());
         });
     }
+    // Read both pipes while waiting: a long answer fills the pipe buffer, and
+    // the helper would block on writing it while we wait for it to exit.
+    let drain = |pipe: Option<Box<dyn std::io::Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let stdout = drain(child.stdout.take().map(|p| Box::new(p) as _));
+    let stderr = drain(child.stderr.take().map(|p| Box::new(p) as _));
     let started = std::time::Instant::now();
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() > timeout => {
                 let _ = child.kill();
+                let _ = child.wait(); // reap it: no zombie
                 return Err("Apple Intelligence took too long.".into());
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(30)),
-            Err(e) => return Err(e.to_string()),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(e.to_string());
+            }
         }
-    }
-    let out = child.wait_with_output().map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let stdout = stdout.join().unwrap_or_default();
+    let stderr = stderr.join().unwrap_or_default();
+    if status.success() {
+        Ok(String::from_utf8_lossy(&stdout).into_owned())
     } else {
-        let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        let msg = String::from_utf8_lossy(&stderr).trim().to_string();
         Err(if msg.is_empty() {
-            format!("Apple Intelligence failed ({})", out.status)
+            format!("Apple Intelligence failed ({status})")
         } else {
             msg
         })
@@ -269,6 +293,9 @@ mod tests {
         }
         assert!(Task::Proofread.instructions().contains("Keep the language"));
         assert!(Task::TranslateToEnglish.instructions().contains("English"));
+        assert!(!Task::TranslateToEnglish
+            .instructions()
+            .contains("Keep the language"));
     }
 
     #[test]

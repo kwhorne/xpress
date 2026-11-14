@@ -242,9 +242,9 @@ Give either the files or the folders that contain the backups.
 xpress strip-exif [-r] <ITEMS>...
 ```
 
-Removes metadata from images in place without re-encoding (keeps orientation
-and colour profile). Needs `exiftool`. Alternative without extra tools:
-`xpress optimise --strip-metadata`.
+Removes metadata (EXIF, XMP, IPTC, comments) from images in place without
+re-encoding (keeps orientation and colour profile). JPEG, PNG and WebP need no
+extra tools; HEIC, AVIF, TIFF and JXL need `exiftool`.
 
 ## Information
 

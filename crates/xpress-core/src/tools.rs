@@ -7,7 +7,7 @@
 //!  4. the system `PATH` (via `which`)
 
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -151,14 +151,24 @@ fn bin_dirs() -> Vec<PathBuf> {
 /// Resolve the absolute path to a tool.
 pub fn resolve(tool: Tool) -> Result<PathBuf, ToolError> {
     let name = tool.binary_name();
+    // Ghostscript's console binary is `gswin64c` (or `gswin32c`) on Windows.
+    let names: &[&str] = match tool {
+        Tool::Ghostscript if cfg!(windows) => &["gswin64c", "gswin32c", "gs"],
+        _ => std::slice::from_ref(&name),
+    };
     for dir in bin_dirs() {
-        // `ffmpeg.exe` on Windows.
-        let candidate = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
-        if candidate.is_file() {
-            return Ok(candidate);
+        for n in names {
+            // `ffmpeg.exe` on Windows.
+            let candidate = dir.join(format!("{n}{}", std::env::consts::EXE_SUFFIX));
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
         }
     }
-    which::which(name).map_err(|_| ToolError::NotFound(name))
+    names
+        .iter()
+        .find_map(|n| which::which(n).ok())
+        .ok_or(ToolError::NotFound(name))
 }
 
 /// Whether a tool is available without erroring.
@@ -177,6 +187,12 @@ pub fn is_arm64() -> bool {
     cfg!(target_arch = "aarch64")
 }
 
+/// Whether ffmpeg's VideoToolbox (Apple silicon hardware) encoders apply:
+/// macOS on arm64 only — not Linux or Windows on ARM.
+pub fn has_videotoolbox() -> bool {
+    cfg!(all(target_os = "macos", target_arch = "aarch64"))
+}
+
 /// Run a tool to completion, capturing stdout/stderr. Errors on non-zero exit.
 /// Honours the timeout set via [`set_timeout`], killing the process if exceeded.
 pub fn run<I, S>(tool: Tool, args: I) -> Result<Output, ToolError>
@@ -184,10 +200,23 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
 {
+    run_in(tool, args, None)
+}
+
+/// [`run`] with the working directory set to `dir` (when given).
+pub fn run_in<I, S>(tool: Tool, args: I, dir: Option<&Path>) -> Result<Output, ToolError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
     let path = resolve(tool)?;
     let name = tool.binary_name();
 
-    let mut child = Command::new(&path)
+    let mut cmd = Command::new(&path);
+    if let Some(dir) = dir {
+        cmd.current_dir(dir);
+    }
+    let mut child = cmd
         .args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())

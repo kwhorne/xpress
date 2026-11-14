@@ -350,6 +350,18 @@ pub fn finish(
 ) -> Result<OptimisationResult, OptimiseError> {
     let new_size = file_size(staged);
     if placement.size_guard && !options.allow_larger && (new_size == 0 || new_size >= old_size) {
+        // Nothing smaller to write. An explicit `-o` still gets the file (the
+        // original, as is), like a cache hit does, so scripts find it there.
+        if let Some(out) = options.output.as_ref().filter(|o| !same_file(o, src)) {
+            place_file(src, out)?;
+            if options.preserve_dates {
+                copy_dates(src, out);
+            }
+            return Ok(OptimisationResult {
+                output: out.clone(),
+                ..unchanged(kind, src, old_size, aggressive)
+            });
+        }
         return Ok(unchanged(kind, src, old_size, aggressive));
     }
 
@@ -548,6 +560,36 @@ mod tests {
             retarget_extension(Path::new("dist/photo.png"), src, src),
             PathBuf::from("dist/photo.png")
         );
+    }
+
+    #[test]
+    fn explicit_output_is_written_even_when_nothing_shrinks() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("a.png");
+        let staged = dir.path().join("staged");
+        let out = dir.path().join("dist/a.png");
+        fs::write(&src, b"small").unwrap();
+        fs::write(&staged, b"not smaller").unwrap();
+        let r = finish(
+            MediaKind::Image,
+            &src,
+            &staged,
+            src.clone(),
+            5,
+            false,
+            &OptimiseOptions {
+                output: Some(out.clone()),
+                ..opts(false)
+            },
+            Placement {
+                size_guard: true,
+                backup: true,
+                replace_source: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(r.output, out);
+        assert_eq!(fs::read(&out).unwrap(), b"small");
     }
 
     #[test]

@@ -7,7 +7,7 @@
 //! Each step transforms the working file and feeds the next. The final artifact
 //! is placed at the pipeline output (or back next to the source).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
@@ -84,7 +84,8 @@ impl CropArgs {
 
 /// Parse a full pipeline string into steps.
 pub fn parse(dsl: &str) -> Result<Vec<Step>, String> {
-    dsl.split("->")
+    split_unquoted(dsl, "->")
+        .into_iter()
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .map(parse_step)
@@ -225,7 +226,7 @@ fn parse_args(s: &str) -> Result<Vec<(String, String)>, String> {
         return Ok(vec![]);
     }
     let mut out = Vec::new();
-    for part in s.split(',') {
+    for part in split_unquoted(s, ",") {
         let part = part.trim();
         if part.is_empty() {
             continue;
@@ -237,6 +238,33 @@ fn parse_args(s: &str) -> Result<Vec<(String, String)>, String> {
         out.push((k.trim().to_string(), v));
     }
     Ok(out)
+}
+
+/// Split `s` at `sep`, except inside '…' or "…" (a watermark path or script
+/// may contain `,` or `->`).
+fn split_unquoted<'a>(s: &'a str, sep: &str) -> Vec<&'a str> {
+    let mut parts = Vec::new();
+    let mut quote: Option<char> = None;
+    let mut start = 0;
+    let mut i = 0;
+    while i < s.len() {
+        let c = s[i..].chars().next().unwrap_or_default();
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if s[i..].starts_with(sep) => {
+                parts.push(&s[start..i]);
+                i += sep.len();
+                start = i;
+                continue;
+            }
+            None => {}
+        }
+        i += c.len_utf8();
+    }
+    parts.push(&s[start..]);
+    parts
 }
 
 fn parse_factor(v: &str) -> Result<f64, String> {
@@ -283,8 +311,7 @@ pub fn run(
         counter += 1;
         let next_ext = step_output_ext(step, &current);
         let target = work.path().join(format!("s{counter}.{next_ext}"));
-        apply_step(step, &current, &target, options)?;
-        current = target;
+        current = apply_step(step, &current, &target, options)?;
     }
 
     // Place the final artifact: a same-type result replaces the source (with a
@@ -371,7 +398,7 @@ fn apply_step(
     current: &Path,
     target: &Path,
     base: &OptimiseOptions,
-) -> Result<(), OptimiseError> {
+) -> Result<PathBuf, OptimiseError> {
     // Per-step options: write to `target`, never back up intermediates.
     let opts = OptimiseOptions {
         output: Some(target.to_path_buf()),
@@ -403,7 +430,8 @@ fn apply_step(
                     )));
                 }
             } else if let Some(f) = ImageFormat::from_str(to) {
-                image::convert(current, f, &opts)?;
+                // Like `xpress convert`: a PNG keeps every pixel.
+                image::convert_with(current, f, &opts, true)?;
             } else if let Some(a) = AudioFormat::from_target(to) {
                 audio::optimise(current, &opts, a, None)?;
             } else {
@@ -435,7 +463,16 @@ fn apply_step(
         }
         Step::Adaptive => {
             if classify(current) == Some(MediaKind::Image) {
-                image::optimise_adaptive(current, &opts)?;
+                // Adaptive may pick another format (photo.png -> WebP/JPEG):
+                // let the output's extension follow, and carry on from there.
+                let follow = OptimiseOptions {
+                    output_follows_format: true,
+                    ..opts.clone()
+                };
+                let r = image::optimise_adaptive(current, &follow)?;
+                if r.output.is_file() {
+                    return Ok(r.output);
+                }
             } else {
                 crate::optimise_file(current, &opts, AudioFormat::SameAsInput, None)?;
             }
@@ -449,7 +486,7 @@ fn apply_step(
             opacity,
             scale,
         } => {
-            let overlay = std::path::PathBuf::from(img);
+            let overlay = std::path::PathBuf::from(crate::expand_home(img));
             crate::effects::watermark(
                 current,
                 target,
@@ -479,7 +516,7 @@ fn apply_step(
             "step produced no output: {step:?}"
         )));
     }
-    Ok(())
+    Ok(target.to_path_buf())
 }
 
 /// Render steps back to canonical DSL (for `pipeline show`).
@@ -588,6 +625,49 @@ fn parse_size(v: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quoted_values_may_contain_separators() {
+        let steps = parse(r#"watermark(image: "~/logos/a, b -> c.png", opacity: 0.5) -> optimise"#)
+            .unwrap();
+        assert_eq!(steps.len(), 2);
+        match &steps[0] {
+            Step::Watermark { image, opacity, .. } => {
+                assert_eq!(image, "~/logos/a, b -> c.png");
+                assert_eq!(*opacity, 0.5);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(steps[1], Step::Optimise);
+    }
+
+    #[test]
+    fn adaptive_output_carries_the_chosen_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("photo.png");
+        // Photo-like noise: JPEG/WebP beat PNG by far.
+        let mut seed = 0x2545_f491_u32;
+        let img = ::image::RgbImage::from_fn(384, 384, |x, y| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            let n = (seed % 24) as u8;
+            let (x, y) = (x * 255 / 384, y * 255 / 384);
+            ::image::Rgb([x as u8 ^ n, y as u8 ^ n, ((x + y) / 2) as u8 ^ n])
+        });
+        img.save(&src).unwrap();
+        let opts = OptimiseOptions {
+            backup: false,
+            use_cache: false,
+            ..OptimiseOptions::default()
+        };
+        let r = run(&src, &[Step::Adaptive], &opts).unwrap();
+        let bytes = std::fs::read(&r.output).unwrap();
+        let actual = ::image::guess_format(&bytes).unwrap();
+        let by_name = ::image::ImageFormat::from_path(&r.output).unwrap();
+        assert_ne!(by_name, ::image::ImageFormat::Png, "the scenario: PNG lost");
+        assert_eq!(actual, by_name, "{} holds {actual:?}", r.output.display());
+    }
 
     #[test]
     fn parse_chain() {

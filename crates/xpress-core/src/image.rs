@@ -888,21 +888,9 @@ pub(crate) fn finish_transformed(
 /// Cheap transparency check: reads the PNG IHDR colour-type byte (6 = RGBA,
 /// 4 = gray+alpha). Non-PNG inputs conservatively report no alpha.
 pub fn has_alpha(path: &Path) -> bool {
-    let Some(ext) = extension_lower(path) else {
-        return false;
-    };
-    if ext != "png" {
-        return false;
-    }
-    use std::io::Read;
-    let Ok(mut f) = std::fs::File::open(path) else {
-        return false;
-    };
-    let mut header = [0u8; 26];
-    if f.read_exact(&mut header).is_err() {
-        return false;
-    }
-    matches!(header[25], 4 | 6)
+    // The decoder reports alpha for RGBA/grey+alpha PNGs, paletted PNGs with
+    // a tRNS chunk, and transparent WebP/AVIF/GIF/TIFF alike (header only).
+    open_decoder(path).is_ok_and(|d| d.color_type().has_alpha())
 }
 
 /// Adaptively optimise an image: try the in-format optimisation plus JPEG and

@@ -341,14 +341,37 @@ pub fn change_speed(
         src.display().to_string(),
         "-filter:v".into(),
         format!("setpts={pts:.5}*PTS"),
-        "-filter:a".into(),
-        format!("atempo={f:.5}"),
     ];
-    args.extend(options.compression.video_h264_args(tools::is_arm64()));
+    // A clip without sound has no audio to retime.
+    if probe(src).is_none_or(|i| i.has_audio) {
+        args.extend(["-filter:a".into(), atempo_chain(f)]);
+    }
+    args.extend(
+        options
+            .compression
+            .video_h264_args(tools::has_videotoolbox()),
+    );
     args.extend(["-hide_banner", "-nostats"].map(String::from));
     args.push(dst.display().to_string());
     tools::run(Tool::Ffmpeg, &args)?;
     Ok(())
+}
+
+/// An `atempo` filter for `factor`. One `atempo` only takes 0.5–100, so
+/// slower speeds are a chain (0.25× = `atempo=0.5,atempo=0.5`).
+fn atempo_chain(factor: f64) -> String {
+    let mut f = factor;
+    let mut parts = Vec::new();
+    while f < 0.5 {
+        parts.push("atempo=0.5".to_string());
+        f /= 0.5;
+    }
+    while f > 100.0 {
+        parts.push("atempo=100".to_string());
+        f /= 100.0;
+    }
+    parts.push(format!("atempo={f:.5}"));
+    parts.join(",")
 }
 
 /// Target codecs for explicit video conversion.
@@ -393,7 +416,7 @@ pub fn convert_codec(
     let old_size = file_size(path);
     let cq = options.compression;
     let crf = cq.video_h264_crf(); // 17..32 baseline
-    let arm = tools::is_arm64();
+    let arm = tools::has_videotoolbox();
     let s = |v: &str| v.to_string();
 
     let ext = codec.container_ext();
@@ -535,7 +558,11 @@ pub fn to_gif(
         .path()
         .join(format!("{}.gif", crate::result::file_stem_lossy(path)));
 
-    if tools::is_available(Tool::Gifski) {
+    // Frames are passed to gifski as arguments; past this many the command
+    // line gets too long (Windows allows 32 KB), so ffmpeg does it alone.
+    const GIFSKI_MAX_FRAMES: f64 = 2000.0;
+    let few_frames = probe(path).is_none_or(|i| i.duration * fps as f64 <= GIFSKI_MAX_FRAMES);
+    if tools::is_available(Tool::Gifski) && few_frames {
         // Extract frames, then assemble with gifski.
         let frames = tmp.path().join("frames");
         std::fs::create_dir_all(&frames)?;
@@ -566,16 +593,18 @@ pub fn to_gif(
             args.push("--width".into());
             args.push(w.to_string());
         }
-        // Collect frame paths.
+        // Frame names relative to the frames folder (gifski runs there), to
+        // keep the command line short.
         let mut pngs: Vec<String> = std::fs::read_dir(&frames)?
-            .filter_map(|e| e.ok().map(|e| e.path().display().to_string()))
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         pngs.sort();
         if pngs.is_empty() {
             return Err(OptimiseError::Other("no frames extracted for GIF".into()));
         }
         args.extend(pngs);
-        tools::run(Tool::Gifski, &args)?;
+        tools::run_in(Tool::Gifski, &args, Some(&frames))?;
     } else {
         // Single ffmpeg pass.
         let mut vf = format!("fps={fps}");
@@ -628,7 +657,11 @@ pub fn cap_fps(
         "-vf".into(),
         format!("fps=fps={}", fps.max(1)),
     ];
-    args.extend(options.compression.video_h264_args(tools::is_arm64()));
+    args.extend(
+        options
+            .compression
+            .video_h264_args(tools::has_videotoolbox()),
+    );
     args.extend(["-hide_banner", "-nostats"].map(String::from));
     args.push(dst.display().to_string());
     tools::run(Tool::Ffmpeg, &args)?;
@@ -659,7 +692,7 @@ pub fn optimise_with_filter(
         if let Some(f) = vf {
             args.extend(["-vf".to_string(), f.to_string()]);
         }
-        args.extend(cq.video_h264_args(tools::is_arm64()));
+        args.extend(cq.video_h264_args(tools::has_videotoolbox()));
         if !reencode_audio {
             args.extend(["-c:a", "copy", "-map", "0:v", "-map", "0:a?"].map(String::from));
         }
@@ -724,6 +757,13 @@ pub fn optimise_with_filter(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn atempo_is_chained_below_half_speed() {
+        assert_eq!(atempo_chain(0.25), "atempo=0.5,atempo=0.50000");
+        assert_eq!(atempo_chain(0.4), "atempo=0.5,atempo=0.80000");
+        assert_eq!(atempo_chain(2.0), "atempo=2.00000");
+    }
 
     const BANNER: &str = "Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'clip.mov':
   Duration: 00:01:02.50, start: 0.000000, bitrate: 6400 kb/s

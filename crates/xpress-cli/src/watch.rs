@@ -88,7 +88,7 @@ pub fn run(
                 );
                 continue;
             }
-            let folder = folder.canonicalize().unwrap_or(folder);
+            let folder = canonical(&folder);
             targets.push(FolderTarget {
                 folder: folder.clone(),
                 file_type: "all".into(),
@@ -110,7 +110,7 @@ pub fn run(
                 );
                 continue;
             }
-            let folder = folder.canonicalize().unwrap_or(folder);
+            let folder = canonical(&folder);
             match resolve_steps(&store, &a.pipeline) {
                 Ok(steps) => targets.push(FolderTarget {
                     folder,
@@ -200,7 +200,7 @@ fn folder_loop(
                     for p in event.paths {
                         if let Ok(meta) = std::fs::metadata(&p) {
                             if meta.is_file() {
-                                pending.insert(p, (Instant::now(), meta.len()));
+                                pending.insert(canonical(&p), (Instant::now(), meta.len()));
                             }
                         }
                     }
@@ -215,6 +215,61 @@ fn folder_loop(
     }
     println!("\nstopped.");
     Ok(())
+}
+
+/// `path` made absolute and canonical, so the paths notify reports, the
+/// watched folders and our own outputs (even from a relative `-o ./out`)
+/// compare equal. On Windows without the `\\?\` prefix `canonicalize` adds,
+/// which `starts_with` would otherwise never match.
+fn canonical(path: &Path) -> PathBuf {
+    let Ok(c) = std::fs::canonicalize(path) else {
+        return std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    };
+    #[cfg(windows)]
+    {
+        let s = c.to_string_lossy();
+        if let Some(unc) = s.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{unc}"));
+        }
+        if let Some(local) = s.strip_prefix(r"\\?\") {
+            return PathBuf::from(local);
+        }
+    }
+    c
+}
+
+/// Whether `path` sits somewhere under `root` that is never touched: a hidden
+/// folder (`.git`, `.Trash`, …) or a download still in progress (Safari's
+/// `photo.jpg.download/` bundle).
+fn in_skipped_folder(path: &Path, root: &Path) -> bool {
+    let Ok(rel) = path.strip_prefix(root) else {
+        return false;
+    };
+    let Some(parent) = rel.parent() else {
+        return false;
+    };
+    parent.components().any(|c| {
+        let name = c.as_os_str().to_string_lossy();
+        name.starts_with('.') || name.ends_with(".download")
+    })
+}
+
+/// Where the result for `path` goes when `-o` was given: a template is
+/// expanded; anything else is a folder the file goes into.
+fn output_for(path: &Path, options: &OptimiseOptions) -> OptimiseOptions {
+    let mut o = options.clone();
+    if let Some(out) = &options.output {
+        let s = out.to_string_lossy();
+        let dest = if xpress_core::template::is_template(&s) {
+            let mut counter = 1;
+            xpress_core::template::expand(&s, path, &mut counter)
+        } else {
+            out.join(xpress_core::result::file_name_lossy(path))
+        };
+        o.output = Some(dest);
+        o.output_follows_format = true;
+    }
+    o
 }
 
 /// Changed files awaiting processing: when they last changed, and their size then.
@@ -280,8 +335,20 @@ fn process_path(
     else {
         return;
     };
+    if in_skipped_folder(path, &target.folder) {
+        return;
+    }
+    // Never feed our own output folder back in (`-o out` inside a watched folder).
+    if let Some(out) = &options.output {
+        if !xpress_core::template::is_template(&out.to_string_lossy())
+            && path.starts_with(canonical(out))
+        {
+            return;
+        }
+    }
 
-    match pipeline::run(path, &target.steps, options) {
+    let options = output_for(path, options);
+    match pipeline::run(path, &target.steps, &options) {
         Ok(r) => {
             if r.improved() {
                 println!(
@@ -299,7 +366,7 @@ fn process_path(
             // that would otherwise be run through the pipeline a second time.
             for p in [path, r.output.as_path()] {
                 if let Ok(mt) = std::fs::metadata(p).and_then(|m| m.modified()) {
-                    processed.insert(p.to_path_buf(), mt);
+                    processed.insert(canonical(p), mt);
                 }
             }
         }
@@ -451,6 +518,32 @@ fn clipboard_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hidden_and_downloading_folders_are_skipped() {
+        let root = Path::new("/w");
+        assert!(in_skipped_folder(Path::new("/w/.git/objects/a.png"), root));
+        assert!(in_skipped_folder(
+            Path::new("/w/photo.jpg.download/photo.jpg"),
+            root
+        ));
+        assert!(!in_skipped_folder(Path::new("/w/sub/a.png"), root));
+        // The watched folder itself may be hidden.
+        assert!(!in_skipped_folder(Path::new("/.w/a.png"), Path::new("/.w")));
+    }
+
+    #[test]
+    fn output_folder_is_resolved_per_file() {
+        let o = OptimiseOptions {
+            output: Some(PathBuf::from("out")),
+            ..OptimiseOptions::default()
+        };
+        let r = output_for(Path::new("/w/a.png"), &o);
+        assert_eq!(r.output, Some(PathBuf::from("out/a.png")));
+        assert!(r.output_follows_format);
+        let none = output_for(Path::new("/w/a.png"), &OptimiseOptions::default());
+        assert_eq!(none.output, None);
+    }
 
     fn tmpdir(name: &str) -> PathBuf {
         let dir =

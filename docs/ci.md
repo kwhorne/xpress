@@ -84,7 +84,8 @@ The action downloads the xpress release for the runner and runs
 
 It runs on `ubuntu-latest` and `macos-latest` (Apple silicon; Intel runners
 work too). Images and PDFs
-need nothing else; checking **videos or audio** needs ffmpeg on the runner
+need nothing else — except AVIF files, which Linux runners decode with ffmpeg;
+checking **videos or audio** (or AVIF on Linux) needs ffmpeg on the runner
 (e.g. a step `sudo apt-get install -y ffmpeg`).
 
 Pin `version` (or the action ref) to a release so a new xpress version can't

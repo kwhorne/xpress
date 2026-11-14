@@ -159,7 +159,9 @@ iconutil -c icns assets/xpress.iconset -o assets/AppIcon.icns
 
 **Images and PDFs need no external tools** — they're handled in pure Rust. Only
 **video and audio** require `ffmpeg`, which the macOS `.app` bundles (so a
-released build needs nothing installed). A few extras are optional: `ghostscript`
+released build needs nothing installed). Exceptions: reading **AVIF** files on
+Linux and Windows decodes them with `ffmpeg` (macOS uses its built-in `sips`;
+writing AVIF is pure Rust everywhere), and HEIC input is macOS-only. A few extras are optional: `ghostscript`
 (PDF `extract-pages`), `heif-enc`/`cjxl` (HEIC/JXL conversion), `gifski`
 (higher-quality video→GIF), `exiftool` (metadata).
 
