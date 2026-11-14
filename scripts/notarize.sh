@@ -59,7 +59,22 @@ if [[ "$target" == *.app ]]; then
 fi
 
 echo "==> Submitting $submit to the notary service…"
-xcrun notarytool submit "$submit" "${cred[@]}" --wait
+# `submit --wait` exits 0 whatever the verdict, so read the status it prints.
+out="$(xcrun notarytool submit "$submit" "${cred[@]}" --wait 2>&1)" || {
+  echo "$out"
+  echo "notarytool submit failed" >&2
+  exit 1
+}
+echo "$out"
+id="$(printf '%s\n' "$out" | awk '/^ *id: /{print $2; exit}')"
+status="$(printf '%s\n' "$out" | awk '/^ *status: /{print $2}' | tail -1)"
+if [[ "$status" != "Accepted" ]]; then
+  echo "==> Notarisation ${status:-failed} — Apple's log for $id:" >&2
+  if [[ -n "$id" ]]; then
+    xcrun notarytool log "$id" "${cred[@]}" >&2 || true
+  fi
+  exit 1
+fi
 
 if [[ "$target" == *.zip ]]; then
   echo "==> Notarised ✓ (a zip can't be stapled; Gatekeeper checks online)"
