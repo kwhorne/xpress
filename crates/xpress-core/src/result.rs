@@ -194,7 +194,12 @@ pub fn backup_file(path: &Path) -> std::io::Result<PathBuf> {
                 let _ = fs::remove_file(p);
             })
         })?;
-    fs::File::open(tmp.path())?.sync_all()?;
+    // Write access: Windows refuses to flush (FlushFileBuffers) a file
+    // opened read-only.
+    fs::OpenOptions::new()
+        .write(true)
+        .open(tmp.path())?
+        .sync_all()?;
     match tmp.persist_noclobber(&backup) {
         Ok(()) => Ok(backup),
         // Another job made the backup in the meantime: keep theirs.
