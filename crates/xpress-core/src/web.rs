@@ -97,6 +97,21 @@ fn escape_attr(s: &str) -> String {
         .replace('>', "&gt;")
 }
 
+/// A file name as a URL path segment: spaces and commas separate `srcset`
+/// candidates, so they (and `%`, and other bytes not safe in a URL) are
+/// percent-encoded.
+fn url_path(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for b in name.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~!$&'()*+;=:@".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 /// Build the `<picture>` element. `sources` are the modern formats (in order),
 /// `fallback` the `<img>` format; file names are relative to the HTML.
 pub fn picture_html(
@@ -112,7 +127,7 @@ pub fn picture_html(
             .filter(|v| v.format == format)
             .map(|v| {
                 let name = v.path.file_name().unwrap_or_default().to_string_lossy();
-                format!("{} {}w", escape_attr(&name), v.width)
+                format!("{} {}w", escape_attr(&url_path(&name)), v.width)
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -137,7 +152,7 @@ pub fn picture_html(
         html.push_str(&format!(
             "  <img src=\"{}\" srcset=\"{}\" sizes=\"{sizes}\" width=\"{}\" height=\"{}\" \
              alt=\"{}\" loading=\"lazy\" decoding=\"async\">\n",
-            escape_attr(&src),
+            escape_attr(&url_path(&src)),
             srcset(fallback),
             img.width,
             img.height,
@@ -154,7 +169,8 @@ pub fn generate(
     web: &WebOptions,
     base: &OptimiseOptions,
 ) -> Result<WebSet, OptimiseError> {
-    let (img, _) = ximage::load(src)?;
+    // Decoded once; every width is resized from this.
+    let (img, meta) = ximage::load(src)?;
     let (sw, sh) = (img.width(), img.height());
     let fallback = if img.color().has_alpha() {
         ImageFormat::Png
@@ -178,7 +194,7 @@ pub fn generate(
         let h = ((sh as f64 * w as f64 / sw as f64).round() as u32).max(1);
         // A resized, metadata-carrying intermediate (lossless PNG).
         let scaled = tmp.path().join(format!("{stem}-{w}.png"));
-        ximage::resize_to(src, &scaled, w, h)?;
+        ximage::resize_loaded(&img, &meta, &scaled, w, h)?;
         for &format in &formats {
             let out = web
                 .out_dir
@@ -225,6 +241,14 @@ pub fn generate(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_names_are_url_encoded_in_srcset() {
+        assert_eq!(url_path("my hero, final.jpg"), "my%20hero%2C%20final.jpg");
+        assert_eq!(url_path("100%.png"), "100%25.png");
+        assert_eq!(url_path("blå.png"), "bl%C3%A5.png");
+        assert_eq!(url_path("hero-640.avif"), "hero-640.avif");
+    }
 
     #[test]
     fn widths_are_capped_at_the_source() {

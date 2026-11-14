@@ -885,8 +885,7 @@ pub(crate) fn finish_transformed(
 // Adaptive
 // ---------------------------------------------------------------------------
 
-/// Cheap transparency check: reads the PNG IHDR colour-type byte (6 = RGBA,
-/// 4 = gray+alpha). Non-PNG inputs conservatively report no alpha.
+/// Whether the image has an alpha channel (from its header; not decoded).
 pub fn has_alpha(path: &Path) -> bool {
     // The decoder reports alpha for RGBA/grey+alpha PNGs, paletted PNGs with
     // a tRNS chunk, and transparent WebP/AVIF/GIF/TIFF alike (header only).
@@ -1326,6 +1325,19 @@ pub fn scale_image(src: &Path, out: &Path, factor: f64) -> Result<(), OptimiseEr
         let h = ((img.height() as f64 * factor).round() as u32).max(1);
         img.resize_exact(w, h, image::imageops::FilterType::Lanczos3)
     })
+}
+
+/// [`resize_to`] for an image already decoded with [`load`] — for several
+/// sizes of one source without decoding it again for each.
+pub fn resize_loaded(
+    img: &DynamicImage,
+    meta: &Meta,
+    out: &Path,
+    w: u32,
+    h: u32,
+) -> Result<(), OptimiseError> {
+    let resized = img.resize_exact(w.max(1), h.max(1), image::imageops::FilterType::Lanczos3);
+    save_with_meta(&resized, out, meta)
 }
 
 /// Resize an image to exactly `w`x`h` (keeps aspect only if caller computed it).

@@ -28,3 +28,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 regex = "1"
 tempfile = "3"
+
+# Release builds: the codecs (rav1e/ravif, oxipng, quantette, ssimulacra2,
+# lopdf) gain from whole-program optimisation, and stripped symbols make the
+# binaries much smaller.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

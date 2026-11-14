@@ -11,3 +11,6 @@ assets/xpress.iconset/
 tools/icon-gen/target/
 tools/icon-gen/Cargo.lock
 bundle-tools/
+
+# Backups xpress makes of originals (`.<name>.orig`).
+*.orig

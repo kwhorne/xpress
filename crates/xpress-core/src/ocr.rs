@@ -6,6 +6,30 @@ use std::path::Path;
 
 /// Recognise the text in an image file. Lines come out in reading order,
 /// separated by newlines; an image without text gives an empty string.
+#[cfg(target_os = "macos")]
+pub fn recognize_file(path: &Path) -> Result<String, String> {
+    use objc2::AllocAnyThread;
+    use objc2_foundation::{NSDictionary, NSString, NSURL};
+    use objc2_vision::VNImageRequestHandler;
+    // Vision reads the file itself: no copy of it in our memory, let alone two.
+    let path = std::path::absolute(path).map_err(|e| e.to_string())?;
+    let path = path.to_str().ok_or("the file name is not valid UTF-8")?;
+    objc2::rc::autoreleasepool(|_| {
+        let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+        // SAFETY: an empty options dictionary.
+        let handler = unsafe {
+            VNImageRequestHandler::initWithURL_options(
+                VNImageRequestHandler::alloc(),
+                &url,
+                &NSDictionary::new(),
+            )
+        };
+        perform(&handler)
+    })
+}
+
+/// Recognise the text in an image file (see [`recognize`]).
+#[cfg(not(target_os = "macos"))]
 pub fn recognize_file(path: &Path) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     recognize(&bytes)
@@ -15,10 +39,8 @@ pub fn recognize_file(path: &Path) -> Result<String, String> {
 #[cfg(target_os = "macos")]
 pub fn recognize(bytes: &[u8]) -> Result<String, String> {
     use objc2::AllocAnyThread;
-    use objc2_foundation::{NSArray, NSData, NSDictionary};
-    use objc2_vision::{
-        VNImageRequestHandler, VNRecognizeTextRequest, VNRequest, VNRequestTextRecognitionLevel,
-    };
+    use objc2_foundation::{NSData, NSDictionary};
+    use objc2_vision::VNImageRequestHandler;
 
     objc2::rc::autoreleasepool(|_| {
         let data = NSData::with_bytes(bytes);
@@ -27,6 +49,17 @@ pub fn recognize(bytes: &[u8]) -> Result<String, String> {
             &data,
             &NSDictionary::new(),
         );
+        perform(&handler)
+    })
+}
+
+/// Run accurate text recognition through `handler`.
+#[cfg(target_os = "macos")]
+fn perform(handler: &objc2_vision::VNImageRequestHandler) -> Result<String, String> {
+    use objc2::AllocAnyThread;
+    use objc2_foundation::NSArray;
+    use objc2_vision::{VNRecognizeTextRequest, VNRequest, VNRequestTextRecognitionLevel};
+    {
         // SAFETY: a plain request with no completion handler.
         let request = unsafe { VNRecognizeTextRequest::init(VNRecognizeTextRequest::alloc()) };
         request.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
@@ -49,7 +82,7 @@ pub fn recognize(bytes: &[u8]) -> Result<String, String> {
             })
             .unwrap_or_default();
         Ok(lines.join("\n"))
-    })
+    }
 }
 
 #[cfg(not(target_os = "macos"))]

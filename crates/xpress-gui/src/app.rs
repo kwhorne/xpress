@@ -172,6 +172,14 @@ pub struct XpressApp {
     shortcut_errors: [Option<String>; 3],
     /// Waiting for the keys of a new shortcut.
     recording: Option<Action>,
+    /// Menu-bar, tray-icon and global-shortcut events, forwarded by handlers
+    /// that also wake the (otherwise idle) event loop.
+    events: Receiver<SystemEvent>,
+    /// Preferences that ask SQLite or launchd, refreshed every few seconds
+    /// instead of on every frame.
+    recent_sources: Recent<Vec<(String, Option<String>, usize)>>,
+    recent_ignored_counts: Recent<Vec<usize>>,
+    recent_login: Recent<bool>,
     /// The shortcut settings were drawn this frame (a recording ends when
     /// they aren't, see `logic`).
     shortcut_settings_drawn: bool,
@@ -252,6 +260,7 @@ impl XpressApp {
         } else {
             None
         };
+        let events = forward_system_events(ctx, integrations);
 
         let history = history_dir.and_then(|dir| match History::open(&dir) {
             Ok(h) => Some(Arc::new(Mutex::new(h))),
@@ -355,6 +364,10 @@ impl XpressApp {
             registered: [None, None, None],
             shortcut_errors: [None, None, None],
             recording: None,
+            events,
+            recent_sources: Recent::default(),
+            recent_ignored_counts: Recent::default(),
+            recent_login: Recent::default(),
             shortcut_settings_drawn: false,
             tray_items,
             crop: None,
@@ -884,7 +897,19 @@ impl XpressApp {
         let Some(history) = self.history.clone() else {
             return;
         };
-        let sources = history.lock().unwrap().app_sources().unwrap_or_default();
+        let sources = self
+            .recent_sources
+            .get(|| history.lock().unwrap().app_sources().unwrap_or_default());
+        let counts = self.recent_ignored_counts.get(|| {
+            let h = history.lock().unwrap();
+            self.history_ignored
+                .iter()
+                .map(|app| {
+                    h.count_from_app(&app.name, app.bundle.as_deref())
+                        .unwrap_or(0)
+                })
+                .collect()
+        });
         let mut add = None;
         setting_row(
             ui,
@@ -921,15 +946,12 @@ impl XpressApp {
         );
         if let Some(app) = add {
             self.ignore_app(app);
+            self.recent_ignored_counts.invalidate();
         }
         let mut remove = None;
         let mut delete = None;
         for (i, app) in self.history_ignored.iter().enumerate() {
-            let count = history
-                .lock()
-                .unwrap()
-                .count_from_app(&app.name, app.bundle.as_deref())
-                .unwrap_or(0);
+            let count = counts.get(i).copied().unwrap_or(0);
             ui.horizontal(|ui| {
                 ui.label(RichText::new(&app.name).strong());
                 if let Some(bundle) = &app.bundle {
@@ -972,11 +994,14 @@ impl XpressApp {
                 .delete_from_app(&app.name, app.bundle.as_deref());
             self.confirm_delete_app = None;
             self.history_panel.dirty = true;
+            self.recent_sources.invalidate();
+            self.recent_ignored_counts.invalidate();
         }
         if let Some(i) = remove {
             self.history_ignored.remove(i);
             self.confirm_delete_app = None;
             self.sync_capture();
+            self.recent_ignored_counts.invalidate();
         }
     }
 
@@ -1306,8 +1331,20 @@ impl eframe::App for XpressApp {
         let unfocused = ctx.input(|i| i.viewport().focused) == Some(false);
         self.end_stale_recording(unfocused);
 
+        let events: Vec<SystemEvent> = self.events.try_iter().collect();
+        let mut menu = Vec::new();
+        let mut tray = Vec::new();
+        let mut hotkeys = Vec::new();
+        for ev in events {
+            match ev {
+                SystemEvent::Menu(e) => menu.push(e),
+                SystemEvent::Tray(e) => tray.push(e),
+                SystemEvent::HotKey(e) => hotkeys.push(e),
+            }
+        }
+
         // Menu-bar icon: menu selections and clicks.
-        while let Ok(ev) = MenuEvent::receiver().try_recv() {
+        for ev in menu {
             let id = ev.id.0.as_str();
             if id == self.tray_open_id {
                 Self::show_window(ctx);
@@ -1328,14 +1365,14 @@ impl eframe::App for XpressApp {
                 std::process::exit(0);
             }
         }
-        while let Ok(ev) = TrayIconEvent::receiver().try_recv() {
+        for ev in tray {
             if let TrayIconEvent::Click { .. } = ev {
                 Self::show_window(ctx);
             }
         }
 
         // Global hotkey events (poll once; dispatch by id).
-        while let Ok(ev) = GlobalHotKeyEvent::receiver().try_recv() {
+        for ev in hotkeys {
             if ev.state != HotKeyState::Pressed {
                 continue;
             }
@@ -1369,10 +1406,18 @@ impl eframe::App for XpressApp {
             self.check_for_updates(ctx);
         }
 
-        // Poll steadily so menu-bar clicks and the global hotkey are handled even
-        // when the window is idle or in the background.
-        let interval = if self.in_flight > 0 { 120 } else { 250 };
-        ctx.request_repaint_after(Duration::from_millis(interval));
+        // Menu-bar clicks, shortcuts, finished jobs and history changes wake
+        // the loop themselves, so an idle (hidden) app sleeps — letting macOS
+        // App Nap it. Only timed work needs a wake-up: a pending settings
+        // save, and the periodic update check.
+        let wake = if self.settings_changed.is_some() {
+            SAVE_DELAY
+        } else {
+            UPDATE_INTERVAL
+                .saturating_sub(self.last_update_check.elapsed())
+                .clamp(Duration::from_secs(1), Duration::from_secs(5 * 60))
+        };
+        ctx.request_repaint_after(wake);
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -2068,7 +2113,7 @@ impl XpressApp {
 
     /// "Open at login" (macOS 13+, installed app).
     fn login_row(&mut self, ui: &mut egui::Ui) {
-        let mut on = crate::login::enabled();
+        let mut on = self.recent_login.get(crate::login::enabled);
         setting_row(
             ui,
             tr("Open at login"),
@@ -2076,6 +2121,7 @@ impl XpressApp {
             |ui| {
                 if toggle(ui, &mut on).changed() {
                     self.login_error = crate::login::set(on).err();
+                    self.recent_login.invalidate();
                 }
             },
         );
@@ -3091,6 +3137,65 @@ fn tray_icon_image() -> Option<(Vec<u8>, u32, u32)> {
         }
     }
     Some((buf, size as u32, size as u32))
+}
+
+/// A value recomputed at most every couple of seconds — for what Preferences
+/// shows from SQLite or launchd, which would otherwise be asked every frame.
+struct Recent<T> {
+    value: Option<(Instant, T)>,
+}
+
+impl<T> Default for Recent<T> {
+    fn default() -> Self {
+        Recent { value: None }
+    }
+}
+
+impl<T: Clone> Recent<T> {
+    const FRESH: Duration = Duration::from_secs(2);
+
+    fn get(&mut self, compute: impl FnOnce() -> T) -> T {
+        if let Some((at, v)) = &self.value {
+            if at.elapsed() < Self::FRESH {
+                return v.clone();
+            }
+        }
+        let v = compute();
+        self.value = Some((Instant::now(), v.clone()));
+        v
+    }
+
+    fn invalidate(&mut self) {
+        self.value = None;
+    }
+}
+
+/// An event from the system side, see [`forward_system_events`].
+enum SystemEvent {
+    Menu(MenuEvent),
+    Tray(TrayIconEvent),
+    HotKey(GlobalHotKeyEvent),
+}
+
+/// Route menu-bar, tray-icon and global-shortcut events into one channel and
+/// wake the UI for each, instead of polling for them several times a second.
+/// (Without integrations — tests — nothing is installed; the channel stays
+/// empty.)
+fn forward_system_events(ctx: &egui::Context, integrations: bool) -> Receiver<SystemEvent> {
+    let (tx, rx) = channel::<SystemEvent>();
+    if integrations {
+        let send = move |tx: &Sender<SystemEvent>, ctx: &egui::Context, ev| {
+            let _ = tx.send(ev);
+            ctx.request_repaint();
+        };
+        let (t, c) = (tx.clone(), ctx.clone());
+        MenuEvent::set_event_handler(Some(move |e| send(&t, &c, SystemEvent::Menu(e))));
+        let (t, c) = (tx.clone(), ctx.clone());
+        TrayIconEvent::set_event_handler(Some(move |e| send(&t, &c, SystemEvent::Tray(e))));
+        let c = ctx.clone();
+        GlobalHotKeyEvent::set_event_handler(Some(move |e| send(&tx, &c, SystemEvent::HotKey(e))));
+    }
+    rx
 }
 
 /// The `.app` bundle this executable lives in, if any (…/xpress.app).
