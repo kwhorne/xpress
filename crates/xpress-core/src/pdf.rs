@@ -142,7 +142,7 @@ pub fn extract_pages(
             &format!("-sOutputFile={}", pattern.display()),
             // `-f`: the next argument is a file, even if it starts with `-`.
             "-f",
-            &path.display().to_string(),
+            &tools::arg(path),
         ],
     )?;
     // Only this PDF's pages (`<stem>-001.png`, …), not whatever else is there.

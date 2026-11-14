@@ -88,6 +88,11 @@ pub fn set_timeout(timeout: Option<Duration>) {
     TIMEOUT_SECS.store(timeout.map(|d| d.as_secs()).unwrap_or(0), Ordering::Relaxed);
 }
 
+/// The timeout set with [`set_timeout`], if any.
+pub fn timeout() -> Option<Duration> {
+    current_timeout()
+}
+
 fn current_timeout() -> Option<Duration> {
     match TIMEOUT_SECS.load(Ordering::Relaxed) {
         0 => None,
@@ -169,6 +174,17 @@ pub fn resolve(tool: Tool) -> Result<PathBuf, ToolError> {
         .iter()
         .find_map(|n| which::which(n).ok())
         .ok_or(ToolError::NotFound(name))
+}
+
+/// A file path as an argument for an external tool, made absolute so it can
+/// never be read as an option (`-photo.jpg`), an exiftool argfile (`@list`)
+/// or an ffmpeg protocol (`concat:a.mp4`, `http:x`): it always starts with
+/// `/` (or a drive letter on Windows).
+pub fn arg(path: &Path) -> String {
+    std::path::absolute(path)
+        .unwrap_or_else(|_| Path::new(".").join(path))
+        .display()
+        .to_string()
 }
 
 /// Whether a tool is available without erroring.
@@ -301,4 +317,18 @@ where
         }
     }
     Err(last_err.unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_arguments_never_look_like_options() {
+        for p in ["-rf.png", "@list", "concat:a.mp4", "plain.jpg"] {
+            let a = arg(Path::new(p));
+            assert!(Path::new(&a).is_absolute(), "{a}");
+            assert!(a.ends_with(p), "{a}");
+        }
+    }
 }

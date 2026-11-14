@@ -203,12 +203,12 @@ pub fn normalize(src: &Path, dst: &Path, lufs: f64) -> Result<(), OptimiseError>
         [
             "-y",
             "-i",
-            &src.display().to_string(),
+            &tools::arg(src),
             "-af",
             &filter,
             "-hide_banner",
             "-nostats",
-            &dst.display().to_string(),
+            &tools::arg(dst),
         ],
     )?;
     Ok(())
@@ -257,10 +257,10 @@ pub fn optimise(
     ));
 
     let encode = |codec_args: Vec<String>| {
-        let mut args: Vec<String> = vec!["-y".into(), "-i".into(), path.display().to_string()];
+        let mut args: Vec<String> = vec!["-y".into(), "-i".into(), tools::arg(path)];
         args.extend(codec_args);
         args.extend(crate::video::metadata_args(options));
-        args.push(temp_out.display().to_string());
+        args.push(tools::arg(&temp_out));
         tools::run(Tool::Ffmpeg, &args)
     };
     // An explicit bitrate (a size budget, `lowerBitrate`) is honoured as a

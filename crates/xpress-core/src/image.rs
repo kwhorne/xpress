@@ -785,8 +785,8 @@ fn optimise_animated(
     if ext == "gif" && tools::is_available(Tool::Gifsicle) {
         let mut args = cq.gifsicle_args();
         args.push("-o".into());
-        args.push(out.display().to_string());
-        args.push(src.display().to_string());
+        args.push(tools::arg(out));
+        args.push(tools::arg(src));
         tools::run(Tool::Gifsicle, &args)?;
     } else {
         std::fs::copy(src, out)?;
@@ -1100,10 +1100,10 @@ fn readable_source(path: &Path, tmp: &TempDir) -> Result<PathBuf, OptimiseError>
                 "-y",
                 "-hide_banner",
                 "-i",
-                &path.display().to_string(),
+                &tools::arg(&path),
                 "-frames:v",
                 "1",
-                &out.display().to_string(),
+                &tools::arg(&out),
             ],
         )?;
         return Ok(out);
@@ -1148,9 +1148,9 @@ fn heic_decode(src: &Path, out: &Path) -> Result<(), OptimiseError> {
         "-s".into(),
         "format".into(),
         "png".into(),
-        src.display().to_string(),
+        tools::arg(src),
         "--out".into(),
-        out.display().to_string(),
+        tools::arg(out),
     ])
 }
 
@@ -1164,9 +1164,9 @@ fn heic_encode(src: &Path, out: &Path, cq: CompressionQuality) -> Result<(), Opt
         "-s".into(),
         "formatOptions".into(),
         cq.conversion_quality().to_string(),
-        src.display().to_string(),
+        tools::arg(src),
         "--out".into(),
-        out.display().to_string(),
+        tools::arg(out),
     ])
 }
 
@@ -1252,8 +1252,8 @@ pub fn convert_with(
                         "-q",
                         &q,
                         "-o",
-                        &temp_out.display().to_string(),
-                        &work_src.display().to_string(),
+                        &tools::arg(&temp_out),
+                        &tools::arg(&work_src),
                     ],
                     2,
                 )?;
@@ -1276,8 +1276,8 @@ pub fn convert_with(
                     &cq.jxl_quality().to_string(),
                     "-e",
                     &cq.jxl_effort().to_string(),
-                    &work_src.display().to_string(),
-                    &temp_out.display().to_string(),
+                    &tools::arg(&work_src),
+                    &tools::arg(&temp_out),
                 ],
                 2,
             )?;

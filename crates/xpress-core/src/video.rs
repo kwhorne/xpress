@@ -54,11 +54,11 @@ pub(crate) fn remux_stripped(
     options: &OptimiseOptions,
 ) -> Result<(), OptimiseError> {
     let mut args: Vec<std::ffi::OsString> = ["-y", "-i"].map(Into::into).to_vec();
-    args.push(src.as_os_str().to_owned());
+    args.push(tools::arg(src).into());
     args.extend(["-map", "0:v?", "-map", "0:a?", "-c", "copy"].map(Into::into));
     args.extend(metadata_args(options).into_iter().map(Into::into));
     args.extend(["-hide_banner", "-nostats"].map(Into::into));
-    args.push(out.as_os_str().to_owned());
+    args.push(tools::arg(out).into());
     tools::run(Tool::Ffmpeg, &args)?;
     Ok(())
 }
@@ -130,10 +130,7 @@ pub fn parse_banner(stderr: &str) -> MediaInfo {
 /// Probe a media file with ffmpeg. `None` if ffmpeg can't be run.
 pub fn probe(path: &Path) -> Option<MediaInfo> {
     // With no output file ffmpeg prints the stream info and exits non-zero.
-    let stderr = match tools::run(
-        Tool::Ffmpeg,
-        ["-hide_banner", "-i", &path.display().to_string()],
-    ) {
+    let stderr = match tools::run(Tool::Ffmpeg, ["-hide_banner", "-i", &tools::arg(path)]) {
         Err(tools::ToolError::Failed { stderr, .. }) => stderr,
         Ok(out) => String::from_utf8_lossy(&out.stderr).into_owned(),
         Err(_) => return None,
@@ -221,7 +218,7 @@ pub fn encode_to_bitrate(
     let mut last = None;
     for vf in &filters {
         let common = |pass: &str| -> Vec<String> {
-            let mut a = vec![s("-y"), s("-i"), path.display().to_string()];
+            let mut a = vec![s("-y"), s("-i"), tools::arg(path)];
             if let Some(f) = vf {
                 a.extend([s("-vf"), f.clone()]);
             }
@@ -237,7 +234,7 @@ pub fn encode_to_bitrate(
                 s("-pass"),
                 s(pass),
                 s("-passlogfile"),
-                log.display().to_string(),
+                tools::arg(&log),
                 s("-hide_banner"),
                 s("-nostats"),
             ]);
@@ -245,7 +242,7 @@ pub fn encode_to_bitrate(
         };
         let mut pass1 = common("1");
         pass1.extend([s("-an"), s("-f"), s("mp4")]);
-        pass1.push(tmp.path().join("pass1.mp4").display().to_string());
+        pass1.push(tools::arg(&tmp.path().join("pass1.mp4")));
         let mut pass2 = common("2");
         match plan.audio_kbps {
             Some(a) => pass2.extend([s("-c:a"), s("aac"), s("-b:a"), format!("{a}k")]),
@@ -253,7 +250,7 @@ pub fn encode_to_bitrate(
         }
         pass2.extend(metadata_args(options));
         pass2.extend([s("-movflags"), s("+faststart")]);
-        pass2.push(out.display().to_string());
+        pass2.push(tools::arg(out));
 
         match tools::run(Tool::Ffmpeg, &pass1).and_then(|_| tools::run(Tool::Ffmpeg, &pass2)) {
             Ok(_) => return Ok(()),
@@ -313,13 +310,13 @@ pub fn remove_audio(src: &Path, dst: &Path) -> Result<(), OptimiseError> {
         [
             "-y",
             "-i",
-            &src.display().to_string(),
+            &tools::arg(src),
             "-c",
             "copy",
             "-an",
             "-hide_banner",
             "-nostats",
-            &dst.display().to_string(),
+            &tools::arg(dst),
         ],
     )?;
     Ok(())
@@ -338,7 +335,7 @@ pub fn change_speed(
     let mut args: Vec<String> = vec![
         "-y".into(),
         "-i".into(),
-        src.display().to_string(),
+        tools::arg(src),
         "-filter:v".into(),
         format!("setpts={pts:.5}*PTS"),
     ];
@@ -352,7 +349,7 @@ pub fn change_speed(
             .video_h264_args(tools::has_videotoolbox()),
     );
     args.extend(["-hide_banner", "-nostats"].map(String::from));
-    args.push(dst.display().to_string());
+    args.push(tools::arg(dst));
     tools::run(Tool::Ffmpeg, &args)?;
     Ok(())
 }
@@ -478,7 +475,7 @@ pub fn convert_codec(
         .join(format!("{}.{ext}", crate::result::file_stem_lossy(path)));
 
     let build = |vf: Option<&str>, reencode_audio: bool| -> Vec<String> {
-        let mut args: Vec<String> = vec![s("-y"), s("-i"), path.display().to_string()];
+        let mut args: Vec<String> = vec![s("-y"), s("-i"), tools::arg(path)];
         if let Some(f) = vf {
             args.extend([s("-vf"), f.to_string()]);
         }
@@ -500,7 +497,7 @@ pub fn convert_codec(
         }
         args.extend(metadata_args(options));
         args.extend(["-hide_banner", "-nostats"].map(String::from));
-        args.push(temp_out.display().to_string());
+        args.push(tools::arg(&temp_out));
         args
     };
 
@@ -575,15 +572,15 @@ pub fn to_gif(
             [
                 "-y",
                 "-i",
-                &path.display().to_string(),
+                &tools::arg(path),
                 "-vf",
                 &vf,
-                &frames.join("f%05d.png").display().to_string(),
+                &tools::arg(&frames.join("f%05d.png")),
             ],
         )?;
         let mut args: Vec<String> = vec![
             "-o".into(),
-            out.display().to_string(),
+            tools::arg(&out),
             "--fps".into(),
             fps.to_string(),
             "--quality".into(),
@@ -616,12 +613,12 @@ pub fn to_gif(
             [
                 "-y",
                 "-i",
-                &path.display().to_string(),
+                &tools::arg(path),
                 "-vf",
                 &vf,
                 "-hide_banner",
                 "-nostats",
-                &out.display().to_string(),
+                &tools::arg(&out),
             ],
         )?;
     }
@@ -653,7 +650,7 @@ pub fn cap_fps(
     let mut args: Vec<String> = vec![
         "-y".into(),
         "-i".into(),
-        src.display().to_string(),
+        tools::arg(src),
         "-vf".into(),
         format!("fps=fps={}", fps.max(1)),
     ];
@@ -663,7 +660,7 @@ pub fn cap_fps(
             .video_h264_args(tools::has_videotoolbox()),
     );
     args.extend(["-hide_banner", "-nostats"].map(String::from));
-    args.push(dst.display().to_string());
+    args.push(tools::arg(dst));
     tools::run(Tool::Ffmpeg, &args)?;
     Ok(())
 }
@@ -688,7 +685,7 @@ pub fn optimise_with_filter(
 
     let build = |vf: Option<&str>, reencode_audio: bool| -> Vec<String> {
         // ffmpeg -y -i <in> [-vf <filter>] <encoderArgs> [-c:a copy -map ...] -movflags +faststart <out>
-        let mut args: Vec<String> = vec!["-y".into(), "-i".into(), path.display().to_string()];
+        let mut args: Vec<String> = vec!["-y".into(), "-i".into(), tools::arg(path)];
         if let Some(f) = vf {
             args.extend(["-vf".to_string(), f.to_string()]);
         }
@@ -698,7 +695,7 @@ pub fn optimise_with_filter(
         }
         args.extend(metadata_args(options));
         args.extend(["-movflags", "+faststart", "-hide_banner", "-nostats"].map(String::from));
-        args.push(temp_out.display().to_string());
+        args.push(tools::arg(&temp_out));
         args
     };
 

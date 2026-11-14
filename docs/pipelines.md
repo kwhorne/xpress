@@ -47,7 +47,9 @@ a fraction of the picture's (default 0.15).
 **runScript** — `code:` runs a shell command with the current file in `$FILE`;
 `path:` runs a script file, which gets the current file as its first argument
 (and in `$FILE`). The file passes through unchanged, so put `runScript` last to
-act on the final result.
+act on the final result. Scripts run with `sh` (on Windows: `cmd /C`, or
+PowerShell for a `.ps1` file, with the file in `%FILE%`) and are stopped after
+`--timeout` seconds, or 10 minutes when no timeout is set.
 
 ### Syntax
 

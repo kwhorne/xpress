@@ -64,14 +64,14 @@ pub fn watermark(
         [
             "-y",
             "-i",
-            &src.display().to_string(),
+            &tools::arg(src),
             "-i",
-            &overlay.display().to_string(),
+            &tools::arg(overlay),
             "-filter_complex",
             &filter,
             "-hide_banner",
             "-nostats",
-            &dst.display().to_string(),
+            &tools::arg(dst),
         ],
     )?;
     Ok(())

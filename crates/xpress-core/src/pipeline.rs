@@ -580,23 +580,67 @@ fn run_user_script(
     file: &std::path::Path,
 ) -> Result<(), OptimiseError> {
     use std::process::Command;
-    let mut cmd = if let Some(script) = path {
-        let mut c = Command::new("sh");
-        c.arg(script).arg(file);
-        c
-    } else if let Some(code) = code {
-        let mut c = Command::new("sh");
-        c.arg("-c").arg(code);
-        c
-    } else {
-        return Err(OptimiseError::Other(
-            "runScript requires code: or path:".into(),
-        ));
+    // `sh` on macOS/Linux; on Windows `cmd /C` (or PowerShell for a .ps1).
+    let shell = |c: &mut Command, script: Option<&str>, code: Option<&str>| {
+        if let Some(script) = script {
+            if cfg!(windows) && script.to_ascii_lowercase().ends_with(".ps1") {
+                c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script]);
+            } else if cfg!(windows) {
+                c.args(["/C", script]);
+            } else {
+                c.arg(script);
+            }
+            c.arg(file);
+        } else if let Some(code) = code {
+            c.arg(if cfg!(windows) { "/C" } else { "-c" }).arg(code);
+        }
+    };
+    let program = |script: Option<&str>| match script {
+        Some(s) if cfg!(windows) && s.to_ascii_lowercase().ends_with(".ps1") => "powershell",
+        _ if cfg!(windows) => "cmd",
+        _ => "sh",
+    };
+    let script = path.map(crate::expand_home);
+    let mut cmd = match (script.as_deref(), code) {
+        (Some(s), _) => {
+            let mut c = Command::new(program(Some(s)));
+            shell(&mut c, Some(s), None);
+            c
+        }
+        (None, Some(code)) => {
+            let mut c = Command::new(program(None));
+            shell(&mut c, None, Some(code));
+            c
+        }
+        (None, None) => {
+            return Err(OptimiseError::Other(
+                "runScript requires code: or path:".into(),
+            ))
+        }
     };
     cmd.env("FILE", file);
-    let status = cmd
-        .status()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| OptimiseError::Other(format!("runScript failed to launch: {e}")))?;
+
+    // The `--timeout` for tools applies; without one, a script gets 10 minutes
+    // so a hung script can't stall a watch daemon forever.
+    let limit = crate::tools::timeout().unwrap_or(std::time::Duration::from_secs(600));
+    let started = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None if started.elapsed() > limit => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(OptimiseError::Other(format!(
+                    "runScript took longer than {}s and was stopped",
+                    limit.as_secs()
+                )));
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    };
     if !status.success() {
         return Err(OptimiseError::Other(format!(
             "runScript exited with status {}",
@@ -625,6 +669,15 @@ fn parse_size(v: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn run_script_reports_failure_and_sees_the_file() {
+        let f = Path::new("/tmp/x.png");
+        assert!(run_user_script(Some(r#"test "$FILE" = /tmp/x.png"#), None, f).is_ok());
+        assert!(run_user_script(Some("exit 3"), None, f).is_err());
+        assert!(run_user_script(None, None, f).is_err());
+    }
 
     #[test]
     fn quoted_values_may_contain_separators() {
