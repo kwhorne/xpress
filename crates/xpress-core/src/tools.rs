@@ -19,16 +19,9 @@ use thiserror::Error;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tool {
     Ffmpeg,
-    Ffprobe,
-    Pngquant,
-    Jpegoptim,
-    JpegoptimOld,
     Gifsicle,
     Gifski,
-    Vips,
-    Vipsthumbnail,
     Ghostscript,
-    Cwebp,
     HeifEnc,
     Cjxl,
     Exiftool,
@@ -40,16 +33,9 @@ impl Tool {
     pub fn binary_name(&self) -> &'static str {
         match self {
             Tool::Ffmpeg => "ffmpeg",
-            Tool::Ffprobe => "ffprobe",
-            Tool::Pngquant => "pngquant",
-            Tool::Jpegoptim => "jpegoptim",
-            Tool::JpegoptimOld => "jpegoptim-old",
             Tool::Gifsicle => "gifsicle",
             Tool::Gifski => "gifski",
-            Tool::Vips => "vips",
-            Tool::Vipsthumbnail => "vipsthumbnail",
             Tool::Ghostscript => "gs",
-            Tool::Cwebp => "cwebp",
             Tool::HeifEnc => "heif-enc",
             Tool::Cjxl => "cjxl",
             Tool::Exiftool => "exiftool",

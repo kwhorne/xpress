@@ -83,12 +83,6 @@ where
         let _ = std::io::stderr().flush();
     }
 
-    // Preserve input order for stable output.
-    let mut ordered = results;
-    ordered.sort_by_key(|(p, _)| {
-        jobs.iter()
-            .position(|(jp, _)| jp == p)
-            .unwrap_or(usize::MAX)
-    });
-    ordered
+    // Already in input order: rayon's indexed `collect` keeps it.
+    results
 }

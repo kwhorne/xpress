@@ -12,6 +12,8 @@ use xpress_core::history::{parse_color, Category, Clip, ClipKind, History, Query
 use xpress_core::intelligence::{Status as AiStatus, Task};
 
 const ROW_HEIGHT: f32 = 62.0;
+/// New clip previews decoded per frame at most.
+const PREVIEWS_PER_FRAME: usize = 4;
 const PREVIEW: f32 = 46.0;
 
 /// Colours offered for categories.
@@ -150,7 +152,8 @@ pub struct HistoryPanel {
     pub pinned_only: bool,
     pub app: Option<String>,
     pub category: Option<i64>,
-    pub results: Vec<Clip>,
+    /// Shared, so drawing a row doesn't copy the clip (its text can be MBs).
+    pub results: Vec<std::rc::Rc<Clip>>,
     pub apps: Vec<(String, usize)>,
     pub categories: Vec<Category>,
     pub stats: (usize, u64),
@@ -170,6 +173,8 @@ pub struct HistoryPanel {
     /// Put the cursor in the search field on the next frame.
     pub focus_search: bool,
     textures: HashMap<i64, Option<egui::TextureHandle>>,
+    /// Previews decoded in the current frame (see [`Self::texture`]).
+    decoded_this_frame: usize,
     error: Option<String>,
 }
 
@@ -195,7 +200,7 @@ impl HistoryPanel {
         };
         match results {
             Ok(results) => {
-                self.results = results;
+                self.results = results.into_iter().map(std::rc::Rc::new).collect();
                 self.error = None;
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -444,6 +449,7 @@ impl HistoryPanel {
             &[&self.stats.0, &crate::app::human(self.stats.1)],
         );
         let list_height = ui.available_height() - 22.0;
+        self.decoded_this_frame = 0;
         let modifiers = ui.input(|i| i.modifiers);
         egui::ScrollArea::vertical()
             .max_height(list_height)
@@ -1143,6 +1149,15 @@ impl HistoryPanel {
 
     fn texture(&mut self, ctx: &egui::Context, clip: &Clip) -> Option<egui::TextureHandle> {
         let thumb = clip.thumb.as_ref()?;
+        // Decode only a few new previews per frame, so scrolling into many
+        // at once stays smooth; the rest follow on the next frames.
+        if !self.textures.contains_key(&clip.id) {
+            if self.decoded_this_frame >= PREVIEWS_PER_FRAME {
+                ctx.request_repaint();
+                return None;
+            }
+            self.decoded_this_frame += 1;
+        }
         self.textures
             .entry(clip.id)
             .or_insert_with(|| {
@@ -1309,9 +1324,11 @@ mod tests {
     fn panel(n: i64) -> HistoryPanel {
         let mut p = HistoryPanel::new();
         p.results = (1..=n)
-            .map(|id| Clip {
-                id,
-                ..clip(ClipKind::Text, "x")
+            .map(|id| {
+                std::rc::Rc::new(Clip {
+                    id,
+                    ..clip(ClipKind::Text, "x")
+                })
             })
             .collect();
         p

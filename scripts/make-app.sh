@@ -58,7 +58,8 @@ chmod +x "$APP/Contents/MacOS/xpress"
 if [[ "$WITH_TOOLS" == "1" ]]; then
   echo "==> Bundling optimisation tools into Resources/bin"
   mkdir -p "$APP/Contents/Resources/bin"
-  for tool in ffmpeg pngquant jpegoptim gifsicle gs vips gifski cwebp exiftool; do
+  # exiftool is left out: it is a Perl script that needs its library beside it.
+  for tool in ffmpeg gifsicle gifski gs heif-enc cjxl; do
     src=""
     if [[ -x "$ROOT/vendor/bin/current/$tool" ]]; then
       src="$ROOT/vendor/bin/current/$tool"
