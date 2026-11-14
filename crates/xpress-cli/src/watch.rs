@@ -310,6 +310,9 @@ fn process_path(
     options: &OptimiseOptions,
     processed: &mut HashMap<PathBuf, SystemTime>,
 ) {
+    // One spelling for every comparison below (`processed` keys, folders):
+    // on Windows a path may arrive with or without the `\\?\` prefix.
+    let path = &canonical(path);
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -331,11 +334,11 @@ fn process_path(
     // Find the first target whose folder contains this path and type matches.
     let Some(target) = targets
         .iter()
-        .find(|t| path.starts_with(&t.folder) && type_matches(&t.file_type, kind))
+        .find(|t| path.starts_with(canonical(&t.folder)) && type_matches(&t.file_type, kind))
     else {
         return;
     };
-    if in_skipped_folder(path, &target.folder) {
+    if in_skipped_folder(path, &canonical(&target.folder)) {
         return;
     }
     // Never feed our own output folder back in (`-o out` inside a watched folder).
