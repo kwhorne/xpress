@@ -21,10 +21,9 @@ archive="tar.gz"
 case "${RUNNER_OS:-}-${RUNNER_ARCH:-}" in
   Linux-X64) target="x86_64-unknown-linux-gnu" ;;
   macOS-ARM64) target="aarch64-apple-darwin" ;;
-  macOS-X64) target="x86_64-apple-darwin" ;;
   Windows-X64) target="x86_64-pc-windows-msvc"; exe="xpress.exe"; archive="zip" ;;
   *)
-    echo "::error::xpress check: no release binary for ${RUNNER_OS:-?}/${RUNNER_ARCH:-?} (use ubuntu-latest, macos-latest, macos-13 or windows-latest)"
+    echo "::error::xpress check: no release binary for ${RUNNER_OS:-?}/${RUNNER_ARCH:-?} (use ubuntu-latest, macos-latest or windows-latest; Intel macOS runners aren't supported)"
     exit 1
     ;;
 esac

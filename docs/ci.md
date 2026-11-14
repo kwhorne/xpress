@@ -82,7 +82,7 @@ The action downloads the xpress release for the runner and runs
 | `exclude` | `node_modules .git` | Directory names to skip |
 | `version` | `latest` | xpress release, e.g. `v1.0.1` |
 
-It runs on Linux (x64), macOS (Apple silicon and Intel) and Windows (x64)
+It runs on Linux (x64), macOS (Apple silicon) and Windows (x64)
 runners, e.g. `ubuntu-latest`, `macos-latest` or `windows-latest`; the
 downloaded release is checked against its published SHA-256. Images and PDFs
 need nothing else — except AVIF files, which Linux runners decode with ffmpeg;
