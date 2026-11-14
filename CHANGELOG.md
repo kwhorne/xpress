@@ -6,6 +6,68 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-11-14
+
+Fixes from a full code review: no more lost files, metadata that is really
+removed, and a hardened release chain.
+
+> **Signed by a new team.** From this release the app is signed and
+> notarised as *Knut Horne (52AT44QFCM)*. macOS sees the new signature as a
+> different app, so after updating, turn **xpress** on again in System
+> Settings → Privacy & Security → Accessibility (for "Paste directly").
+
+### Fixed
+- **No lost files**: renaming only the case of an extension
+  (`IMG.MP4` → `IMG.mp4`) on APFS/NTFS no longer deletes the optimised
+  result; the source is backed up whenever it is overwritten; an unrelated
+  file next to it is never replaced; `.orig` backups are written atomically
+  and never through a symlink.
+- `-o` with several inputs creates the folder instead of silently
+  optimising in place, refuses two inputs that would write the same file,
+  is written even when nothing shrinks, and follows a format change
+  (`dist/a.webp`, not WebP data in `dist/a.png`).
+- `--preserve-dates` keeps the original date (it read the date after
+  replacing the file).
+- **Metadata removal**: `strip-exif` and the `stripExif` step remove
+  EXIF/XMP/IPTC from JPEG, PNG and WebP without re-encoding and without
+  exiftool (colour profile and orientation kept). `--strip-metadata` and
+  `--strip-location` are honoured even when a file doesn't get smaller,
+  for video, audio, HEIC and PDF too.
+- The command line exits with status 1 when a file fails or an input
+  doesn't exist.
+- Copy puts PNGs on the clipboard as images and other files as files.
+- Pipelines: `adaptive` keeps the extension of the format it picked,
+  `convert(to: png)` is lossless, quoted text may contain `->` and commas.
+- Video: VideoToolbox is used only on Apple silicon Macs; speeds below
+  0.5× work; silent clips can change speed.
+- `watch` no longer processes its own output again, resolves `-o` per file
+  and skips hidden and `.download` folders.
+- Windows: backups work (every in-place optimise with backups on failed),
+  Ghostscript (`gswin64c`) is found, `runScript` uses `cmd`/PowerShell.
+- The app optimises dropped folders, runs jobs on a bounded pool, and is
+  fully translated into Norwegian.
+
+### Security
+- The app's self-update checks the code signature and team of the new
+  version, downloads into a private folder, and rolls back if the swap
+  fails; it doesn't try to update a copy run from a DMG or Homebrew.
+- File names can no longer be read as tool options (`-name`, `@file`,
+  `concat:`); `runScript` is stopped after `--timeout` (10 minutes by
+  default).
+- Clipboard history is readable only by you (folder 0700, database 0600);
+  images of deleted clips are removed from iCloud too, and a failed sync
+  write no longer loses unsynced changes.
+- The bundled ffmpeg is checked against a pinned SHA-256; the GitHub Action
+  verifies the release it downloads; release builds run with read-only
+  permissions. Licences of bundled tools ship inside the app.
+- Updated SQLite (rusqlite 0.41), zip and rustls for known advisories.
+
+### Changed
+- Faster and smaller: the command line is about 25 % smaller, `--quality`
+  searches about 20 % faster, and the menu-bar app no longer wakes four
+  times a second when idle.
+- The GitHub Action runs on Intel macOS and Windows runners too.
+
 ## [1.0.0] - 2026-10-08
 
 The first stable release: the menu-bar app for macOS (Apple silicon and
@@ -536,7 +598,8 @@ Intel), and the command line for macOS, Linux and now Windows.
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/kwhorne/xpress/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/kwhorne/xpress/compare/v0.9.4...v1.0.0
 [0.9.4]: https://github.com/kwhorne/xpress/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/kwhorne/xpress/compare/v0.9.2...v0.9.3
