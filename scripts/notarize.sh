@@ -38,6 +38,9 @@ cred=()
 if [[ -n "${ASC_KEY_ID:-}" && -n "${ASC_ISSUER_ID:-}" && -n "${ASC_KEY_PATH:-}" ]]; then
   cred=(--key "$ASC_KEY_PATH" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID")
 elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
+  # Note: notarytool takes the password only as an argument (or a prompt on
+  # a terminal), so it is visible to other processes on this machine while
+  # it runs. Prefer the API key (B) on shared machines.
   cred=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD")
 else
   echo "no notarisation credentials set (see the header of this script)" >&2
@@ -47,10 +50,12 @@ fi
 # notarytool needs a zip for a .app; a .dmg can be submitted directly.
 submit="$target"
 cleanup=""
+# Remove the temporary zip on every exit, failed submissions included.
+trap '[[ -n "$cleanup" ]] && rm -f "$cleanup"; true' EXIT
 if [[ "$target" == *.app ]]; then
   submit="$(dirname "$target")/$(basename "$target" .app)-notarize.zip"
-  ditto -c -k --keepParent "$target" "$submit"
   cleanup="$submit"
+  ditto -c -k --keepParent "$target" "$submit"
 fi
 
 echo "==> Submitting $submit to the notary service…"
@@ -65,4 +70,3 @@ echo "==> Stapling ticket to $target"
 xcrun stapler staple "$target"
 xcrun stapler validate "$target" && echo "==> Notarised and stapled ✓"
 
-[[ -n "$cleanup" ]] && rm -f "$cleanup" || true

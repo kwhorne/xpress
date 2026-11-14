@@ -65,7 +65,27 @@ not linked into xpress. Each retains its original licence:
 
 When **redistributing** xpress together with any of these binaries, you must
 comply with each binary's licence (which may, for the GPL/AGPL tools, require
-making their corresponding source available). The simplest distribution model is
-to ship xpress under MIT and let users install or fetch the tools themselves
-(`xpress doctor`, `scripts/fetch-tools.sh`), keeping xpress's own redistribution
-unencumbered.
+making their corresponding source available).
+
+### What the macOS app bundles
+
+The macOS `xpress.app` (and `.dmg`) ships two helper programs in
+`Contents/Resources/bin`, run as separate processes:
+
+- **ffmpeg 6.0**, the macOS build published by the
+  [ffmpeg-static](https://github.com/eugeneware/ffmpeg-static) project (release
+  `b6.0`, pinned by SHA-256 in `scripts/fetch-static-tools.sh`). It is configured
+  with `--enable-gpl --enable-version3` (and includes libx264/libx265), so this
+  binary is licensed under the **GNU General Public License, version 3**. The
+  licence texts are in `Contents/Resources/licenses/` (`GPL-3.0.txt`,
+  `FFmpeg-LICENSE.md`). Corresponding source: FFmpeg 6.0 at
+  <https://ffmpeg.org/releases/ffmpeg-6.0.tar.xz>, with the build configuration
+  printed by `ffmpeg -version`; the GPL components from their upstream projects
+  (x264, x265, libvpx, …).
+- **xpress-ai**, xpress's own Apple Intelligence helper (MIT, built from
+  `tools/xpress-ai`).
+
+xpress itself remains MIT: it only runs ffmpeg as a separate program and does
+not link to it. The command-line `xpress` downloads (tar.gz / zip / Homebrew)
+bundle no third-party binaries; there, the tools are installed separately
+(`xpress doctor`).

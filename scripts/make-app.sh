@@ -3,7 +3,7 @@
 # Build a macOS .app bundle for the xpress GUI.
 #
 # Usage:
-#   scripts/make-app.sh [--gui <path>] [--cli <path>] [--out <dir>] [--version <v>] [--tools]
+#   scripts/make-app.sh [--gui <path>] [--out <dir>] [--version <v>] [--tools] [--bin-dir <dir>]
 #
 # Defaults assume a release build in target/release. With --tools, the external
 # optimisation binaries found on $PATH (or in vendor/bin) are copied into
@@ -17,9 +17,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 GUI_BIN="$ROOT/target/release/xpress-gui"
-CLI_BIN="$ROOT/target/release/xpress"
 OUT_DIR="$ROOT/dist"
-VERSION="0.1.0"
+# The workspace version (Cargo.toml), unless --version says otherwise.
+VERSION="$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' "$ROOT/Cargo.toml" | head -1)"
 WITH_TOOLS=0
 BIN_DIR=""
 BUNDLE_ID="com.kwhorne.xpress"
@@ -27,7 +27,6 @@ BUNDLE_ID="com.kwhorne.xpress"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --gui) GUI_BIN="$2"; shift 2 ;;
-    --cli) CLI_BIN="$2"; shift 2 ;;
     --out) OUT_DIR="$2"; shift 2 ;;
     --version) VERSION="$2"; shift 2 ;;
     --tools) WITH_TOOLS=1; shift ;;
@@ -79,9 +78,21 @@ fi
 if [[ -n "$BIN_DIR" && -d "$BIN_DIR" ]]; then
   echo "==> Bundling tools from $BIN_DIR"
   mkdir -p "$APP/Contents/Resources/bin"
-  cp -f "$BIN_DIR"/* "$APP/Contents/Resources/bin/"
-  chmod +x "$APP/Contents/Resources/bin/"* 2>/dev/null || true
+  find "$BIN_DIR" -maxdepth 1 -type f ! -name '.*' -exec cp -f {} "$APP/Contents/Resources/bin/" \;
+  find "$APP/Contents/Resources/bin" -type f -exec chmod +x {} +
 fi
+
+# Licences: xpress's own, and for every bundled tool the texts its licence
+# requires to travel with the binary (ffmpeg here is GPL-3.0).
+echo "==> Licences"
+mkdir -p "$APP/Contents/Resources/licenses"
+cp "$ROOT/LICENSE" "$APP/Contents/Resources/licenses/xpress-LICENSE.txt"
+cp "$ROOT/NOTICE.md" "$APP/Contents/Resources/licenses/NOTICE.md"
+if [[ -e "$APP/Contents/Resources/bin/ffmpeg" ]]; then
+  cp "$ROOT/assets/licenses/FFmpeg-LICENSE.md" "$ROOT/assets/licenses/GPL-3.0.txt" \
+    "$APP/Contents/Resources/licenses/"
+fi
+echo "    ✓ $(ls "$APP/Contents/Resources/licenses" | tr '\n' ' ')"
 
 # The Apple Intelligence helper (macOS 26+, Apple silicon; skipped without a
 # suitable SDK, and for an Intel build of the app).
@@ -94,6 +105,10 @@ fi
 if lipo -archs "$GUI_BIN" 2>/dev/null | grep -q arm64 && [[ -x "$ROOT/target/xpress-ai/xpress-ai" ]]; then
   mkdir -p "$APP/Contents/Resources/bin"
   cp -f "$ROOT/target/xpress-ai/xpress-ai" "$APP/Contents/Resources/bin/xpress-ai"
+elif [[ "${XPRESS_REQUIRE_AI:-0}" == "1" ]] && lipo -archs "$GUI_BIN" 2>/dev/null | grep -q arm64; then
+  # Release builds for Apple silicon must ship it.
+  echo "xpress-ai was not built, but XPRESS_REQUIRE_AI=1" >&2
+  exit 1
 fi
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -158,8 +173,10 @@ if [[ -n "$SIGN_ID" ]]; then
   echo "==> Signing with: $SIGN_ID"
   # Sign nested Mach-O binaries first (bundled tools), then the bundle.
   if [[ -d "$APP/Contents/Resources/bin" ]]; then
+    # A helper that fails to sign must fail the build: notarisation would
+    # reject it, or worse, it would ship unsigned.
     while IFS= read -r f; do
-      codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$f" || true
+      codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$f"
     done < <(find "$APP/Contents/Resources/bin" -type f)
   fi
   codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$APP"
