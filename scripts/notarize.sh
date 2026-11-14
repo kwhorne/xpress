@@ -11,7 +11,7 @@
 #
 #   A) Apple ID + app-specific password:
 #        APPLE_ID=you@example.com
-#        APPLE_TEAM_ID=7G383N3VY7
+#        APPLE_TEAM_ID=52AT44QFCM
 #        APPLE_APP_PASSWORD=xxxx-xxxx-xxxx-xxxx   # app-specific password
 #
 #   B) App Store Connect API key:
