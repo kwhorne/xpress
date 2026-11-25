@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-11-25
+
+HEIC metadata without exiftool, a more careful location strip, and a
+smoother app.
+
 ### Fixed
 - **HEIC photos in the app** with *Strip metadata* or *Remove location* on
   no longer fail without exiftool: on macOS, metadata is removed from HEIC
@@ -25,6 +30,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The app no longer stalls while it saves a large clipboard image (⇧⌘O) or
   opens a large photo to crop, and doesn't back up the clipboard images it
   saves in ~/Pictures/xpress.
+
+### Security
+- Updated the `url` crate (RUSTSEC-2026-0592) and `rustix`.
 
 ### Removed
 - The last Intel Mac code paths: a build from source on an Intel Mac doesn't
@@ -644,7 +652,8 @@ Intel), and the command line for macOS, Linux and now Windows.
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/kwhorne/xpress/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/kwhorne/xpress/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/kwhorne/xpress/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/kwhorne/xpress/compare/v0.9.4...v1.0.0
