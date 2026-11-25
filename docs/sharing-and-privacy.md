@@ -67,6 +67,13 @@ There's also `xpress strip-exif <files>`, which removes metadata *without
 re-encoding* the image. JPEG, PNG and WebP need nothing else, nor do HEIC and
 TIFF on macOS; AVIF and JXL need [`exiftool`](https://exiftool.org).
 
+## Hiding things in a screenshot
+
+In the app's [screenshot mark-up](gui.md#take-screenshot), **Redact** paints a
+solid black box into the pixels: nothing of what was underneath survives.
+**Pixelate** only coarsens it, and pixelated text can sometimes be
+reconstructed, so use Redact for passwords, keys and personal data.
+
 ## What xpress keeps by default
 
 Without these options, xpress keeps a photo's metadata when it optimises or

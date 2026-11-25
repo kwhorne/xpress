@@ -36,6 +36,8 @@ exoquant = "0.2"
 # ICC -> sRGB conversion (for AVIF, which cannot carry an ICC profile).
 qcms = "0.3"
 crc32fast = "1"
+# Text in image mark-up (annotate.rs).
+ab_glyph = "0.2"
 # Perceptual quality metric for --quality targets.
 ssimulacra2 = "0.5"
 png = "0.17"
