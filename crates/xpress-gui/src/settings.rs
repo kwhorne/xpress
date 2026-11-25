@@ -67,6 +67,8 @@ pub struct Settings {
     pub shortcut_show: String,
     pub shortcut_history: String,
     pub shortcut_screenshot: String,
+    /// macOS has been asked for Screen Recording (it asks only once).
+    pub screen_permission_requested: bool,
 }
 
 impl Default for Settings {
@@ -107,6 +109,7 @@ impl Settings {
             shortcut_screenshot: crate::shortcuts::Action::Screenshot
                 .default_shortcut()
                 .into(),
+            screen_permission_requested: false,
         }
     }
 

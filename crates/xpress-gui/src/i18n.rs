@@ -223,6 +223,7 @@ fn nb(s: &str) -> Option<&'static str> {
             "xpress trenger Skjermopptak: slå det på i Systeminnstillinger → Personvern og sikkerhet → Skjerm- og systemlydopptak, og avslutt og åpne xpress igjen."
         }
         "Mark up" => "Merk",
+        "Mark up…" => "Merk…",
         "Arrow" => "Pil",
         "Box" => "Ramme",
         "Redact" => "Sladd",

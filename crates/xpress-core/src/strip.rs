@@ -4,10 +4,11 @@
 //! metadata segments/chunks go, the image data is copied byte for byte. The
 //! colour profile always stays (it is colour-critical), and so does the EXIF
 //! orientation (as a minimal EXIF block), so a photo never ends up sideways.
-//! Other formats (HEIC, AVIF, TIFF, JXL) go through `exiftool` when it is
-//! installed; on macOS without it, through ImageIO (which also copies the
-//! image data unchanged), and the result is checked to have no GPS left.
-//! When neither can do it, they fail loudly instead of keeping GPS silently.
+//! Other formats: on macOS, HEIC and TIFF go through ImageIO (which copies the
+//! image data unchanged), and the result is checked to have no location
+//! left; what ImageIO can't write (AVIF, JXL), and everything on other
+//! systems, goes through `exiftool` when it is installed. When neither can
+//! do it, they fail loudly instead of keeping GPS silently.
 
 use std::path::Path;
 
@@ -58,18 +59,20 @@ pub fn strip_file(src: &Path, out: &Path, strip: Strip) -> Result<bool, Optimise
     Ok(true)
 }
 
-/// HEIC, AVIF, TIFF, JXL, …: `exiftool` on a copy, or (macOS) ImageIO.
+/// HEIC, AVIF, TIFF, JXL, …: (macOS) ImageIO, or `exiftool` on a copy.
 fn strip_with_exiftool(
     src: &Path,
     out: &Path,
     strip: Strip,
     ext: &str,
 ) -> Result<bool, OptimiseError> {
+    // ImageIO first (much quicker than starting exiftool); exiftool for
+    // what it can't write (AVIF, JXL).
+    #[cfg(target_os = "macos")]
+    if imageio::strip(src, out, strip).is_ok() {
+        return Ok(true);
+    }
     if !tools::is_available(Tool::Exiftool) {
-        #[cfg(target_os = "macos")]
-        if imageio::strip(src, out, strip).is_ok() {
-            return Ok(true);
-        }
         return Err(OptimiseError::Other(format!(
             "removing metadata from .{ext} files needs exiftool (e.g. `brew install exiftool`)"
         )));
@@ -406,7 +409,7 @@ mod imageio {
                 "still upright"
             );
 
-            // Through the public entry point (exiftool when installed).
+            // Through the public entry point.
             let via = dir.path().join("via.heic");
             assert!(super::super::strip_file(&heic, &via, Strip::Location).unwrap());
             assert!(!has_location(&via));

@@ -80,11 +80,21 @@ pub enum Outcome {
     Copy,
 }
 
-pub struct MarkupState {
-    /// The screenshot (a temporary file).
+/// What is being marked up.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Source {
     pub path: PathBuf,
-    /// Hide xpress again when done (it was taken from another app).
+    /// The image's real size (the preview is at most 1400 px).
+    pub full: (u32, u32),
+    /// A screenshot just taken: a temporary file (thrown away when done),
+    /// recorded in the history as a screenshot.
+    pub screenshot: bool,
+    /// Hide xpress again when done (it was started from another app).
     pub back_to_app: bool,
+}
+
+pub struct MarkupState {
+    pub source: Source,
     pub marks: Vec<Mark>,
     pub tool: Tool,
     pub color: usize,
@@ -100,16 +110,10 @@ pub struct MarkupState {
 }
 
 impl MarkupState {
-    pub fn new(
-        ctx: &egui::Context,
-        path: PathBuf,
-        base: image::RgbaImage,
-        back_to_app: bool,
-    ) -> Self {
+    pub fn new(ctx: &egui::Context, source: Source, base: image::RgbaImage) -> Self {
         let texture = ctx.load_texture("markup", color_image(&base), egui::TextureOptions::LINEAR);
         Self {
-            path,
-            back_to_app,
+            source,
             marks: Vec::new(),
             tool: Tool::Arrow,
             color: 0,
@@ -131,7 +135,12 @@ impl MarkupState {
             return;
         }
         let mut img = self.base.clone();
-        annotate::render(&mut img, &self.marks, annotate::system_font().as_ref());
+        annotate::render_for(
+            &mut img,
+            &self.marks,
+            annotate::system_font().as_ref(),
+            self.source.full,
+        );
         self.texture
             .set(color_image(&img), egui::TextureOptions::LINEAR);
         self.shown = self.marks.clone();
@@ -313,8 +322,9 @@ impl MarkupState {
             let (pa, pb) = (to_screen(a), to_screen(b));
             let c = COLORS[self.color];
             let color = Color32::from_rgb(c[0], c[1], c[2]);
-            let (w, h) = self.base.dimensions();
-            let width = annotate::stroke_width(w, h) * scale;
+            let w = self.base.width();
+            let (fw, fh) = self.source.full;
+            let width = annotate::stroke_width(fw, fh) * (w as f32 / fw.max(1) as f32) * scale;
             match self.tool {
                 Tool::Arrow => painter.arrow(pa, pb - pa, egui::Stroke::new(width, color)),
                 Tool::Rect => {
