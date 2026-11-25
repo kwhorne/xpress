@@ -322,7 +322,7 @@ fn write_gif(img: &DynamicImage, out: &Path) -> Result<(), OptimiseError> {
 }
 
 /// Lossless PNG with ICC, EXIF and XMP.
-fn encode_png(img: &DynamicImage, meta: &Meta) -> Result<Vec<u8>, OptimiseError> {
+pub(crate) fn encode_png(img: &DynamicImage, meta: &Meta) -> Result<Vec<u8>, OptimiseError> {
     let mut buf = Vec::new();
     let mut enc = image::codecs::png::PngEncoder::new(&mut buf);
     apply_meta(&mut enc, meta);

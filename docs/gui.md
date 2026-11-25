@@ -132,6 +132,11 @@ screenshots. If you started from another app, you're back in it, ready for
 Use **Redact** for passwords, keys and anything secret. Pixelated text can
 sometimes be read again.
 
+You can mark up any image the same way. Right-click a result card, or an
+image in the [history](history.md), and choose **Mark up…**. The marked-up
+copy goes to the clipboard and `~/Pictures/xpress`, and the original stays
+as it is.
+
 The first time, macOS asks to let xpress record the screen. Without that,
 a screenshot shows only the desktop picture. To allow it later, go to
 **System Settings → Privacy & Security → Screen & System Audio Recording**,

@@ -30,10 +30,10 @@ pub enum Msg {
     },
     /// The clipboard image, saved as a file to optimise.
     ClipboardFile(Result<PathBuf, String>),
-    /// An image decoded for the crop view.
+    /// An image decoded for the crop view (or why it couldn't be).
     CropReady {
         path: PathBuf,
-        image: egui::ColorImage,
+        image: Result<egui::ColorImage, String>,
     },
     /// A screenshot was taken (`None`: cancelled). `back_to_app`: it was
     /// started from another app, which gets the focus back when done.
@@ -41,16 +41,15 @@ pub enum Msg {
         result: Result<Option<PathBuf>, String>,
         back_to_app: bool,
     },
-    /// A screenshot decoded for the mark-up view.
+    /// An image decoded for the mark-up view (or why it couldn't be).
     MarkupReady {
-        path: PathBuf,
-        image: image::RgbaImage,
-        back_to_app: bool,
+        source: crate::markup::Source,
+        image: Result<image::RgbaImage, String>,
     },
-    /// The marked-up screenshot, written as a PNG (to optimise and copy).
+    /// The marked-up image, written as a PNG (to optimise and copy).
     Annotated {
         result: Result<PathBuf, String>,
-        back_to_app: bool,
+        source: crate::markup::Source,
     },
 }
 

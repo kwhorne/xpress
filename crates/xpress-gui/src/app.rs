@@ -193,11 +193,11 @@ pub struct XpressApp {
     markup_loading: Option<PathBuf>,
     /// A screenshot is being taken (the system's picker is up).
     screenshot_busy: bool,
-    /// Screen Recording was asked for once this run.
-    screen_permission_asked: bool,
+    /// macOS has been asked for Screen Recording (it only asks once, ever).
+    screen_permission_requested: bool,
     /// Marked-up screenshots being optimised → whether to hand the focus
     /// back to the app they were taken from.
-    screenshot_jobs: std::collections::HashMap<PathBuf, bool>,
+    screenshot_jobs: std::collections::HashMap<PathBuf, crate::markup::Source>,
 
     update_info: Arc<Mutex<Option<xpress_core::update::UpdateInfo>>>,
     update_checking: Arc<AtomicBool>,
@@ -388,7 +388,7 @@ impl XpressApp {
             markup: None,
             markup_loading: None,
             screenshot_busy: false,
-            screen_permission_asked: false,
+            screen_permission_requested: false,
             screenshot_jobs: Default::default(),
             update_info,
             update_checking,
@@ -451,6 +451,7 @@ impl XpressApp {
             shortcut_show: self.shortcuts[Action::Show.index()].clone(),
             shortcut_history: self.shortcuts[Action::History.index()].clone(),
             shortcut_screenshot: self.shortcuts[Action::Screenshot.index()].clone(),
+            screen_permission_requested: self.screen_permission_requested,
         }
     }
 
@@ -484,6 +485,7 @@ impl XpressApp {
             s.shortcut_history.clone(),
             s.shortcut_screenshot.clone(),
         ];
+        self.screen_permission_requested = s.screen_permission_requested;
     }
 
     /// Use the chosen language. "System" follows macOS — except in tests,
@@ -806,6 +808,7 @@ impl XpressApp {
                 self.history_panel.marked.clear();
             }
             HistoryAction::Reveal(path) => reveal_in_file_manager(&path),
+            HistoryAction::Markup(path) => self.enter_markup(path, false, false, ctx),
             HistoryAction::Open(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
             HistoryAction::Enable => {
                 self.history_enabled = true;
@@ -1247,7 +1250,7 @@ impl XpressApp {
                 } => {
                     self.screenshot_busy = false;
                     match result {
-                        Ok(Some(path)) => self.enter_markup(path, back_to_app, ctx),
+                        Ok(Some(path)) => self.enter_markup(path, true, back_to_app, ctx),
                         // Cancelled: back to where we were.
                         Ok(None) => {
                             if !back_to_app {
@@ -1256,74 +1259,69 @@ impl XpressApp {
                         }
                         Err(e) => {
                             Self::show_window(ctx);
-                            self.push_card(Card {
-                                title: tr("Screenshot").into(),
-                                detail: e,
-                                saved_pct: 0.0,
-                                ok: false,
-                                output: None,
-                                texture: None,
-                                pending_thumb: None,
-                            });
+                            self.error_card(tr("Screenshot"), e);
                         }
                     }
                     continue;
                 }
-                Msg::MarkupReady {
-                    path,
-                    image,
-                    back_to_app,
-                } => {
-                    if self.markup_loading.as_ref() == Some(&path) {
-                        self.markup_loading = None;
-                        self.welcome_step = None;
-                        self.crop = None;
-                        self.markup = Some(crate::markup::MarkupState::new(
-                            ctx,
-                            path,
-                            image,
-                            back_to_app,
-                        ));
-                        Self::show_window(ctx);
+                Msg::MarkupReady { source, image } => {
+                    if self.markup_loading.as_ref() != Some(&source.path) {
+                        // Closed or replaced meanwhile.
+                        if source.screenshot {
+                            let _ = std::fs::remove_file(&source.path);
+                        }
+                        continue;
+                    }
+                    self.markup_loading = None;
+                    match image {
+                        Ok(image) => {
+                            self.welcome_step = None;
+                            self.crop = None;
+                            self.markup = Some(crate::markup::MarkupState::new(ctx, source, image));
+                            Self::show_window(ctx);
+                        }
+                        Err(e) => {
+                            if source.screenshot {
+                                let _ = std::fs::remove_file(&source.path);
+                            }
+                            Self::show_window(ctx);
+                            self.error_card(tr("Mark up"), e);
+                        }
                     }
                     continue;
                 }
-                Msg::Annotated {
-                    result,
-                    back_to_app,
-                } => {
+                Msg::Annotated { result, source } => {
                     match result {
                         Ok(out) => {
-                            self.screenshot_jobs.insert(out.clone(), back_to_app);
+                            self.screenshot_jobs.insert(out.clone(), source);
                             self.in_flight += 1;
                             let mut options = self.options();
                             options.backup = false;
                             work::spawn(out, options, self.quality(), ctx.clone(), self.tx.clone());
                         }
-                        Err(e) => self.push_card(Card {
-                            title: tr("Screenshot").into(),
-                            detail: e,
-                            saved_pct: 0.0,
-                            ok: false,
-                            output: None,
-                            texture: None,
-                            pending_thumb: None,
-                        }),
+                        Err(e) => self.error_card(tr("Mark up"), e),
                     }
                     continue;
                 }
                 Msg::CropReady { path, image } => {
                     if self.crop_loading.as_ref() == Some(&path) {
                         self.crop_loading = None;
-                        let tex_size = egui::vec2(image.size[0] as f32, image.size[1] as f32);
-                        let texture = ctx.load_texture("crop", image, egui::TextureOptions::LINEAR);
-                        self.crop = Some(CropState {
-                            path,
-                            texture,
-                            tex_size,
-                            start: None,
-                            sel: None,
-                        });
+                        match image {
+                            Ok(image) => {
+                                let tex_size =
+                                    egui::vec2(image.size[0] as f32, image.size[1] as f32);
+                                let texture =
+                                    ctx.load_texture("crop", image, egui::TextureOptions::LINEAR);
+                                self.crop = Some(CropState {
+                                    path,
+                                    texture,
+                                    tex_size,
+                                    start: None,
+                                    sel: None,
+                                });
+                            }
+                            Err(e) => self.error_card(tr("Crop"), e),
+                        }
                     }
                     continue;
                 }
@@ -1386,9 +1384,9 @@ impl XpressApp {
                     {
                         detail.push_str(tr("  ·  copied back"));
                     }
-                    if let Some(back_to_app) = screenshot {
-                        self.record_screenshot(&r.output);
-                        if back_to_app {
+                    if let Some(source) = screenshot {
+                        self.record_markup(&r.output, source.screenshot);
+                        if source.back_to_app {
                             hide_app(ctx);
                         }
                     }
@@ -1416,18 +1414,31 @@ impl XpressApp {
         }
     }
 
+    fn error_card(&mut self, title: &str, detail: String) {
+        self.push_card(Card {
+            title: title.into(),
+            detail,
+            saved_pct: 0.0,
+            ok: false,
+            output: None,
+            texture: None,
+            pending_thumb: None,
+        });
+    }
+
     /// Open the crop view for `path` once it is decoded — off the UI thread,
     /// as a large photo takes a moment (see [`Msg::CropReady`]).
     fn enter_crop(&mut self, path: PathBuf, ctx: &egui::Context) {
         self.crop_loading = Some(path.clone());
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let Ok(img) = xpress_core::image::open_oriented(&path) else {
-                return;
-            };
-            let disp = img.thumbnail(1400, 1400).to_rgba8();
-            let (w, h) = (disp.width() as usize, disp.height() as usize);
-            let image = egui::ColorImage::from_rgba_unmultiplied([w, h], disp.as_raw());
+            let image = xpress_core::image::open_oriented(&path)
+                .map(|img| {
+                    let disp = img.thumbnail(1400, 1400).to_rgba8();
+                    let (w, h) = (disp.width() as usize, disp.height() as usize);
+                    egui::ColorImage::from_rgba_unmultiplied([w, h], disp.as_raw())
+                })
+                .map_err(|e| e.to_string());
             let _ = tx.send(Msg::CropReady { path, image });
             ctx.request_repaint();
         });
@@ -1437,32 +1448,33 @@ impl XpressApp {
     /// another app (a shortcut or the menu bar), the focus goes back to it
     /// once the result is on the clipboard.
     fn take_screenshot(&mut self, ctx: &egui::Context) {
-        if !crate::screenshot::supported() || self.screenshot_busy || self.markup.is_some() {
+        if !crate::screenshot::supported() || self.screenshot_busy {
+            return;
+        }
+        // One at a time: bring back the one being marked up.
+        if self.markup.is_some() || self.markup_loading.is_some() {
+            Self::show_window(ctx);
             return;
         }
         if !crate::screenshot::allowed() {
-            // macOS asks once; after that, only System Settings can allow it.
-            if self.screen_permission_asked || !crate::screenshot::request() {
-                if self.screen_permission_asked {
-                    ctx.open_url(egui::OpenUrl::new_tab(crate::screenshot::SETTINGS_URL));
-                }
-                self.screen_permission_asked = true;
-                Self::show_window(ctx);
-                self.tab = Tab::Optimise;
-                self.push_card(Card {
-                    title: tr("Screenshot").into(),
-                    detail: tr(
-                        "xpress needs Screen Recording: turn it on in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen xpress.",
-                    )
-                    .into(),
-                    saved_pct: 0.0,
-                    ok: false,
-                    output: None,
-                    texture: None,
-                    pending_thumb: None,
-                });
-                return;
+            // macOS asks once (ever); after that, only System Settings can
+            // allow it, so go there.
+            if self.screen_permission_requested {
+                ctx.open_url(egui::OpenUrl::new_tab(crate::screenshot::SETTINGS_URL));
+            } else {
+                self.screen_permission_requested = true;
+                crate::screenshot::request();
             }
+            Self::show_window(ctx);
+            self.tab = Tab::Optimise;
+            self.error_card(
+                tr("Screenshot"),
+                tr(
+                    "xpress needs Screen Recording: turn it on in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen xpress.",
+                )
+                .into(),
+            );
+            return;
         }
         let back_to_app = ctx.input(|i| i.viewport().focused) != Some(true);
         self.screenshot_busy = true;
@@ -1479,27 +1491,31 @@ impl XpressApp {
         });
     }
 
-    /// Open the mark-up view on a screenshot, once decoded off the UI thread.
-    fn enter_markup(&mut self, path: PathBuf, back_to_app: bool, ctx: &egui::Context) {
+    /// Open the mark-up view on an image, once decoded off the UI thread.
+    /// `screenshot`: a temporary file just taken (thrown away when done).
+    fn enter_markup(
+        &mut self,
+        path: PathBuf,
+        screenshot: bool,
+        back_to_app: bool,
+        ctx: &egui::Context,
+    ) {
         self.markup_loading = Some(path.clone());
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let image = match xpress_core::image::open_oriented(&path) {
-                Ok(img) => img.thumbnail(1400, 1400).to_rgba8(),
-                Err(e) => {
-                    let _ = tx.send(Msg::ScreenshotTaken {
-                        result: Err(e.to_string()),
-                        back_to_app,
-                    });
-                    ctx.request_repaint();
-                    return;
-                }
-            };
-            let _ = tx.send(Msg::MarkupReady {
+            let decoded = xpress_core::image::open_oriented(&path).map_err(|e| e.to_string());
+            let full = decoded
+                .as_ref()
+                .map(|img| (img.width(), img.height()))
+                .unwrap_or((1, 1));
+            let image = decoded.map(|img| img.thumbnail(1400, 1400).to_rgba8());
+            let source = crate::markup::Source {
                 path,
-                image,
+                full,
+                screenshot,
                 back_to_app,
-            });
+            };
+            let _ = tx.send(Msg::MarkupReady { source, image });
             ctx.request_repaint();
         });
     }
@@ -1511,18 +1527,24 @@ impl XpressApp {
         };
         match state.draw(root) {
             crate::markup::Outcome::Keep => {}
-            crate::markup::Outcome::Cancel => {
-                if let Some(state) = self.markup.take() {
-                    let _ = std::fs::remove_file(&state.path);
-                    if state.back_to_app {
-                        hide_app(&ctx);
-                    }
-                }
-            }
+            crate::markup::Outcome::Cancel => self.cancel_markup(&ctx, true),
             crate::markup::Outcome::Copy => {
                 if let Some(state) = self.markup.take() {
                     self.copy_markup(state, &ctx);
                 }
+            }
+        }
+    }
+
+    /// Close the mark-up view without copying (and throw away a screenshot).
+    fn cancel_markup(&mut self, ctx: &egui::Context, refocus: bool) {
+        self.markup_loading = None;
+        if let Some(state) = self.markup.take() {
+            if state.source.screenshot {
+                let _ = std::fs::remove_file(&state.source.path);
+            }
+            if refocus && state.source.back_to_app {
+                hide_app(ctx);
             }
         }
     }
@@ -1533,12 +1555,13 @@ impl XpressApp {
         let dir = clipboard_dir();
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         std::thread::spawn(move || {
+            let source = state.source;
             let result = std::fs::create_dir_all(&dir)
                 .map_err(|e| e.to_string())
                 .and_then(|()| {
                     let out = xpress_core::clipboard::unique_clip_path(&dir);
                     xpress_core::annotate::annotate_file(
-                        &state.path,
+                        &source.path,
                         &out,
                         &state.marks,
                         xpress_core::annotate::system_font().as_ref(),
@@ -1546,25 +1569,30 @@ impl XpressApp {
                     .map(|()| out)
                     .map_err(|e| e.to_string())
                 });
-            let _ = std::fs::remove_file(&state.path);
-            let _ = tx.send(Msg::Annotated {
-                result,
-                back_to_app: state.back_to_app,
-            });
+            if source.screenshot {
+                let _ = std::fs::remove_file(&source.path);
+            }
+            let _ = tx.send(Msg::Annotated { result, source });
             ctx.request_repaint();
         });
     }
 
-    /// Add a finished screenshot to the history (with its text, by OCR),
-    /// when the history keeps screenshots.
-    fn record_screenshot(&self, path: &Path) {
+    /// Add a finished, marked-up image to the history (with its text, by
+    /// OCR): a screenshot when the history keeps screenshots, anything else
+    /// as an image.
+    fn record_markup(&self, path: &Path, screenshot: bool) {
         let Some(history) = self.history.clone() else {
             return;
         };
-        if !(self.history_enabled && self.history_screenshots) {
+        if !self.history_enabled || (screenshot && !self.history_screenshots) {
             return;
         }
-        let Ok(clip) = xpress_core::history::NewClip::screenshot(path) else {
+        let clip = if screenshot {
+            xpress_core::history::NewClip::screenshot(path)
+        } else {
+            std::fs::read(path).map(xpress_core::history::NewClip::image_png)
+        };
+        let Ok(clip) = clip else {
             return;
         };
         let (flags, tx) = (self.capture.clone(), self.tx.clone());
@@ -1608,6 +1636,8 @@ impl eframe::App for XpressApp {
         if ctx.input(|i| i.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            // Closing a mark-up cancels it (and the next screenshot works).
+            self.cancel_markup(ctx, false);
         }
 
         let unfocused = ctx.input(|i| i.viewport().focused) == Some(false);
@@ -2013,6 +2043,7 @@ impl XpressApp {
                 );
             }
             Some(CardAction::Crop(path)) => self.enter_crop(path, &ctx),
+            Some(CardAction::Markup(path)) => self.enter_markup(path, false, false, &ctx),
             None => {}
         }
     }
@@ -3115,6 +3146,7 @@ fn setting_row(ui: &mut egui::Ui, label: &str, desc: &str, control: impl FnOnce(
 enum CardAction {
     Convert(PathBuf, ImageFormat),
     Crop(PathBuf),
+    Markup(PathBuf),
 }
 
 /// The "Convert to" entries for a file currently in `current` format.
@@ -3237,6 +3269,10 @@ fn result_card(ui: &mut egui::Ui, card: &Card, index: usize) -> Option<CardActio
                 });
                 if ui.button(tr("Crop…")).clicked() {
                     action = Some(CardAction::Crop(img.to_path_buf()));
+                    ui.close();
+                }
+                if ui.button(tr("Mark up…")).clicked() {
+                    action = Some(CardAction::Markup(img.to_path_buf()));
                     ui.close();
                 }
                 ui.separator();
@@ -4614,12 +4650,17 @@ mod tests {
         let shot = temp_png(name);
         let image = image::open(&shot).unwrap().to_rgba8();
         let mut h = harness();
+        let full = image.dimensions();
         h.state()
             .tx
             .send(Msg::MarkupReady {
-                path: shot.clone(),
-                image,
-                back_to_app: false,
+                source: crate::markup::Source {
+                    path: shot.clone(),
+                    full,
+                    screenshot: true,
+                    back_to_app: false,
+                },
+                image: Ok(image),
             })
             .unwrap();
         h.state_mut().markup_loading = Some(shot.clone());
@@ -4683,6 +4724,59 @@ mod tests {
         assert!(!shot.exists(), "the screenshot is thrown away");
         assert!(h.state().screenshot_jobs.is_empty());
         let _ = std::fs::remove_file(out);
+    }
+
+    #[test]
+    fn a_screenshot_while_marking_up_brings_the_view_back() {
+        let (mut h, shot) = markup_harness("markup-again.png");
+        let ctx = h.ctx.clone();
+        h.state_mut().take_screenshot(&ctx);
+        assert!(!h.state().screenshot_busy, "no second picker");
+        assert!(h.state().markup.is_some(), "still marking up");
+        // Closing the window (red button) cancels it.
+        h.state_mut().cancel_markup(&ctx, false);
+        assert!(h.state().markup.is_none());
+        assert!(!shot.exists(), "the screenshot is thrown away");
+    }
+
+    #[test]
+    fn marking_up_a_file_keeps_the_file() {
+        let img = temp_png("markup-file.png");
+        let mut h = harness();
+        let ctx = h.ctx.clone();
+        h.state_mut().enter_markup(img.clone(), false, false, &ctx);
+        for _ in 0..200 {
+            h.state_mut().drain_results(&ctx);
+            if h.state().markup.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        h.run();
+        let source = &h.state().markup.as_ref().expect("opened").source;
+        assert_eq!(source.full, (48, 32));
+        h.get_by_label("Cancel").click();
+        h.run();
+        assert!(h.state().markup.is_none());
+        assert!(img.exists(), "not a screenshot: the file stays");
+    }
+
+    #[test]
+    fn an_unreadable_image_says_so_instead_of_hanging() {
+        let dir = std::env::temp_dir().join(format!("xpress-gui-bad-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bad = dir.join("broken.png");
+        std::fs::write(&bad, b"not a png").unwrap();
+        let mut h = harness();
+        let ctx = h.ctx.clone();
+        h.state_mut().enter_crop(bad.clone(), &ctx);
+        wait_for_card(&mut h, 1);
+        assert!(h.state().crop_loading.is_none());
+        assert!(!h.state().cards[0].ok);
+        h.state_mut().enter_markup(bad, false, false, &ctx);
+        wait_for_card(&mut h, 2);
+        assert!(h.state().markup_loading.is_none());
+        assert!(h.state().markup.is_none());
     }
 
     fn temp_png(name: &str) -> PathBuf {

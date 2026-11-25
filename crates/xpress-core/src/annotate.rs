@@ -67,15 +67,29 @@ pub fn text_size(width: u32, height: u32) -> f32 {
     (width.min(height) as f32 * 0.04).max(14.0)
 }
 
+/// The pixelate block size in pixels for an image of this size.
+pub fn block_size(width: u32, height: u32) -> f32 {
+    (width.min(height) as f32 / 40.0).max(12.0)
+}
+
 /// Draw `marks` into `img`, in order. Text needs `font`; without one, text
 /// marks are skipped.
 pub fn render(img: &mut RgbaImage, marks: &[Mark], font: Option<&FontArc>) {
+    let size = img.dimensions();
+    render_for(img, marks, font, size);
+}
+
+/// Like [`render`], on a scaled-down preview of an image whose real size is
+/// `full`: line widths, text and pixelate blocks are those of the full image,
+/// scaled, so the preview looks like the result.
+pub fn render_for(img: &mut RgbaImage, marks: &[Mark], font: Option<&FontArc>, full: (u32, u32)) {
     let (w, h) = img.dimensions();
-    if w == 0 || h == 0 {
+    if w == 0 || h == 0 || full.0 == 0 || full.1 == 0 {
         return;
     }
+    let k = w as f32 / full.0 as f32;
     let px = |p: Point| (p.x * w as f32, p.y * h as f32);
-    let stroke = stroke_width(w, h);
+    let stroke = stroke_width(full.0, full.1) * k;
     for mark in marks {
         match mark {
             Mark::Arrow { from, to, color } => arrow(img, px(*from), px(*to), stroke, *color),
@@ -92,7 +106,14 @@ pub fn render(img: &mut RgbaImage, marks: &[Mark], font: Option<&FontArc>) {
             }
             Mark::Text { at, text, color } => {
                 if let Some(font) = font {
-                    label(img, px(*at), text, text_size(w, h), *color, font);
+                    label(
+                        img,
+                        px(*at),
+                        text,
+                        text_size(full.0, full.1) * k,
+                        *color,
+                        font,
+                    );
                 }
             }
             Mark::Redact { a, b } => {
@@ -106,7 +127,7 @@ pub fn render(img: &mut RgbaImage, marks: &[Mark], font: Option<&FontArc>) {
             }
             Mark::Pixelate { a, b } => {
                 if let Some(area) = pixel_box(img, px(*a), px(*b)) {
-                    let block = ((w.min(h) / 40).max(12)).max(1);
+                    let block = (block_size(full.0, full.1) * k).round().max(1.0) as u32;
                     pixelate(img, area, block);
                 }
             }
@@ -114,18 +135,26 @@ pub fn render(img: &mut RgbaImage, marks: &[Mark], font: Option<&FontArc>) {
     }
 }
 
-/// Mark up the image at `src` (upright, without its metadata) and write it as
-/// a PNG to `out`.
+/// Mark up the image at `src` (upright) and write it as a PNG to `out`. The
+/// colour profile stays — a Mac's screenshots are in Display P3 — but no
+/// other metadata.
 pub fn annotate_file(
     src: &Path,
     out: &Path,
     marks: &[Mark],
     font: Option<&FontArc>,
 ) -> Result<(), OptimiseError> {
-    let mut img = crate::image::open_oriented(src)?.to_rgba8();
+    let (img, meta) = crate::image::load(src)?;
+    let mut img = img.to_rgba8();
     render(&mut img, marks, font);
-    let (w, h) = img.dimensions();
-    crate::image::save_rgba_png(img.as_raw(), w, h, out)
+    let meta = crate::image::Meta {
+        icc: meta.icc,
+        exif: None,
+        xmp: None,
+    };
+    let png = crate::image::encode_png(&image::DynamicImage::ImageRgba8(img), &meta)?;
+    std::fs::write(out, png)?;
+    Ok(())
 }
 
 /// A bold system font for text marks, if one is installed (loaded once).
@@ -151,17 +180,22 @@ pub fn system_font() -> Option<FontArc> {
 // Drawing
 // ---------------------------------------------------------------------------
 
-/// Paint `color` over `px` with `coverage` (0–1).
+/// Paint `color` over the pixel with `coverage` (0–1): "source over" in
+/// straight alpha, so drawing over a transparent window shadow doesn't pull
+/// in its (meaningless) black.
 fn blend(img: &mut RgbaImage, x: u32, y: u32, color: Color, coverage: f32) {
     let a = coverage.clamp(0.0, 1.0) * color[3] as f32 / 255.0;
     if a <= 0.0 {
         return;
     }
     let p = img.get_pixel_mut(x, y);
+    let dst_a = p[3] as f32 / 255.0;
+    let out_a = a + dst_a * (1.0 - a);
     for i in 0..3 {
-        p[i] = (color[i] as f32 * a + p[i] as f32 * (1.0 - a)).round() as u8;
+        let c = (color[i] as f32 * a + p[i] as f32 * dst_a * (1.0 - a)) / out_a;
+        p[i] = c.round().clamp(0.0, 255.0) as u8;
     }
-    p[3] = (255.0 * a + p[3] as f32 * (1.0 - a)).round() as u8;
+    p[3] = (255.0 * out_a).round() as u8;
 }
 
 /// The pixels a shape covering `[x0, x1] × [y0, y1]` (plus a margin) may touch.
@@ -485,6 +519,64 @@ mod tests {
         let red = img.pixels().filter(|p| p[0] > 180 && p[1] < 120).count();
         assert!(red > 50, "glyphs drawn ({red} red pixels)");
         assert_eq!(img.get_pixel(390, 190).0, [255; 4], "far away untouched");
+    }
+
+    #[test]
+    fn drawing_over_transparency_keeps_the_colour() {
+        // A window shadow: fully transparent (black) pixels.
+        let mut img = RgbaImage::from_pixel(100, 100, image::Rgba([0, 0, 0, 0]));
+        render(
+            &mut img,
+            &[Mark::Rect {
+                a: Point::new(0.2, 0.2),
+                b: Point::new(0.8, 0.8),
+                color: RED,
+            }],
+            None,
+        );
+        // Edge pixels are partly covered: red, less opaque — not darker.
+        let edges: Vec<_> = img.pixels().filter(|p| p[3] > 0 && p[3] < 255).collect();
+        assert!(!edges.is_empty());
+        for p in edges {
+            assert_eq!([p[0], p[1], p[2]], [RED[0], RED[1], RED[2]], "{p:?}");
+        }
+    }
+
+    #[test]
+    fn a_preview_matches_the_full_image() {
+        // A wide, low area: the preview is less than half the size.
+        let (full, preview) = ((2400, 300), (1200, 150));
+        let mark = Mark::Pixelate {
+            a: Point::new(0.0, 0.0),
+            b: Point::new(1.0, 1.0),
+        };
+        let mut small = noise(preview.0, preview.1);
+        render_for(&mut small, std::slice::from_ref(&mark), None, full);
+        // Full: 12 px blocks, so 6 px in the preview (not 12).
+        let first = *small.get_pixel(0, 0);
+        assert_eq!(*small.get_pixel(5, 5), first);
+        assert_ne!(*small.get_pixel(6, 0), first, "a new block at 6 px");
+    }
+
+    #[test]
+    fn the_colour_profile_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("p3.png");
+        let profile = b"fake ICC profile bytes".to_vec();
+        let mut enc_out = Vec::new();
+        {
+            use image::ImageEncoder;
+            let mut enc = image::codecs::png::PngEncoder::new(&mut enc_out);
+            enc.set_icc_profile(profile.clone()).unwrap();
+            let img = noise(16, 16);
+            enc.write_image(img.as_raw(), 16, 16, image::ExtendedColorType::Rgba8)
+                .unwrap();
+        }
+        std::fs::write(&src, enc_out).unwrap();
+        let out = dir.path().join("out.png");
+        annotate_file(&src, &out, &[], None).unwrap();
+        let (_, meta) = crate::image::load(&out).unwrap();
+        assert_eq!(meta.icc, Some(profile));
     }
 
     #[test]

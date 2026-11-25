@@ -48,6 +48,8 @@ pub enum HistoryAction {
     Pin(Vec<i64>),
     Delete(Vec<i64>),
     Reveal(PathBuf),
+    /// Open an image clip in the mark-up view.
+    Markup(PathBuf),
     Open(String),
     Enable,
     Hide,
@@ -1000,6 +1002,11 @@ impl HistoryPanel {
             self.marked.clear();
             self.dirty = true;
             ui.close();
+        }
+        if let Some(image) = clip.image.clone().filter(|_| clip.kind.is_image()) {
+            if ui.button(tr("Mark up…")).clicked() {
+                action = Some(HistoryAction::Markup(image));
+            }
         }
         if !clip.ocr.is_empty() && ui.button(tr("Copy text in image")).clicked() {
             action = Some(HistoryAction::CopyText(clip.ocr.clone()));

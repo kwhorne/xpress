@@ -6,6 +6,29 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Mark up…** on result cards and image clips in the history: the
+  screenshot mark-up tools for any image. The original is left as it is.
+
+### Changed
+- On macOS, metadata is removed from HEIC and TIFF through ImageIO even
+  when exiftool is installed, which is much quicker. exiftool still handles
+  AVIF and JXL.
+
+### Fixed
+- Closing the window while marking up a screenshot no longer stops ⇧⌘2
+  from working. Pressing ⇧⌘2 during a mark-up brings it back.
+- Screenshots keep their colour profile (Display P3 on most Macs) instead of
+  looking paler elsewhere.
+- Arrows, boxes and text drawn over a window's transparent shadow no longer
+  get dark edges.
+- The mark-up preview shows pixelate blocks, text and lines at the size
+  they'll have in the copy, also for wide, low areas.
+- If Screen Recording was turned down earlier, ⇧⌘2 opens the right System
+  Settings pane, also after a restart.
+- An image that can't be opened for cropping or mark-up now shows an error
+  instead of doing nothing.
+
 ## [1.1.0] - 2026-11-25
 
 Screenshots: take one, mark it up, and paste it, shrunk.
