@@ -67,7 +67,7 @@ them with the `pipeline` commands rather than editing by hand — see
 |------|-------|
 | Backups of originals | Next to each file, as hidden `.<name>.orig` |
 | Converted files | Next to the original, with the new extension |
-| Optimised clipboard images | `~/Pictures/xpress` |
+| Optimised clipboard images | `~/Pictures/xpress` (the app deletes `clip-*` files after a month by default) |
 | [Clipboard history](history.md) | `history/` next to `config.json` (`history.db`, `images/`, `thumbs/`) |
 | History sync (when on) | `xpress/` in iCloud Drive (`devices/<mac>/log-*.jsonl`, `blobs/`) |
 | `xpress web` output | `<name>-web/` next to the image (or `-o`) |

@@ -55,6 +55,45 @@ pub fn unique_clip_path(dir: &Path) -> PathBuf {
     path
 }
 
+/// Whether `name` is one of the files [`unique_clip_path`] makes, or what a
+/// converting pipeline turned one into: `clip-<digits>…`.
+fn is_clip_name(name: &str) -> bool {
+    name.strip_prefix("clip-")
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+}
+
+/// Delete saved clipboard images (`clip-*` files) in `dir` last changed more
+/// than `max_age` ago; returns how many. Nothing else in the folder is
+/// touched, and neither are links or folders.
+pub fn prune_clips(dir: &Path, max_age: std::time::Duration) -> usize {
+    prune_clips_at(dir, max_age, std::time::SystemTime::now())
+}
+
+fn prune_clips_at(dir: &Path, max_age: std::time::Duration, now: std::time::SystemTime) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        if !entry.file_name().to_str().is_some_and(is_clip_name) {
+            continue;
+        }
+        // `DirEntry::metadata` doesn't follow links.
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let old = meta
+            .modified()
+            .ok()
+            .and_then(|m| now.duration_since(m).ok())
+            .is_some_and(|age| age > max_age);
+        if meta.is_file() && old && std::fs::remove_file(entry.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// A pasteboard type xpress adds to everything it puts on the clipboard, so
 /// the app's history doesn't record copies made by xpress itself (from the
 /// app, `xpress history copy` or `xpress watch --clipboard`).
@@ -227,6 +266,35 @@ pub fn write_to(pb: &objc2_app_kit::NSPasteboard, parts: &[Part]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn old_clips_are_pruned_and_nothing_else() {
+        use std::time::Duration;
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "clip-1.png",
+            "clip-2-2.png",
+            "clip-3.webp",
+            "clipart.png",
+            "photo.png",
+        ] {
+            std::fs::write(dir.path().join(name), b"x").unwrap();
+        }
+        std::fs::create_dir(dir.path().join("clip-4")).unwrap();
+        let day = Duration::from_secs(86_400);
+        let now = std::time::SystemTime::now();
+        // Fresh files stay.
+        assert_eq!(prune_clips_at(dir.path(), day, now), 0);
+        // A week later the clips go, the rest stays.
+        assert_eq!(prune_clips_at(dir.path(), day, now + 7 * day), 3);
+        let mut left: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["clip-4", "clipart.png", "photo.png"]);
+        assert_eq!(prune_clips(&dir.path().join("missing"), day), 0);
+    }
 
     #[test]
     fn composing_parts() {

@@ -54,7 +54,9 @@ The main screen. Its sidebar entry is **Optimise**.
 - **Open files…** picks files with a file dialog.
 - **Optimise clipboard** takes the image on the clipboard (same as ⌘⇧O).
   Clipboard images are saved to `~/Pictures/xpress`, and the optimised image is
-  copied back so your next paste is the small one.
+  copied back so your next paste is the small one. The saved copies
+  (`clip-*`) are deleted after a month; change this under **Preferences →
+  Keep clipboard images** (1 day to forever).
 
 Work happens in the background — the window stays responsive, and the bottom
 of the sidebar shows how many files are in progress (*2 working…*).
