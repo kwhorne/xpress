@@ -80,7 +80,7 @@ programs, which xpress looks for automatically:
 | `gifsicle` | optimising **animated** GIFs | animated GIFs are left as they are |
 | `gifski` | best-quality video → GIF | ffmpeg makes the GIF instead |
 | `ghostscript` (`gs`) | `xpress extract-pages` | that command fails |
-| `exiftool` | `xpress strip-exif` and the `stripExif` pipeline step | those fail (use `--strip-metadata` instead) |
+| `exiftool` | removing metadata from AVIF and JXL files (and HEIC/TIFF outside macOS) | that fails for those files |
 | `heif-enc` | HEIC output on Linux | (macOS uses its built-in encoder) |
 | `cjxl` | JPEG XL output | JPEG XL conversion fails |
 

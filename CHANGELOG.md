@@ -6,6 +6,30 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **HEIC photos in the app** with *Strip metadata* or *Remove location* on
+  no longer fail without exiftool: on macOS, metadata is removed from HEIC
+  and TIFF through ImageIO, without re-encoding, and the result is checked
+  to hold no location.
+- `--strip-location` on JPEGs keeps IPTC captions, copyright and keywords;
+  it used to drop the whole IPTC block. Only the IPTC location fields go.
+- Removing metadata no longer fails on JPEGs with padding bytes before their
+  multi-picture (MPF) segment, which points to extra images such as HDR
+  gain maps.
+- The update banner no longer creates and deletes a probe file in
+  /Applications on every frame.
+- One file given twice (`a.png ./a.png`, or `A.PNG` on a case-insensitive
+  disk) is optimised once, not by two threads at once.
+- `xpress watch` (and other pipelines that only optimise) skips files it has
+  already optimised, like `xpress optimise`.
+- The app no longer stalls while it saves a large clipboard image (⇧⌘O) or
+  opens a large photo to crop, and doesn't back up the clipboard images it
+  saves in ~/Pictures/xpress.
+
+### Removed
+- The last Intel Mac code paths: a build from source on an Intel Mac doesn't
+  offer app updates (there are none for it).
+
 ## [1.0.2] - 2026-11-14
 
 A redistributable ffmpeg in the app, and Apple silicon only on macOS.

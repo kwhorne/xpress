@@ -203,6 +203,8 @@ pub struct XpressApp {
     _services: Option<crate::services::Services>,
     /// Files from Finder waiting to be optimised.
     pending_open: Vec<PathBuf>,
+    /// The image being decoded for the crop view.
+    crop_loading: Option<PathBuf>,
     tray_open_id: String,
     tray_clip_id: String,
     tray_history_id: String,
@@ -381,6 +383,7 @@ impl XpressApp {
             _tray: tray,
             _services: services,
             pending_open: Vec::new(),
+            crop_loading: None,
             tray_open_id: open_id,
             tray_clip_id: clip_id,
             tray_history_id: history_id,
@@ -1129,7 +1132,12 @@ impl XpressApp {
             return;
         }
         self.in_flight += 1;
-        let options = self.options();
+        let mut options = self.options();
+        // A clipboard image we just saved has no original worth a backup: it
+        // would only double what piles up in ~/Pictures/xpress.
+        if path.starts_with(clipboard_dir()) {
+            options.backup = false;
+        }
         let is_image = xpress_core::filetype::classify(&path) == Some(MediaKind::Image);
         if let (Some(format), true) = (self.convert_to, is_image) {
             work::spawn_convert(
@@ -1163,19 +1171,16 @@ impl XpressApp {
         }
     }
 
+    /// Reading a 5K screenshot off the clipboard and saving it as PNG takes
+    /// a moment, so it happens off the UI thread; the file is then optimised
+    /// like a dropped one (see [`Msg::ClipboardFile`]).
     fn optimise_clipboard(&mut self, ctx: &egui::Context) {
-        match clipboard_image_to_file() {
-            Ok(path) => self.submit(path, ctx),
-            Err(e) => self.push_card(Card {
-                title: tr("Clipboard").into(),
-                detail: e,
-                saved_pct: 0.0,
-                ok: false,
-                output: None,
-                texture: None,
-                pending_thumb: None,
-            }),
-        }
+        self.in_flight += 1;
+        let (tx, ctx) = (self.tx.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send(Msg::ClipboardFile(clipboard_image_to_file()));
+            ctx.request_repaint();
+        });
     }
 
     fn push_card(&mut self, card: Card) {
@@ -1183,7 +1188,7 @@ impl XpressApp {
         self.cards.truncate(50);
     }
 
-    fn drain_results(&mut self) {
+    fn drain_results(&mut self, ctx: &egui::Context) {
         while let Ok(msg) = self.rx.try_recv() {
             let done = match msg {
                 Msg::Done(done) => done,
@@ -1193,6 +1198,37 @@ impl XpressApp {
                 }
                 Msg::OpenFiles(files) => {
                     self.pending_open.extend(files);
+                    continue;
+                }
+                Msg::ClipboardFile(file) => {
+                    self.in_flight = self.in_flight.saturating_sub(1);
+                    match file {
+                        Ok(path) => self.submit(path, ctx),
+                        Err(e) => self.push_card(Card {
+                            title: tr("Clipboard").into(),
+                            detail: e,
+                            saved_pct: 0.0,
+                            ok: false,
+                            output: None,
+                            texture: None,
+                            pending_thumb: None,
+                        }),
+                    }
+                    continue;
+                }
+                Msg::CropReady { path, image } => {
+                    if self.crop_loading.as_ref() == Some(&path) {
+                        self.crop_loading = None;
+                        let tex_size = egui::vec2(image.size[0] as f32, image.size[1] as f32);
+                        let texture = ctx.load_texture("crop", image, egui::TextureOptions::LINEAR);
+                        self.crop = Some(CropState {
+                            path,
+                            texture,
+                            tex_size,
+                            start: None,
+                            sel: None,
+                        });
+                    }
                     continue;
                 }
                 Msg::Ai { request, result } => {
@@ -1275,21 +1311,20 @@ impl XpressApp {
         }
     }
 
+    /// Open the crop view for `path` once it is decoded — off the UI thread,
+    /// as a large photo takes a moment (see [`Msg::CropReady`]).
     fn enter_crop(&mut self, path: PathBuf, ctx: &egui::Context) {
-        let Ok(img) = xpress_core::image::open_oriented(&path) else {
-            return;
-        };
-        let disp = img.thumbnail(1400, 1400).to_rgba8();
-        let (w, h) = (disp.width(), disp.height());
-        let color =
-            egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], disp.as_raw());
-        let texture = ctx.load_texture("crop", color, egui::TextureOptions::LINEAR);
-        self.crop = Some(CropState {
-            path,
-            texture,
-            tex_size: egui::vec2(w as f32, h as f32),
-            start: None,
-            sel: None,
+        self.crop_loading = Some(path.clone());
+        let (tx, ctx) = (self.tx.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let Ok(img) = xpress_core::image::open_oriented(&path) else {
+                return;
+            };
+            let disp = img.thumbnail(1400, 1400).to_rgba8();
+            let (w, h) = (disp.width() as usize, disp.height() as usize);
+            let image = egui::ColorImage::from_rgba_unmultiplied([w, h], disp.as_raw());
+            let _ = tx.send(Msg::CropReady { path, image });
+            ctx.request_repaint();
         });
     }
 
@@ -1395,7 +1430,7 @@ impl eframe::App for XpressApp {
             std::process::exit(0);
         }
 
-        self.drain_results();
+        self.drain_results(ctx);
         self.open_pending(ctx);
         self.sync_capture();
         self.persist_settings(false);
@@ -3852,7 +3887,8 @@ mod tests {
             result: Ok("Invoice 4711 has been paid.".into()),
         })
         .unwrap();
-        h.state_mut().drain_results();
+        let ctx = h.ctx.clone();
+        h.state_mut().drain_results(&ctx);
         h.run();
         assert!(h.query_by_label("Invoice 4711 has been paid.").is_some());
         h.get_by_label("Save to history").click();
@@ -4185,8 +4221,8 @@ mod tests {
             .tx
             .send(Msg::OpenFiles(vec![png.clone()]))
             .unwrap();
-        h.state_mut().drain_results();
         let ctx = h.ctx.clone();
+        h.state_mut().drain_results(&ctx);
         h.state_mut().open_pending(&ctx);
         assert_eq!(h.state().tab, Tab::Optimise);
         assert_eq!(h.state().in_flight, 1);
@@ -4268,8 +4304,15 @@ mod tests {
         let mut h = harness();
         let ctx = h.ctx.clone();
         h.state_mut().enter_crop(img, &ctx);
+        for _ in 0..200 {
+            h.state_mut().drain_results(&ctx);
+            if h.state().crop.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         h.run();
-        assert!(h.state().crop.is_some());
+        assert!(h.state().crop.is_some(), "decoded in the background");
         assert!(h.query_by_label("Apply crop").is_some());
         assert!(h.query_by_label("Drag to select a region.").is_some());
 
@@ -4294,7 +4337,8 @@ mod tests {
     /// Run frames and collect background results until a card arrives.
     fn wait_for_card(h: &mut Harness<'static, XpressApp>, cards: usize) {
         for _ in 0..200 {
-            h.state_mut().drain_results();
+            let ctx = h.ctx.clone();
+            h.state_mut().drain_results(&ctx);
             if h.state().cards.len() >= cards {
                 h.run();
                 return;

@@ -44,11 +44,12 @@ What's removed:
 
 - the EXIF **GPS** block — wiped from the file, not just unlinked, so the
   coordinates aren't left behind in the bytes;
-- location fields in **XMP** (GPS, city, state, country, location);
+- location fields in **XMP** (GPS, city, state, country, location) and
+  **IPTC** (city, sub-location, state, country);
 - the recording location of **videos**.
 
 What's kept: camera and lens, date and time, orientation, colour profile,
-ratings, captions and other XMP.
+ratings, captions, copyright, keywords and other XMP and IPTC.
 
 ## Remove all metadata: `--strip-metadata`
 
@@ -63,7 +64,8 @@ so images still look right: the **colour profile** and the correct
 **Strip metadata**.
 
 There's also `xpress strip-exif <files>`, which removes metadata *without
-re-encoding* the image; it needs [`exiftool`](https://exiftool.org).
+re-encoding* the image. JPEG, PNG and WebP need nothing else, nor do HEIC and
+TIFF on macOS; AVIF and JXL need [`exiftool`](https://exiftool.org).
 
 ## What xpress keeps by default
 
