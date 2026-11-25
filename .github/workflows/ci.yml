@@ -115,16 +115,19 @@ jobs:
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
-    # The action reports through a check run, which pushes to main need
-    # permission for.
     permissions:
       contents: read
-      checks: write
     steps:
       - uses: actions/checkout@v5
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: dtolnay/rust-toolchain@stable
+      # Keeps the installed cargo-audit between runs (~/.cargo/bin).
+      - uses: Swatinem/rust-cache@v2
+      # Fails on known vulnerabilities in Cargo.lock; unmaintained or
+      # yanked crates are only warnings.
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked --version 0.23.0
+          cargo audit
 
   smoke:
     name: real-tool smoke
