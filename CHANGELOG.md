@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-25
+
+Mark up any image, and fixes to screenshots.
+
 ### Added
 - **Mark up…** on result cards and image clips in the history: the
   screenshot mark-up tools for any image. The original is left as it is.
@@ -692,7 +696,8 @@ Intel), and the command line for macOS, Linux and now Windows.
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/kwhorne/xpress/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/kwhorne/xpress/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/kwhorne/xpress/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/kwhorne/xpress/compare/v1.0.1...v1.0.2
