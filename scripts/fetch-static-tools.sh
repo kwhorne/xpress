@@ -3,8 +3,8 @@
 # Download self-contained (statically/system-only linked) tool binaries to bundle
 # inside xpress.app — no Homebrew required, for maintainers or the release CI.
 #
-# Currently fetches a portable ffmpeg (video + audio). Images are handled in
-# pure Rust and need no binary; PDF still needs ghostscript installed separately.
+# Currently fetches a portable ffmpeg (video + audio). Images and PDFs are
+# handled in pure Rust and need no binary.
 #
 # Usage:
 #   scripts/fetch-static-tools.sh <target-triple> <dest-dir>
@@ -67,4 +67,3 @@ fi
 echo "    ✓ licence: GPL-3.0 (no nonfree parts)"
 
 echo "==> Done. Bundled tools in: $dest"
-echo "    (PDF/ghostscript is not bundled; install 'gs' for PDF optimisation.)"

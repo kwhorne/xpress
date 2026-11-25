@@ -54,6 +54,9 @@ libc = "0.2"
 objc2 = "0.6"
 objc2-foundation = { version = "0.3", features = ["NSArray", "NSData", "NSDictionary", "NSError", "NSString", "NSURL"] }
 objc2-app-kit = { version = "0.3", features = ["NSPasteboard", "NSPasteboardItem"] }
+# Removing metadata from HEIC/TIFF without exiftool (strip.rs).
+objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFArray", "CFBase", "CFDictionary", "CFError", "CFNumber", "CFString", "CFURL"] }
+objc2-image-io = { version = "0.3", default-features = false, features = ["std", "CGImageDestination", "CGImageMetadata", "CGImageProperties", "CGImageSource"] }
 # Text recognition in images (Apple Vision).
 objc2-vision = { version = "0.3", default-features = false, features = ["std", "VNRequest", "VNRecognizeTextRequest", "VNRequestHandler", "VNObservation", "VNTypes"] }
 

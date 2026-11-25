@@ -95,19 +95,14 @@ if [[ -e "$APP/Contents/Resources/bin/ffmpeg" ]]; then
 fi
 echo "    ✓ $(ls "$APP/Contents/Resources/licenses" | tr '\n' ' ')"
 
-# The Apple Intelligence helper (macOS 26+, Apple silicon; skipped without a
-# suitable SDK, and for an Intel build of the app).
+# The Apple Intelligence helper (macOS 26+; skipped without a suitable SDK).
 echo "==> Apple Intelligence helper"
-if lipo -archs "$GUI_BIN" 2>/dev/null | grep -q arm64; then
-  "$ROOT/scripts/build-xpress-ai.sh"
-else
-  echo "    (xpress-ai skipped: Apple Intelligence needs Apple silicon)"
-fi
-if lipo -archs "$GUI_BIN" 2>/dev/null | grep -q arm64 && [[ -x "$ROOT/target/xpress-ai/xpress-ai" ]]; then
+"$ROOT/scripts/build-xpress-ai.sh"
+if [[ -x "$ROOT/target/xpress-ai/xpress-ai" ]]; then
   mkdir -p "$APP/Contents/Resources/bin"
   cp -f "$ROOT/target/xpress-ai/xpress-ai" "$APP/Contents/Resources/bin/xpress-ai"
-elif [[ "${XPRESS_REQUIRE_AI:-0}" == "1" ]] && lipo -archs "$GUI_BIN" 2>/dev/null | grep -q arm64; then
-  # Release builds for Apple silicon must ship it.
+elif [[ "${XPRESS_REQUIRE_AI:-0}" == "1" ]]; then
+  # Release builds must ship it.
   echo "xpress-ai was not built, but XPRESS_REQUIRE_AI=1" >&2
   exit 1
 fi

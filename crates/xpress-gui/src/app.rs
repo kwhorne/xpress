@@ -3207,10 +3207,17 @@ fn app_bundle_path() -> Option<PathBuf> {
 }
 
 /// True when we're running from an installed .app (so self-update makes sense).
+///
+/// Called on every frame the update banner shows, so whether this copy can
+/// replace itself is worked out once (it probes its folder by creating a
+/// file); [`perform_self_update`] checks again before it starts.
 fn can_self_update(info: &xpress_core::update::UpdateInfo) -> bool {
+    static INSTALLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     cfg!(target_os = "macos")
         && info.download_url.is_some()
-        && app_bundle_path().is_some_and(|app| self_update_blocker(&app).is_none())
+        && *INSTALLED.get_or_init(|| {
+            app_bundle_path().is_some_and(|app| self_update_blocker(&app).is_none())
+        })
 }
 
 /// Why this copy of the app can't replace itself, if it can't: run from a

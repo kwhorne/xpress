@@ -5,7 +5,9 @@
 //! colour profile always stays (it is colour-critical), and so does the EXIF
 //! orientation (as a minimal EXIF block), so a photo never ends up sideways.
 //! Other formats (HEIC, AVIF, TIFF, JXL) go through `exiftool` when it is
-//! installed; without it they fail loudly instead of keeping GPS silently.
+//! installed; on macOS without it, through ImageIO (which also copies the
+//! image data unchanged), and the result is checked to have no GPS left.
+//! When neither can do it, they fail loudly instead of keeping GPS silently.
 
 use std::path::Path;
 
@@ -19,6 +21,12 @@ use crate::tools::{self, Tool};
 
 const EXIF_HEADER: &[u8] = b"Exif\0\0";
 const XMP_HEADER: &[u8] = b"http://ns.adobe.com/xap/1.0/\0";
+const PHOTOSHOP_HEADER: &[u8] = b"Photoshop 3.0\0";
+
+/// IPTC-IIM datasets (record 2) that say where a photo was taken: content
+/// location code and name, city, sub-location, province/state, country code
+/// and country name.
+const IPTC_LOCATION: &[u8] = &[26, 27, 90, 92, 95, 100, 101];
 
 /// Write `src` without the metadata `strip` asks to remove to `out`.
 ///
@@ -50,7 +58,7 @@ pub fn strip_file(src: &Path, out: &Path, strip: Strip) -> Result<bool, Optimise
     Ok(true)
 }
 
-/// HEIC, AVIF, TIFF, JXL, …: `exiftool` on a copy.
+/// HEIC, AVIF, TIFF, JXL, …: `exiftool` on a copy, or (macOS) ImageIO.
 fn strip_with_exiftool(
     src: &Path,
     out: &Path,
@@ -58,6 +66,10 @@ fn strip_with_exiftool(
     ext: &str,
 ) -> Result<bool, OptimiseError> {
     if !tools::is_available(Tool::Exiftool) {
+        #[cfg(target_os = "macos")]
+        if imageio::strip(src, out, strip).is_ok() {
+            return Ok(true);
+        }
         return Err(OptimiseError::Other(format!(
             "removing metadata from .{ext} files needs exiftool (e.g. `brew install exiftool`)"
         )));
@@ -121,6 +133,283 @@ fn kept_exif(exif: &[u8], strip: Strip) -> Option<Vec<u8>> {
             let mut e = exif.to_vec();
             strip_gps(&mut e);
             Some(e)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ImageIO (macOS): HEIC, TIFF, … without exiftool
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+mod imageio {
+    use std::path::Path;
+    use std::ptr;
+
+    use objc2_core_foundation::{CFBoolean, CFDictionary, CFString, CFType, CFURL};
+    use objc2_image_io::{
+        kCGImageDestinationMergeMetadata, kCGImageDestinationMetadata,
+        kCGImageMetadataShouldExcludeGPS, kCGImagePropertyGPSDictionary, CGImageDestination,
+        CGImageMetadata, CGImageMetadataTag, CGImageSource, CGMutableImageMetadata,
+    };
+
+    use crate::image::Strip;
+
+    /// XMP that says where a photo was taken, besides GPS (ImageIO drops GPS
+    /// itself). IPTC city/country are read and written as these too.
+    const XMP_LOCATION: &[&str] = &[
+        "photoshop:City",
+        "photoshop:State",
+        "photoshop:Country",
+        "Iptc4xmpCore:Location",
+        "Iptc4xmpCore:CountryCode",
+        "Iptc4xmpExt:LocationCreated",
+        "Iptc4xmpExt:LocationShown",
+    ];
+
+    /// Copy `src` to `out` without the metadata `strip` asks to remove. The
+    /// image data is copied, not re-encoded. `Err` when ImageIO can't, or
+    /// when the copy would still say where the photo was taken.
+    pub fn strip(src: &Path, out: &Path, strip: Strip) -> Result<(), String> {
+        let src_url = CFURL::from_file_path(src).ok_or("not a file path")?;
+        let out_url = CFURL::from_file_path(out).ok_or("not a file path")?;
+        // SAFETY: plain ImageIO calls; every dictionary holds the value
+        // types ImageIO documents for its keys.
+        unsafe {
+            let source = CGImageSource::with_url(&src_url, None).ok_or("ImageIO can't read it")?;
+            let uti = source.r#type().ok_or("ImageIO doesn't know the format")?;
+            let count = source.count();
+            if count == 0 {
+                return Err("no image in it".into());
+            }
+            let dest = CGImageDestination::with_url(&out_url, &uti, count, None)
+                .ok_or("ImageIO can't write the format")?;
+
+            // The metadata to write in place of the file's own: a copy without
+            // the tags to remove. Removing everything keeps the orientation
+            // (so the photo stays upright) and ImageIO's own `iio:` tags —
+            // without those it keeps the file's old XMP (city, creation date)
+            // instead of writing it anew.
+            let remove = |path: &str| match strip {
+                Strip::Keep => false,
+                Strip::All => path != "tiff:Orientation" && !path.starts_with("iio:"),
+                Strip::Location => XMP_LOCATION.contains(&path),
+            };
+            if strip == Strip::Keep {
+                return Err("nothing to remove".into());
+            }
+            let metadata = source
+                .metadata_at_index(0, None)
+                .and_then(|m| CGMutableImageMetadata::new_copy(&m))
+                .unwrap_or_else(|| CGMutableImageMetadata::new());
+            for path in tag_paths(&metadata) {
+                if remove(&path) {
+                    metadata.remove_tag_with_path(None, &CFString::from_str(&path));
+                }
+            }
+            let keys: [&CFString; 3] = [
+                kCGImageMetadataShouldExcludeGPS,
+                kCGImageDestinationMetadata,
+                kCGImageDestinationMergeMetadata,
+            ];
+            let values: [&CFType; 3] = [
+                CFBoolean::new(true).as_ref(),
+                metadata.as_ref(),
+                CFBoolean::new(false).as_ref(),
+            ];
+            let options = CFDictionary::<CFString, CFType>::from_slices(&keys, &values);
+            if !dest.copy_image_source(&source, Some(options.as_opaque()), ptr::null_mut()) {
+                let _ = std::fs::remove_file(out);
+                return Err("ImageIO couldn't copy it".into());
+            }
+        }
+        if has_location(out) {
+            let _ = std::fs::remove_file(out);
+            return Err("the location was still there".into());
+        }
+        Ok(())
+    }
+
+    /// The paths (`prefix:name`) of the top-level tags in `metadata`.
+    unsafe fn tag_paths(metadata: &CGImageMetadata) -> Vec<String> {
+        let Some(tags) = (unsafe { metadata.tags() }) else {
+            return Vec::new();
+        };
+        let tags = unsafe { tags.cast_unchecked::<CGImageMetadataTag>() };
+        tags.iter()
+            .filter_map(|t| {
+                let (prefix, name) = unsafe { (t.prefix()?, t.name()?) };
+                Some(format!("{prefix}:{name}"))
+            })
+            .collect()
+    }
+
+    /// Whether the file still says where it was taken: GPS in any image, or
+    /// location XMP in the first. Unreadable counts as yes.
+    fn has_location(path: &Path) -> bool {
+        has_gps(path)
+            || CFURL::from_file_path(path)
+                .and_then(|url| unsafe { CGImageSource::with_url(&url, None) })
+                .and_then(|src| unsafe { src.metadata_at_index(0, None) })
+                .is_some_and(|m| {
+                    let tags = unsafe { tag_paths(&m) };
+                    tags.iter().any(|t| XMP_LOCATION.contains(&t.as_str()))
+                })
+    }
+
+    /// Whether any image in the file has a GPS dictionary.
+    fn has_gps(path: &Path) -> bool {
+        let Some(url) = CFURL::from_file_path(path) else {
+            return true;
+        };
+        // SAFETY: as above.
+        unsafe {
+            let Some(source) = CGImageSource::with_url(&url, None) else {
+                return true;
+            };
+            (0..source.count()).any(|i| {
+                source.properties_at_index(i, None).is_none_or(|p| {
+                    p.cast_unchecked::<CFString, CFType>()
+                        .get(kCGImagePropertyGPSDictionary)
+                        .is_some()
+                })
+            })
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use objc2_core_foundation::{CFNumber, CFRetained};
+        use objc2_image_io::{
+            kCGImagePropertyExifDateTimeOriginal, kCGImagePropertyExifDictionary,
+            kCGImagePropertyGPSLatitude, kCGImagePropertyGPSLatitudeRef, kCGImagePropertyIPTCCity,
+            kCGImagePropertyIPTCDictionary, kCGImagePropertyOrientation,
+            kCGImagePropertyTIFFDictionary, kCGImagePropertyTIFFMake,
+        };
+
+        type Dict = CFDictionary<CFString, CFType>;
+
+        fn dict(pairs: &[(&CFString, &CFType)]) -> CFRetained<Dict> {
+            let (k, v): (Vec<_>, Vec<_>) = pairs.iter().copied().unzip();
+            Dict::from_slices(&k, &v)
+        }
+
+        /// An iPhone-like HEIC: GPS, camera make, capture time, IPTC city,
+        /// and a sideways orientation.
+        fn heic_with_metadata(dir: &Path) -> std::path::PathBuf {
+            let jpg = dir.join("src.jpg");
+            image::RgbImage::from_fn(64, 48, |x, y| image::Rgb([x as u8 * 4, y as u8 * 5, 90]))
+                .save(&jpg)
+                .unwrap();
+            let heic = dir.join("photo.heic");
+            unsafe {
+                let s = |v: &str| CFString::from_str(v);
+                let lat = CFNumber::new_f64(63.43);
+                let (n, make, when, city) = (
+                    s("N"),
+                    s("TestCam"),
+                    s("2024:05:17 12:00:00"),
+                    s("Trondheim"),
+                );
+                let gps = dict(&[
+                    (kCGImagePropertyGPSLatitude, lat.as_ref()),
+                    (kCGImagePropertyGPSLatitudeRef, n.as_ref()),
+                ]);
+                let tiff = dict(&[(kCGImagePropertyTIFFMake, make.as_ref())]);
+                let exif = dict(&[(kCGImagePropertyExifDateTimeOriginal, when.as_ref())]);
+                let iptc = dict(&[(kCGImagePropertyIPTCCity, city.as_ref())]);
+                let six = CFNumber::new_i32(6);
+                let props = dict(&[
+                    (kCGImagePropertyGPSDictionary, gps.as_ref()),
+                    (kCGImagePropertyTIFFDictionary, tiff.as_ref()),
+                    (kCGImagePropertyExifDictionary, exif.as_ref()),
+                    (kCGImagePropertyIPTCDictionary, iptc.as_ref()),
+                    (kCGImagePropertyOrientation, six.as_ref()),
+                ]);
+                let src =
+                    CGImageSource::with_url(&CFURL::from_file_path(&jpg).unwrap(), None).unwrap();
+                let dest = CGImageDestination::with_url(
+                    &CFURL::from_file_path(&heic).unwrap(),
+                    &s("public.heic"),
+                    1,
+                    None,
+                )
+                .unwrap();
+                dest.add_image_from_source(&src, 0, Some(props.as_opaque()));
+                assert!(dest.finalize());
+            }
+            heic
+        }
+
+        /// The first image's value at `dict` / `key`, as a string.
+        fn prop(path: &Path, dict: Option<&CFString>, key: &CFString) -> Option<String> {
+            unsafe {
+                let url = CFURL::from_file_path(path)?;
+                let src = CGImageSource::with_url(&url, None)?;
+                let props = src.properties_at_index(0, None)?;
+                let props = props.cast_unchecked::<CFString, CFType>();
+                let v = match dict {
+                    None => props.get(key)?,
+                    Some(d) => {
+                        let inner = props.get(d)?.downcast::<CFDictionary>().ok()?;
+                        inner.cast_unchecked::<CFString, CFType>().get(key)?
+                    }
+                };
+                Some(match v.downcast_ref::<CFString>() {
+                    Some(s) => s.to_string(),
+                    None => v.downcast_ref::<CFNumber>()?.as_i64()?.to_string(),
+                })
+            }
+        }
+
+        #[test]
+        fn heic_without_location_or_metadata() {
+            let (iptc, city, tiff, make, exif, when, orientation) = unsafe {
+                (
+                    Some(kCGImagePropertyIPTCDictionary),
+                    kCGImagePropertyIPTCCity,
+                    Some(kCGImagePropertyTIFFDictionary),
+                    kCGImagePropertyTIFFMake,
+                    Some(kCGImagePropertyExifDictionary),
+                    kCGImagePropertyExifDateTimeOriginal,
+                    kCGImagePropertyOrientation,
+                )
+            };
+            let dir = tempfile::tempdir().unwrap();
+            let heic = heic_with_metadata(dir.path());
+            assert!(has_gps(&heic), "the fixture has GPS");
+            assert_eq!(prop(&heic, iptc, city).as_deref(), Some("Trondheim"));
+            assert_eq!(prop(&heic, tiff, make).as_deref(), Some("TestCam"));
+            assert_eq!(prop(&heic, None, orientation).as_deref(), Some("6"));
+
+            let loc = dir.path().join("loc.heic");
+            strip(&heic, &loc, Strip::Location).unwrap();
+            assert!(!has_gps(&loc));
+            assert_eq!(prop(&loc, iptc, city), None, "city gone");
+            assert_eq!(
+                prop(&loc, tiff, make).as_deref(),
+                Some("TestCam"),
+                "the rest kept"
+            );
+            assert_eq!(prop(&loc, None, orientation).as_deref(), Some("6"));
+
+            let all = dir.path().join("all.heic");
+            strip(&heic, &all, Strip::All).unwrap();
+            assert!(!has_gps(&all));
+            assert_eq!(prop(&all, tiff, make), None, "camera gone");
+            assert_eq!(prop(&all, exif, when), None, "capture time gone");
+            assert_eq!(prop(&all, iptc, city), None, "city gone");
+            assert_eq!(
+                prop(&all, None, orientation).as_deref(),
+                Some("6"),
+                "still upright"
+            );
+
+            // Through the public entry point (exiftool when installed).
+            let via = dir.path().join("via.heic");
+            assert!(super::super::strip_file(&heic, &via, Strip::Location).unwrap());
+            assert!(!has_location(&via));
         }
     }
 }
@@ -193,9 +482,15 @@ fn strip_jpeg(data: &[u8], strip: Strip) -> Option<Vec<u8>> {
                     jpeg_segment(0xE1, &p)
                 }
             },
-            // IPTC (captions, but also city/country): the re-encoding path
-            // never carries it either.
-            0xED => None,
+            // Photoshop/IPTC: captions, copyright and keywords, but also
+            // city and country. Removing location keeps the rest.
+            0xED => match strip {
+                Strip::Keep => Some(segment.to_vec()),
+                Strip::All => None,
+                Strip::Location => {
+                    photoshop_without_location(payload).and_then(|p| jpeg_segment(0xED, &p))
+                }
+            },
             // JFIF, ICC profile / MPF, Adobe colour transform: needed to show
             // the image right.
             0xE0 | 0xE2 | 0xEE => Some(segment.to_vec()),
@@ -204,7 +499,9 @@ fn strip_jpeg(data: &[u8], strip: Strip) -> Option<Vec<u8>> {
             _ => Some(segment.to_vec()),
         };
         if marker == 0xE2 && payload.starts_with(b"MPF\0") && mpf.is_none() {
-            mpf = Some((pos, out.len()));
+            // Its TIFF header follows `MPF\0`; the segment (fill bytes before
+            // the marker included) is copied unchanged.
+            mpf = Some((m + 7, out.len() + (m - pos) + 7));
         }
         if let Some(k) = kept {
             out.extend_from_slice(&k);
@@ -212,12 +509,102 @@ fn strip_jpeg(data: &[u8], strip: Strip) -> Option<Vec<u8>> {
         pos = end;
     }
     if let Some((orig_at, out_at)) = mpf {
-        // Bytes removed between the MPF segment and the image data shift the
+        // Bytes removed between the MPF header and the image data shift the
         // secondary images; their offsets are relative to the MPF header.
         let removed = (data.len() - orig_at) - (out.len() - out_at);
         if removed > 0 {
-            patch_mpf_offsets(&mut out, out_at + 8, removed as u32)?;
+            patch_mpf_offsets(&mut out, out_at, removed as u32)?;
         }
+    }
+    Some(out)
+}
+
+/// An APP13 (Photoshop) payload without where the photo was taken: the IPTC
+/// location datasets go, and so does the IPTC digest when that changed the
+/// IPTC (it would no longer match); embedded XMP loses its location, embedded
+/// EXIF (which may hold GPS) goes. `None` when it can't be read — the caller
+/// then drops the whole segment rather than keep a location.
+fn photoshop_without_location(payload: &[u8]) -> Option<Vec<u8>> {
+    let mut rest = payload.strip_prefix(PHOTOSHOP_HEADER)?;
+    let mut blocks: Vec<(u16, &[u8], Vec<u8>)> = Vec::new();
+    let mut iptc_changed = false;
+    while !rest.is_empty() {
+        if !rest.starts_with(b"8BIM") {
+            return None;
+        }
+        let id = u16::from_be_bytes(rest.get(4..6)?.try_into().ok()?);
+        // A Pascal string, padded to an even length.
+        let name_len = *rest.get(6)? as usize;
+        let name_end = 7 + name_len + (name_len + 1) % 2;
+        let name = rest.get(6..name_end)?;
+        let size = u32::from_be_bytes(rest.get(name_end..name_end + 4)?.try_into().ok()?) as usize;
+        let start = name_end + 4;
+        let data = rest.get(start..start + size)?;
+        rest = rest.get(start + size + size % 2..).unwrap_or_default();
+        let data = match id {
+            0x0404 => {
+                let iptc = iptc_without_location(data)?;
+                iptc_changed |= iptc.len() != data.len();
+                iptc
+            }
+            0x0424 => strip_xmp_location(data),
+            0x0422 | 0x0423 => continue,
+            _ => data.to_vec(),
+        };
+        blocks.push((id, name, data));
+    }
+    let mut out = PHOTOSHOP_HEADER.to_vec();
+    for (id, name, data) in blocks {
+        if id == 0x0425 && iptc_changed {
+            continue;
+        }
+        out.extend_from_slice(b"8BIM");
+        out.extend_from_slice(&id.to_be_bytes());
+        out.extend_from_slice(name);
+        out.extend_from_slice(&u32::try_from(data.len()).ok()?.to_be_bytes());
+        out.extend_from_slice(&data);
+        if data.len() % 2 == 1 {
+            out.push(0);
+        }
+    }
+    Some(out)
+}
+
+/// IPTC-IIM data without the location datasets, or `None` when it can't be
+/// read.
+fn iptc_without_location(data: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(data.len());
+    let mut i = 0;
+    while i < data.len() {
+        if data[i] != 0x1C {
+            // Some writers pad the block with zeros.
+            if data[i..].iter().all(|&b| b == 0) {
+                out.extend_from_slice(&data[i..]);
+                break;
+            }
+            return None;
+        }
+        let (record, dataset) = (*data.get(i + 1)?, *data.get(i + 2)?);
+        let n = u16::from_be_bytes(data.get(i + 3..i + 5)?.try_into().ok()?) as usize;
+        let (header, len) = if n & 0x8000 == 0 {
+            (5, n)
+        } else {
+            // Extended dataset: the low bits say how many length bytes follow.
+            let k = n & 0x7FFF;
+            if k == 0 || k > 4 {
+                return None;
+            }
+            let len = data
+                .get(i + 5..i + 5 + k)?
+                .iter()
+                .fold(0usize, |l, &b| l << 8 | b as usize);
+            (5 + k, len)
+        };
+        let item = data.get(i..i + header + len)?;
+        if !(record == 2 && IPTC_LOCATION.contains(&dataset)) {
+            out.extend_from_slice(item);
+        }
+        i += item.len();
     }
     Some(out)
 }
@@ -497,6 +884,110 @@ mod tests {
             image::load_from_memory(&src).unwrap().to_rgba8(),
             image::load_from_memory(&out).unwrap().to_rgba8()
         );
+    }
+
+    fn iptc(record: u8, dataset: u8, value: &[u8]) -> Vec<u8> {
+        let mut d = vec![0x1C, record, dataset];
+        d.extend_from_slice(&(value.len() as u16).to_be_bytes());
+        d.extend_from_slice(value);
+        d
+    }
+
+    fn photoshop_block(id: u16, data: &[u8]) -> Vec<u8> {
+        let mut b = b"8BIM".to_vec();
+        b.extend_from_slice(&id.to_be_bytes());
+        b.extend_from_slice(&[0, 0]); // empty name, padded
+        b.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        b.extend_from_slice(data);
+        if data.len() % 2 == 1 {
+            b.push(0);
+        }
+        b
+    }
+
+    /// A JPEG with an APP13 holding a city, a caption, a copyright notice
+    /// and the IPTC digest.
+    fn jpeg_with_iptc() -> Vec<u8> {
+        let mut data = iptc(2, 90, b"Trondheim");
+        data.extend(iptc(2, 120, b"Harbour at dawn"));
+        data.extend(iptc(2, 116, b"Copyright Someone"));
+        data.extend(iptc(2, 101, b"Norway"));
+        let mut p = PHOTOSHOP_HEADER.to_vec();
+        p.extend(photoshop_block(0x0404, &data));
+        p.extend(photoshop_block(0x0425, &[7; 16]));
+        let src = jpeg(&exif_with_gps());
+        let mut out = src[..2].to_vec();
+        out.extend(jpeg_segment(0xED, &p).unwrap());
+        out.extend_from_slice(&src[2..]);
+        out
+    }
+
+    fn has(buf: &[u8], s: &[u8]) -> bool {
+        buf.windows(s.len()).any(|w| w == s)
+    }
+
+    #[test]
+    fn jpeg_strip_location_keeps_iptc_but_not_the_place() {
+        let src = jpeg_with_iptc();
+        let out = strip_jpeg(&src, Strip::Location).unwrap();
+        assert!(has(&out, b"Harbour at dawn"), "caption kept");
+        assert!(has(&out, b"Copyright Someone"), "copyright kept");
+        assert!(!has(&out, b"Trondheim"), "city removed");
+        assert!(!has(&out, b"Norway"), "country removed");
+        assert!(!has(&out, &[7; 16]), "stale IPTC digest dropped");
+        assert_eq!(
+            image::load_from_memory(&src).unwrap().to_rgb8(),
+            image::load_from_memory(&out).unwrap().to_rgb8()
+        );
+
+        let all = strip_jpeg(&src, Strip::All).unwrap();
+        assert!(!has(&all, b"Harbour at dawn"));
+        assert!(!has(&all, b"Photoshop 3.0"));
+    }
+
+    #[test]
+    fn iptc_extended_and_padded_datasets_parse() {
+        let mut data = iptc(2, 120, b"caption");
+        data.extend_from_slice(&[0x1C, 2, 92, 0x80, 2, 0, 3]);
+        data.extend_from_slice(b"Old");
+        data.extend_from_slice(&[0, 0, 0]);
+        let out = iptc_without_location(&data).unwrap();
+        assert!(has(&out, b"caption"));
+        assert!(!has(&out, b"Old"));
+        assert!(iptc_without_location(b"\x1C\x02").is_none(), "truncated");
+    }
+
+    #[test]
+    fn mpf_after_fill_bytes_is_patched_in_place() {
+        // MPF TIFF (LE) with one MP Entry list of two images.
+        let mut m = b"MPF\0II\x2a\0\x08\0\0\0".to_vec();
+        m.extend_from_slice(&1u16.to_le_bytes());
+        m.extend_from_slice(&0xB002u16.to_le_bytes());
+        m.extend_from_slice(&7u16.to_le_bytes());
+        m.extend_from_slice(&32u32.to_le_bytes());
+        m.extend_from_slice(&26u32.to_le_bytes());
+        m.extend_from_slice(&0u32.to_le_bytes());
+        m.resize(4 + 26, 0);
+        for off in [0u32, 5000] {
+            m.extend_from_slice(&[0; 8]);
+            m.extend_from_slice(&off.to_le_bytes());
+            m.extend_from_slice(&[0; 4]);
+        }
+        let src = jpeg(&exif_with_gps());
+        let mut data = src[..2].to_vec();
+        data.push(0xFF); // a fill byte before the marker
+        data.extend(jpeg_segment(0xE2, &m).unwrap());
+        let comment = jpeg_segment(0xFE, b"to be removed").unwrap();
+        data.extend_from_slice(&comment);
+        data.extend_from_slice(&src[2..]);
+
+        let out = strip_jpeg(&data, Strip::All).expect("MPF found and patched");
+        let hdr = out.windows(4).position(|w| w == b"MPF\0").unwrap() + 4;
+        assert_eq!(&out[hdr..hdr + 2], b"II");
+        let second = hdr + 26 + 16 + 8;
+        let removed = (data.len() - out.len()) as u32;
+        assert!(removed >= comment.len() as u32);
+        assert_eq!(&out[second..second + 4], &(5000 - removed).to_le_bytes());
     }
 
     #[test]
