@@ -3,6 +3,7 @@
 //! This crate is UI-agnostic: images and PDFs are handled in pure Rust, video
 //! and audio by driving `ffmpeg` (resolved from a bundle dir or `PATH`).
 
+pub mod annotate;
 pub mod audio;
 pub mod budget;
 pub mod bundled;

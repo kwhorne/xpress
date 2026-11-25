@@ -11,10 +11,22 @@ pub enum Action {
     Clipboard,
     Show,
     History,
+    /// Take a screenshot and mark it up (macOS).
+    Screenshot,
 }
 
 impl Action {
-    pub const ALL: [Action; 3] = [Action::Clipboard, Action::Show, Action::History];
+    pub const ALL: [Action; 4] = [
+        Action::Clipboard,
+        Action::Show,
+        Action::History,
+        Action::Screenshot,
+    ];
+
+    /// Whether this platform can do it (screenshots are macOS only).
+    pub fn available(self) -> bool {
+        self != Action::Screenshot || cfg!(target_os = "macos")
+    }
 
     pub fn index(self) -> usize {
         self as usize
@@ -25,6 +37,7 @@ impl Action {
             Action::Clipboard => "Optimise clipboard",
             Action::Show => "Open xpress",
             Action::History => "Clipboard history",
+            Action::Screenshot => "Take screenshot",
         }
     }
 
@@ -33,6 +46,8 @@ impl Action {
             Action::Clipboard => "shift+super+KeyO",
             Action::Show => "shift+super+KeyX",
             Action::History => "control+super+KeyV",
+            Action::Screenshot if cfg!(target_os = "macos") => "shift+super+Digit2",
+            Action::Screenshot => "",
         }
     }
 }
@@ -207,7 +222,12 @@ mod tests {
             .iter()
             .map(|a| display_str(a.default_shortcut()))
             .collect();
-        assert_eq!(shown, ["⇧⌘O", "⇧⌘X", "⌃⌘V"]);
+        let screenshot = if cfg!(target_os = "macos") {
+            "⇧⌘2"
+        } else {
+            "Off"
+        };
+        assert_eq!(shown, ["⇧⌘O", "⇧⌘X", "⌃⌘V", screenshot]);
         assert_eq!(display_str(""), "Off");
         assert_eq!(display_str("nonsense+++"), "Off");
     }

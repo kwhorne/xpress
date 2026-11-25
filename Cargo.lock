@@ -6844,6 +6844,7 @@ dependencies = [
 name = "xpress-core"
 version = "1.0.3"
 dependencies = [
+ "ab_glyph",
  "anyhow",
  "crc32fast",
  "exoquant",

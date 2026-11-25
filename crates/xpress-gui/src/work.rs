@@ -35,6 +35,23 @@ pub enum Msg {
         path: PathBuf,
         image: egui::ColorImage,
     },
+    /// A screenshot was taken (`None`: cancelled). `back_to_app`: it was
+    /// started from another app, which gets the focus back when done.
+    ScreenshotTaken {
+        result: Result<Option<PathBuf>, String>,
+        back_to_app: bool,
+    },
+    /// A screenshot decoded for the mark-up view.
+    MarkupReady {
+        path: PathBuf,
+        image: image::RgbaImage,
+        back_to_app: bool,
+    },
+    /// The marked-up screenshot, written as a PNG (to optimise and copy).
+    Annotated {
+        result: Result<PathBuf, String>,
+        back_to_app: bool,
+    },
 }
 
 type Job = Box<dyn FnOnce() + Send>;

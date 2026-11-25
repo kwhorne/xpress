@@ -66,6 +66,7 @@ pub struct Settings {
     pub shortcut_clipboard: String,
     pub shortcut_show: String,
     pub shortcut_history: String,
+    pub shortcut_screenshot: String,
 }
 
 impl Default for Settings {
@@ -103,6 +104,9 @@ impl Settings {
                 .into(),
             shortcut_show: crate::shortcuts::Action::Show.default_shortcut().into(),
             shortcut_history: crate::shortcuts::Action::History.default_shortcut().into(),
+            shortcut_screenshot: crate::shortcuts::Action::Screenshot
+                .default_shortcut()
+                .into(),
         }
     }
 

@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Screenshots with mark-up** (macOS): **⇧⌘2**, *Take screenshot* in the
+  menu bar or the sidebar opens the system's area/window picker. The shot
+  then opens in a mark-up view with arrows, boxes, text, **redact** (a solid
+  black box) and pixelate, in four colours, with undo. ↩ draws the marks at
+  full resolution, then optimises the PNG, copies it, saves it in
+  ~/Pictures/xpress and adds it to the history. Needs the Screen Recording
+  permission.
+
 ## [1.0.3] - 2026-11-25
 
 HEIC metadata without exiftool, a more careful location strip, and a

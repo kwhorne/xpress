@@ -213,6 +213,35 @@ fn nb(s: &str) -> Option<&'static str> {
         "Cancel" => "Avbryt",
         "Apply crop" => "Beskjær",
         "Drag to select a region." => "Dra for å velge et område.",
+        // Screenshots and mark-up.
+        "Take screenshot" => "Ta skjermbilde",
+        "Take screenshot…" => "Ta skjermbilde…",
+        "Select an area, mark it up and copy it, shrunk" => {
+            "Velg et område, merk det og kopier det, krympet"
+        }
+        "xpress needs Screen Recording: turn it on in System Settings → Privacy & Security → Screen & System Audio Recording, then quit and reopen xpress." => {
+            "xpress trenger Skjermopptak: slå det på i Systeminnstillinger → Personvern og sikkerhet → Skjerm- og systemlydopptak, og avslutt og åpne xpress igjen."
+        }
+        "Mark up" => "Merk",
+        "Arrow" => "Pil",
+        "Box" => "Ramme",
+        "Redact" => "Sladd",
+        "Pixelate" => "Pikseler",
+        "Undo" => "Angre",
+        "Shrink it and copy it (↩)" => "Krymp og kopier (↩)",
+        "Drag from where the arrow starts to what it points at." => {
+            "Dra fra der pilen starter til det den peker på."
+        }
+        "Drag to draw a box around something." => "Dra for å tegne en ramme rundt noe.",
+        "Click where the text should go, type, then press ↩." => {
+            "Klikk der teksten skal stå, skriv og trykk ↩."
+        }
+        "Drag over what must not be seen: a black box, safe for passwords and keys." => {
+            "Dra over det som ikke skal synes: en svart boks, trygt for passord og nøkler."
+        }
+        "Drag to blur faces or names. Pixelated text can sometimes be read again — use Redact for secrets." => {
+            "Dra for å gjøre ansikter eller navn uleselige. Pikselert tekst kan noen ganger leses igjen — bruk Sladd for hemmeligheter."
+        }
         // Updates and About.
         "Downloading update…" => "Laster ned oppdatering…",
         "Installing update…" => "Installerer oppdatering…",

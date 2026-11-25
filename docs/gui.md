@@ -34,6 +34,7 @@ xpress has no Dock icon — look for the **✕** in the menu bar. Its menu has:
 | Open xpress | ⌘⇧X | Bring the window to the front |
 | Optimise clipboard | ⌘⇧O | Optimise the image you copied, and put the smaller one back on the clipboard |
 | Clipboard history | ⌃⌘V | Search what you copied and your screenshots, and copy it back ([History](history.md)) |
+| Take screenshot | ⇧⌘2 | Select an area, mark it up, and copy it shrunk ([Screenshots](#take-screenshot)) |
 | Collect clips | | Add everything you copy to one multi-clip, to paste together ([multi-clips](history.md#several-clips-at-once-multi-clips)) |
 | Check for updates | | Look for a new version now |
 | Quit xpress | | Quit (closing the window only hides it) |
@@ -105,6 +106,37 @@ AVIF. You can also start it from a result card's right-click menu.
 For crops to an exact size or aspect ratio, or batches, use
 [`xpress crop`](resizing-and-cropping.md).
 
+## Take screenshot…
+
+Press **⇧⌘2** in any app (or choose *Take screenshot* in the menu bar). Then
+drag over an area, or press space and click a window. Esc cancels. The
+screenshot opens in xpress, where you can mark it up:
+
+| Tool | Key | Does |
+|------|-----|------|
+| Arrow | A | Drag from where it starts to what it points at |
+| Box | R | Drag a frame around something |
+| Text | T | Click, type, press ↩ |
+| Redact | X | A solid black box: what was underneath is gone from the image |
+| Pixelate | P | Coarse blocks over faces or names |
+
+Choose a colour (red, yellow, blue or black) for arrows, boxes and text.
+**⌘Z** undoes the last mark.
+
+**Copy** (↩) draws the marks at full resolution and optimises the image like
+⇧⌘O does. It puts the smaller PNG on the clipboard, saves it in
+`~/Pictures/xpress`, and adds it to the history, if the history keeps
+screenshots. If you started from another app, you're back in it, ready for
+⌘V.
+
+Use **Redact** for passwords, keys and anything secret. Pixelated text can
+sometimes be read again.
+
+The first time, macOS asks to let xpress record the screen. Without that,
+a screenshot shows only the desktop picture. To allow it later, go to
+**System Settings → Privacy & Security → Screen & System Audio Recording**,
+turn **xpress** on, and reopen xpress. Screenshots are macOS only.
+
 ## Preferences
 
 | Setting | Default | Meaning |
@@ -119,7 +151,7 @@ For crops to an exact size or aspect ratio, or batches, use
 | Language | System | **English** or **Norsk** (Norwegian bokmål); *System* follows macOS. Messages from the engine (errors) stay English. |
 | Float on top | off | Keep the window above other windows. |
 | Default pipeline | `crop(longEdge: 2000) -> convert(to: webp)` | Used when *Pipeline* is switched on. |
-| Shortcuts | ⇧⌘O, ⇧⌘X, ⌃⌘V | Click one and press the new keys (with ⌘, ⌃ or ⌥); ⌫ turns it off, esc cancels, *Reset* brings the default back. The menu-bar menu shows the current ones. |
+| Shortcuts | ⇧⌘O, ⇧⌘X, ⌃⌘V, ⇧⌘2 | Click one and press the new keys (with ⌘, ⌃ or ⌥); ⌫ turns it off, esc cancels, *Reset* brings the default back. The menu-bar menu shows the current ones. |
 | Clipboard history | off | Record what you copy and your screenshots — with *Include screenshots*, *Find text in images*, *Paste directly*, *Sync with iCloud*, *Keep history* and *Clear…*. See [History](history.md#settings). |
 
 Settings — these and the compression slider, *Aggressive*, *Convert to* and
