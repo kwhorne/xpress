@@ -140,3 +140,22 @@ fn pipeline_on_a_marked_file_still_works() {
     let r = pipeline::run(&f, &steps, &opts(30)).unwrap();
     assert!(r.output.exists());
 }
+
+#[test]
+fn an_optimise_pipeline_skips_and_marks_like_optimise() {
+    let dir = tmpdir("pipeline-cache");
+    if !xattrs_supported(&dir) {
+        return;
+    }
+    let f = dir.join("shot.png");
+    write_png(&f, 4);
+    let steps = pipeline::parse("optimise").unwrap();
+    let first = pipeline::run(&f, &steps, &opts(30)).unwrap();
+    assert!(!first.cached);
+    // A restarted `xpress watch` sees the file again: it is skipped.
+    let again = pipeline::run(&f, &steps, &opts(30)).unwrap();
+    assert!(again.cached, "marked by the first run");
+    // A pipeline that changes the file always runs.
+    let steps = pipeline::parse("optimise -> downscale(factor: 0.5)").unwrap();
+    assert!(!pipeline::run(&f, &steps, &opts(30)).unwrap().cached);
+}

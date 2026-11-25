@@ -300,6 +300,25 @@ pub fn run(
         return Err(OptimiseError::NotFound(source.to_path_buf()));
     }
     let old_size = file_size(source);
+    // A pipeline that only optimises (the watch daemon's default) skips and
+    // marks files like `xpress optimise` does.
+    let cacheable =
+        options.use_cache && !steps.is_empty() && steps.iter().all(|s| *s == Step::Optimise);
+    if cacheable && crate::cache::is_optimised(source, options, None) {
+        let kind = classify(source).unwrap_or(MediaKind::Image);
+        let mut r = crate::result::unchanged(
+            kind,
+            source,
+            old_size,
+            options.compression.image_is_aggressive(),
+        );
+        r.cached = true;
+        if let Some(out) = options.output.as_ref().filter(|o| o.as_path() != source) {
+            crate::result::place_file(source, out)?;
+            r.output = out.clone();
+        }
+        return Ok(r);
+    }
     let work = TempDir::new()?;
 
     // The working file starts as a copy of the source.
@@ -326,7 +345,7 @@ pub fn run(
         source.with_extension(&final_ext)
     };
     let kind = classify(&default_dest).unwrap_or(MediaKind::Image);
-    finish(
+    let r = finish(
         kind,
         source,
         &current,
@@ -343,7 +362,11 @@ pub fn run(
             backup: same_type,
             replace_source: false,
         },
-    )
+    )?;
+    if cacheable {
+        crate::cache::mark(&r.output, options, None);
+    }
+    Ok(r)
 }
 
 impl Step {

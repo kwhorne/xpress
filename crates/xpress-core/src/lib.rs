@@ -136,7 +136,23 @@ pub fn collect_files(inputs: &[PathBuf], recursive: bool, kinds: &[MediaKind]) -
     }
     out.sort();
     out.dedup();
+    // `a.png`, `./a.png` and (on a case-insensitive disk) `A.PNG` are one
+    // file: optimising it twice at once would race on the same output.
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|p| seen.insert(file_identity(p)));
     out
+}
+
+/// What makes two paths the same file: device and inode on Unix, the
+/// canonical path elsewhere (or the path itself when that fails).
+fn file_identity(path: &Path) -> (u64, u64, PathBuf) {
+    #[cfg(unix)]
+    if let Ok(m) = std::fs::metadata(path) {
+        use std::os::unix::fs::MetadataExt;
+        return (m.dev(), m.ino(), PathBuf::new());
+    }
+    let p = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    (0, 0, p)
 }
 
 /// Optimise many files in parallel, returning per-file results in input order.
@@ -166,5 +182,20 @@ mod tests {
         );
         assert_eq!(expand_home("/tmp/~/x"), "/tmp/~/x");
         assert_eq!(expand_home("~user/x"), "~user/x");
+    }
+
+    #[test]
+    fn one_file_by_two_names_is_collected_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.png");
+        std::fs::write(&a, b"\x89PNG\r\n\x1a\n").unwrap();
+        let mut inputs = vec![a.clone(), dir.path().join(".").join("a.png")];
+        // A case-insensitive disk (macOS, Windows): another spelling.
+        let upper = dir.path().join("A.PNG");
+        if upper.exists() {
+            inputs.push(upper);
+        }
+        inputs.push(dir.path().to_path_buf());
+        assert_eq!(collect_files(&inputs, false, &[]).len(), 1);
     }
 }
