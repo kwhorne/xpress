@@ -3,7 +3,7 @@
 
 use crate::i18n::{tr, trf};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -52,7 +52,8 @@ const QUALITY_TARGETS: [(&str, Option<f64>); 5] = [
     ("Medium", Some(70.0)),
     ("Low", Some(50.0)),
 ];
-/// "Keep history" choices in Preferences (days; 0 = until the size limit).
+/// "Keep history" (and "Keep clipboard images") choices in Preferences
+/// (days; 0 = until the size limit, or forever).
 const HISTORY_DAYS: [(u32, &str); 6] = [
     (1, "1 day"),
     (7, "1 week"),
@@ -115,6 +116,9 @@ pub struct XpressApp {
     history_screenshots: bool,
     history_ocr: bool,
     history_days: u32,
+    /// Saved clipboard images are deleted after this many days (0 = keep);
+    /// shared with the clean-up thread.
+    clip_files_days: Arc<AtomicU32>,
     /// "Clear history" asks once more before deleting.
     confirm_clear: bool,
     /// The clip last put on the clipboard (tests read this).
@@ -347,6 +351,7 @@ impl XpressApp {
             history_screenshots: true,
             history_ocr: true,
             history_days: 30,
+            clip_files_days: Arc::new(AtomicU32::new(30)),
             confirm_clear: false,
             last_copied: None,
             collecting: false,
@@ -414,6 +419,9 @@ impl XpressApp {
         app.apply_language();
         app.sync_capture();
         app.apply_shortcuts();
+        if integrations {
+            spawn_clip_cleanup(clipboard_dir(), app.clip_files_days.clone());
+        }
         if integrations && !app.onboarded {
             app.welcome_step = Some(0);
         }
@@ -442,6 +450,7 @@ impl XpressApp {
             history_screenshots: self.history_screenshots,
             history_ocr: self.history_ocr,
             history_days: self.history_days,
+            clip_files_days: self.clip_files_days.load(Ordering::Relaxed),
             paste_directly: self.paste_directly,
             history_sync: self.history_sync,
             history_ignored: self.history_ignored.clone(),
@@ -474,6 +483,8 @@ impl XpressApp {
         self.history_screenshots = s.history_screenshots;
         self.history_ocr = s.history_ocr;
         self.history_days = s.history_days;
+        self.clip_files_days
+            .store(s.clip_files_days, Ordering::Relaxed);
         self.paste_directly = s.paste_directly;
         self.history_sync = s.history_sync;
         self.history_ignored = s.history_ignored.clone();
@@ -2500,6 +2511,28 @@ impl XpressApp {
                     });
                 },
             );
+            ui.separator();
+            setting_row(
+                ui,
+                tr("Keep clipboard images"),
+                tr("Copies saved in ~/Pictures/xpress"),
+                |ui| {
+                    let mut days = self.clip_files_days.load(Ordering::Relaxed);
+                    let current = HISTORY_DAYS
+                        .iter()
+                        .find(|(d, _)| *d == days)
+                        .map_or(tr("1 month"), |(_, l)| tr(l));
+                    egui::ComboBox::from_id_salt("clip_files_days")
+                        .selected_text(current)
+                        .width(140.0)
+                        .show_ui(ui, |ui| {
+                            for (d, label) in HISTORY_DAYS {
+                                ui.selectable_value(&mut days, d, tr(label));
+                            }
+                        });
+                    self.clip_files_days.store(days, Ordering::Relaxed);
+                },
+            );
         });
 
         ui.add_space(12.0);
@@ -3363,6 +3396,20 @@ fn hide_app(ctx: &egui::Context) {
 }
 
 /// Ask the Apple Intelligence helper whether the model can be used.
+/// Every hour, delete saved clipboard images older than the setting says.
+fn spawn_clip_cleanup(dir: PathBuf, days: Arc<AtomicU32>) {
+    std::thread::spawn(move || loop {
+        let days = days.load(Ordering::Relaxed);
+        if days > 0 {
+            xpress_core::clipboard::prune_clips(
+                &dir,
+                std::time::Duration::from_secs(u64::from(days) * 86_400),
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_secs(60 * 60));
+    });
+}
+
 fn spawn_ai_check(
     slot: Arc<Mutex<Option<AiStatus>>>,
     checking: Arc<AtomicBool>,
@@ -4556,8 +4603,10 @@ mod tests {
             // Preferences scroll; show all of it.
             h.set_size(egui::vec2(960.0, 1800.0));
             h.state_mut().history_days = 7;
+            h.state_mut().clip_files_days.store(0, Ordering::Relaxed);
             h.state_mut().paste_directly = true;
             h.run();
+            assert!(h.query_by_label("Keep clipboard images").is_some());
             // The setting, and its shortcut.
             assert_eq!(h.query_all_by_label("Clipboard history").count(), 2);
             h.get_by_label("Clear…").click();
@@ -4593,6 +4642,7 @@ mod tests {
         let h = history_harness(dir.path());
         assert!(h.state().history_enabled);
         assert_eq!(h.state().capture.keep_days.load(Ordering::Relaxed), 7);
+        assert_eq!(h.state().clip_files_days.load(Ordering::Relaxed), 0);
         assert!(h.state().paste_directly);
     }
 

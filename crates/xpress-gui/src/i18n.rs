@@ -352,6 +352,8 @@ fn nb(s: &str) -> Option<&'static str> {
         "Delete its {} clips" => "Slett {} klipp",
         "Click again to delete" => "Klikk igjen for å slette",
         "Keep history" => "Behold historikk",
+        "Keep clipboard images" => "Behold utklippsbilder",
+        "Copies saved in ~/Pictures/xpress" => "Kopiene som lagres i ~/Pictures/xpress",
         "Pinned clips are always kept" => "Festede klipp beholdes alltid",
         "1 day" => "1 dag",
         "1 week" => "1 uke",

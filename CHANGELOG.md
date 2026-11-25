@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Keep clipboard images** in Preferences: the copies of clipboard images,
+  screenshots and mark-ups saved in ~/Pictures/xpress (`clip-*`) are deleted
+  after a month by default (1 day, 1 week, 3 months, 1 year or forever).
+  Nothing else in the folder is touched, and the history keeps its own copy.
+
 ## [1.1.1] - 2026-11-25
 
 Mark up any image, and fixes to screenshots.

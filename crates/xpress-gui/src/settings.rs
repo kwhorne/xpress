@@ -52,6 +52,9 @@ pub struct Settings {
     pub history_ocr: bool,
     /// Forget unpinned clips after this many days (0 = keep).
     pub history_days: u32,
+    /// Delete saved clipboard images (`~/Pictures/xpress/clip-*`) after
+    /// this many days (0 = keep).
+    pub clip_files_days: u32,
     /// Paste a chosen clip into the previous app (needs Accessibility).
     pub paste_directly: bool,
     /// Sync the history between Macs through iCloud Drive.
@@ -96,6 +99,7 @@ impl Settings {
             history_screenshots: true,
             history_ocr: true,
             history_days: 30,
+            clip_files_days: 30,
             paste_directly: false,
             history_sync: false,
             history_ignored: Vec::new(),
