@@ -4263,10 +4263,7 @@ mod tests {
         h.run();
         h.state_mut().end_stale_recording(false);
         assert_eq!(h.state().recording, None);
-        assert!(
-            h.state().registered.iter().all(Option::is_some),
-            "shortcuts back on"
-        );
+        assert!(all_registered(&h), "shortcuts back on");
     }
 
     #[test]
@@ -4298,7 +4295,7 @@ mod tests {
                 "alt+super+KeyH"
             );
             assert!(h.query_by_label("⌥⌘H").is_some());
-            assert!(h.state().registered.iter().all(Option::is_some), "back on");
+            assert!(all_registered(&h), "back on");
 
             // A plain key is refused; the same keys as another shortcut too.
             h.get_by_label("⇧⌘X").click();
@@ -4602,6 +4599,14 @@ mod tests {
         h.run();
         assert!(h.state().crop.is_none(), "back to the main view");
         assert!(h.query_by_label("Optimise clipboard").is_some());
+    }
+
+    /// Every shortcut this platform has is registered.
+    fn all_registered(h: &Harness<'static, XpressApp>) -> bool {
+        Action::ALL
+            .iter()
+            .filter(|a| a.available())
+            .all(|a| h.state().registered[a.index()].is_some())
     }
 
     /// Open the mark-up view on a fresh screenshot-like PNG.
