@@ -64,7 +64,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: kwhorne/xpress@v1.1.1
+      - uses: kwhorne/xpress@v1.1.2
         with:
           paths: public assets
           max-size: 500kb
@@ -80,7 +80,7 @@ The action downloads the xpress release for the runner and runs
 | `min-savings` | `10` | Percent that counts as "unoptimised" |
 | `quality` | `visually-lossless` | Perceptual target for images |
 | `exclude` | `node_modules .git` | Directory names to skip |
-| `version` | `latest` | xpress release, e.g. `v1.1.1` |
+| `version` | `latest` | xpress release, e.g. `v1.1.2` |
 
 It runs on Linux (x64), macOS (Apple silicon) and Windows (x64)
 runners, e.g. `ubuntu-latest`, `macos-latest` or `windows-latest`; the
