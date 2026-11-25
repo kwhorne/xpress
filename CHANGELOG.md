@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-25
+
+Screenshots: take one, mark it up, and paste it, shrunk.
+
+> The first screenshot asks for **Screen Recording** permission (System
+> Settings → Privacy & Security → Screen & System Audio Recording). After
+> turning it on, quit and reopen xpress.
+
 ### Added
 - **Screenshots with mark-up** (macOS): **⇧⌘2**, *Take screenshot* in the
   menu bar or the sidebar opens the system's area/window picker. The shot
@@ -661,7 +669,8 @@ Intel), and the command line for macOS, Linux and now Windows.
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/kwhorne/xpress/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/kwhorne/xpress/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/kwhorne/xpress/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/kwhorne/xpress/compare/v1.0.0...v1.0.1
