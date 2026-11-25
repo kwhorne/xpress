@@ -49,17 +49,14 @@ struct GhAsset {
     browser_download_url: String,
 }
 
-/// The release-asset target triple for the current macOS architecture.
+/// The release-asset target triple of the macOS app for this build. Releases
+/// are Apple silicon only, so an Intel build (from source) has none.
 pub fn current_target() -> Option<&'static str> {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         Some("aarch64-apple-darwin")
     }
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    {
-        Some("x86_64-apple-darwin")
-    }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     {
         None
     }

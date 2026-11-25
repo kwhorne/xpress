@@ -28,6 +28,13 @@ pub enum Msg {
         request: u64,
         result: Result<String, String>,
     },
+    /// The clipboard image, saved as a file to optimise.
+    ClipboardFile(Result<PathBuf, String>),
+    /// An image decoded for the crop view.
+    CropReady {
+        path: PathBuf,
+        image: egui::ColorImage,
+    },
 }
 
 type Job = Box<dyn FnOnce() + Send>;

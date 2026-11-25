@@ -36,10 +36,9 @@ done
 os="$(uname -s)"; arch="$(uname -m)"
 case "$os-$arch" in
   Darwin-arm64)   triple="aarch64-apple-darwin" ;;
-  Darwin-x86_64)  triple="x86_64-apple-darwin" ;;
   Linux-x86_64)   triple="x86_64-unknown-linux-gnu" ;;
   Linux-aarch64)  triple="aarch64-unknown-linux-gnu" ;;
-  *) echo "unsupported platform: $os-$arch" >&2; exit 1 ;;
+  *) echo "unsupported platform: $os-$arch (macOS: Apple silicon only)" >&2; exit 1 ;;
 esac
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
