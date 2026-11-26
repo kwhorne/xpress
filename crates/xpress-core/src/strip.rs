@@ -85,11 +85,15 @@ fn strip_with_exiftool(
         Strip::Keep => return Ok(false),
         // Delete everything, then copy the colour profile and orientation
         // back from the original (`@`). `-all=` leaves a TIFF's first IFD
-        // (the image's own: camera, artist, software, date) alone; its
-        // non-essential tags go explicitly, the layout stays.
+        // (the image's own) alone: `-CommonIFD0=` is exiftool's shortcut
+        // for its camera, software, artist, copyright, date and description
+        // tags, and a few more go by name. The layout tags stay.
         Strip::All => &[
             "-all=",
-            "-IFD0:all=",
+            "-CommonIFD0=",
+            "-IFD0:HostComputer=",
+            "-IFD0:DocumentName=",
+            "-IFD0:PageName=",
             "-tagsFromFile",
             "@",
             "-icc_profile",
