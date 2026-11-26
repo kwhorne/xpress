@@ -160,17 +160,7 @@ jobs:
           test -f clip.webm
           $xp convert --to gif --no-backup clip.mp4
           test -f clip.gif
-          # Removing where a TIFF was taken (exiftool), keeping the camera.
-          ffmpeg -y -f lavfi -i testsrc=size=64x64:duration=1 -frames:v 1 place.tiff
-          exiftool -q -overwrite_original -Make=TestCam -GPSLatitude=63.4 \
-            -GPSLatitudeRef=N -IPTC:City=Trondheim -IPTC:ContentLocationName=Harbour \
-            -IPTC:Country-PrimaryLocationCode=NOR -XMP-iptcCore:CountryCode=NOR \
-            '-XMP-iptcExt:LocationCreated={City=ExtCity}' \
-            '-XMP-iptcExt:LocationShown={CountryName=ExtCountry}' place.tiff
-          exiftool -a -G1 place.tiff | grep -E 'Trondheim|Harbour|ExtCity|ExtCountry|NOR|GPS'
-          $xp optimise --strip-location --no-backup place.tiff
-          left=$(exiftool -a -G1 place.tiff)
-          echo "$left" | grep -q TestCam
-          if echo "$left" | grep -E 'Trondheim|Harbour|ExtCity|ExtCountry|NOR|GPS'; then
-            echo "location left in the TIFF"; exit 1
-          fi
+      # Removing metadata through the real exiftool (TIFF): location only,
+      # and everything.
+      - name: exiftool metadata tests
+        run: XPRESS_REQUIRE_EXIFTOOL=1 cargo test -p xpress-core --test exiftool

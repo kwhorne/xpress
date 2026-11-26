@@ -29,8 +29,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   starts off instead of failing to register.
 
 ### Changed
-- CI: `cargo audit` installs a prebuilt cargo-audit; the real-tool smoke
-  test removes a TIFF's location through exiftool.
+- CI: `cargo audit` installs a prebuilt cargo-audit; new tests remove
+  a TIFF's metadata through the real exiftool.
 
 ## [1.1.2] - 2026-11-25
 
