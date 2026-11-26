@@ -156,8 +156,16 @@ impl MarkupState {
                 color,
             },
             Tool::Rect => Mark::Rect { a, b, color },
-            Tool::Redact => Mark::Redact { a, b },
-            Tool::Pixelate => Mark::Pixelate { a, b },
+            // Snapped to the preview's pixels, so the full-size image
+            // covers at least what the preview shows.
+            Tool::Redact => {
+                let (a, b) = annotate::snap_box(a, b, self.base.dimensions());
+                Mark::Redact { a, b }
+            }
+            Tool::Pixelate => {
+                let (a, b) = annotate::snap_box(a, b, self.base.dimensions());
+                Mark::Pixelate { a, b }
+            }
             Tool::Text => return None,
         })
     }
@@ -300,7 +308,10 @@ impl MarkupState {
         } else if let Some(p) = resp.interact_pointer_pos() {
             let n = to_norm(p);
             if resp.drag_started() {
-                self.drag = Some((n, n));
+                // From where the button went down: egui starts a drag only
+                // once the pointer has moved a few points.
+                let start = ui.input(|i| i.pointer.press_origin()).map_or(n, to_norm);
+                self.drag = Some((start, n));
             } else if let Some((start, _)) = self.drag {
                 self.drag = Some((start, n));
             }

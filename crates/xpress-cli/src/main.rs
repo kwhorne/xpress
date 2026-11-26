@@ -1,11 +1,18 @@
 //! xpress — a media optimisation CLI.
 //!
 //! Subcommands:
-//!   xpress optimise [image|video|pdf|audio|files] <items...>
-//!   xpress downscale --factor <f> <items...>
-//!   xpress convert --to <fmt> <items...>
-//!   xpress strip-exif <items...>
-//!   xpress doctor
+//!
+//! ```text
+//! xpress optimise [image|video|pdf|audio|files] <items...>
+//! xpress downscale --factor <f> <items...>
+//! xpress convert --to <fmt> <items...>
+//! xpress strip-exif <items...>
+//! xpress doctor
+//! ```
+
+// The doc comments on the arguments are also the `--help` text, which is
+// plain text: `<picture>` there is meant literally, not as HTML.
+#![allow(rustdoc::invalid_html_tags)]
 
 mod check;
 mod history;

@@ -4,7 +4,8 @@
 # inside xpress.app — no Homebrew required, for maintainers or the release CI.
 #
 # Currently fetches a portable ffmpeg (video + audio). Images and PDFs are
-# handled in pure Rust and need no binary.
+# handled in pure Rust and need no binary (except PDF `extract-pages`, which
+# uses Ghostscript when it's installed).
 #
 # Usage:
 #   scripts/fetch-static-tools.sh <target-triple> <dest-dir>

@@ -119,15 +119,14 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      # Keeps the installed cargo-audit between runs (~/.cargo/bin).
-      - uses: Swatinem/rust-cache@v2
+      # A prebuilt cargo-audit (checksum-verified), instead of compiling it.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit@0.23.0
       # Fails on known vulnerabilities in Cargo.lock; unmaintained or
       # yanked crates are only warnings.
       - name: cargo audit
-        run: |
-          cargo install cargo-audit --locked --version 0.23.0
-          cargo audit
+        run: cargo audit
 
   smoke:
     name: real-tool smoke
@@ -139,7 +138,7 @@ jobs:
       - name: Install real optimisation tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg gifsicle ghostscript
+          sudo apt-get install -y ffmpeg gifsicle ghostscript libimage-exiftool-perl
       - name: Build CLI
         run: cargo build --release -p xpress-cli
       - name: Smoke-test against real binaries
@@ -161,3 +160,17 @@ jobs:
           test -f clip.webm
           $xp convert --to gif --no-backup clip.mp4
           test -f clip.gif
+          # Removing where a TIFF was taken (exiftool), keeping the camera.
+          ffmpeg -y -f lavfi -i testsrc=size=64x64:duration=1 -frames:v 1 place.tiff
+          exiftool -q -overwrite_original -Make=TestCam -GPSLatitude=63.4 \
+            -GPSLatitudeRef=N -IPTC:City=Trondheim -IPTC:ContentLocationName=Harbour \
+            -IPTC:Country-PrimaryLocationCode=NOR -XMP-iptcCore:CountryCode=NOR \
+            '-XMP-iptcExt:LocationCreated={City=ExtCity}' \
+            '-XMP-iptcExt:LocationShown={CountryName=ExtCountry}' place.tiff
+          exiftool -a -G1 place.tiff | grep -E 'Trondheim|Harbour|ExtCity|ExtCountry|NOR|GPS'
+          $xp optimise --strip-location --no-backup place.tiff
+          left=$(exiftool -a -G1 place.tiff)
+          echo "$left" | grep -q TestCam
+          if echo "$left" | grep -E 'Trondheim|Harbour|ExtCity|ExtCountry|NOR|GPS'; then
+            echo "location left in the TIFF"; exit 1
+          fi
