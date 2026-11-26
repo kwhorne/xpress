@@ -7,10 +7,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
-- **Strip metadata on TIFF (macOS)** no longer keeps the camera, owner,
-  serial number and dates: TIFF goes through exiftool again, as before 1.0.3
-  (ImageIO keeps a TIFF's own tags). HEIC still uses ImageIO, and the result
-  is now checked to hold nothing but the image's layout and orientation.
+- **Strip metadata on TIFF** no longer keeps the camera, software, artist,
+  owner, serial number, copyright and dates. On macOS, TIFF goes through
+  exiftool again (ImageIO keeps a TIFF's own tags); and exiftool, on every
+  system, now also clears the TIFF's first IFD, which `-all=` leaves alone.
+  HEIC still uses ImageIO, and the result is now checked to hold nothing but
+  the image's layout and orientation.
 - **Remove location** also removes the IPTC content location and country
   code, and the IPTC Extension's *location created* / *location shown*, in
   JPEG, PNG, WebP, HEIC and (through exiftool) other formats.
