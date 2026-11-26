@@ -16,6 +16,19 @@ const PLACE: &[&str] = &[
     "GPS",
 ];
 
+/// Camera, people and dates: kept by "location only", gone with "all".
+const PERSONAL: &[&str] = &[
+    "TestCam",
+    "ModelX",
+    "ArtistX",
+    "SoftX",
+    "HostX",
+    "CopyX",
+    "SerialX",
+    "OwnerX",
+    "2024:05:17",
+];
+
 fn exiftool() -> Option<std::path::PathBuf> {
     match tools::resolve(Tool::Exiftool) {
         Ok(path) => Some(path),
@@ -48,6 +61,16 @@ fn tiff_with_place(exiftool: &Path, dir: &Path) -> std::path::PathBuf {
             "-q",
             "-overwrite_original",
             "-Make=TestCam",
+            "-Model=ModelX",
+            "-Artist=ArtistX",
+            "-Software=SoftX",
+            "-HostComputer=HostX",
+            "-Copyright=CopyX",
+            "-DateTime=2024:05:17 12:00:00",
+            "-ExifIFD:SerialNumber=SerialX",
+            "-ExifIFD:OwnerName=OwnerX",
+            "-ExifIFD:DateTimeOriginal=2024:05:17 12:00:00",
+            "-Orientation#=6",
             "-GPSLatitude=63.4",
             "-GPSLatitudeRef=N",
             "-IPTC:City=Trondheim",
@@ -63,8 +86,8 @@ fn tiff_with_place(exiftool: &Path, dir: &Path) -> std::path::PathBuf {
         .success();
     assert!(ok, "exiftool wrote the fixture");
     let before = tags(exiftool, &tiff);
-    for place in PLACE {
-        assert!(before.contains(place), "fixture has {place}:\n{before}");
+    for tag in PLACE.iter().chain(PERSONAL) {
+        assert!(before.contains(tag), "fixture has {tag}:\n{before}");
     }
     tiff
 }
@@ -80,10 +103,20 @@ fn a_tiffs_location_goes_and_its_camera_stays() {
     let out = dir.path().join("out.tiff");
     assert!(xpress_core::strip::strip_file(&tiff, &out, Strip::Location).unwrap());
     let after = tags(&exiftool, &out);
-    assert!(after.contains("TestCam"), "camera kept:\n{after}");
+    for tag in PERSONAL {
+        assert!(after.contains(tag), "{tag} kept:\n{after}");
+    }
     for place in PLACE {
         assert!(!after.contains(place), "{place} left:\n{after}");
     }
+    assert_same_pixels(&tiff, &out);
+}
+
+/// Removing metadata doesn't touch the image.
+fn assert_same_pixels(a: &Path, b: &Path) {
+    let a = image::open(a).unwrap().to_rgb8();
+    let b = image::open(b).unwrap().to_rgb8();
+    assert_eq!(a, b);
 }
 
 #[test]
@@ -97,8 +130,9 @@ fn removing_everything_from_a_tiff_leaves_no_camera() {
     let out = dir.path().join("out.tiff");
     assert!(xpress_core::strip::strip_file(&tiff, &out, Strip::All).unwrap());
     let after = tags(&exiftool, &out);
-    assert!(!after.contains("TestCam"), "camera removed:\n{after}");
-    for place in PLACE {
-        assert!(!after.contains(place), "{place} left:\n{after}");
+    for tag in PLACE.iter().chain(PERSONAL) {
+        assert!(!after.contains(tag), "{tag} left:\n{after}");
     }
+    assert!(after.contains("Rotate 90 CW"), "orientation kept:\n{after}");
+    assert_same_pixels(&tiff, &out);
 }

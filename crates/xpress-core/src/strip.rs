@@ -84,9 +84,12 @@ fn strip_with_exiftool(
     let tags: &[&str] = match strip {
         Strip::Keep => return Ok(false),
         // Delete everything, then copy the colour profile and orientation
-        // back from the original (`@`).
+        // back from the original (`@`). `-all=` leaves a TIFF's first IFD
+        // (the image's own: camera, artist, software, date) alone; its
+        // non-essential tags go explicitly, the layout stays.
         Strip::All => &[
             "-all=",
+            "-IFD0:all=",
             "-tagsFromFile",
             "@",
             "-icc_profile",
