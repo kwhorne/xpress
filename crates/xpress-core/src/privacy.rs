@@ -112,7 +112,7 @@ pub fn strip_gps(exif: &mut [u8]) -> bool {
 pub fn strip_xmp_location(xmp: &[u8]) -> Vec<u8> {
     use std::sync::OnceLock;
     static RE: OnceLock<[regex::bytes::Regex; 2]> = OnceLock::new();
-    let names = r"(?:exif:GPS[A-Za-z]*|photoshop:(?:City|State|Country)|Iptc4xmpCore:Location)";
+    let names = r"(?:exif:GPS[A-Za-z]*|photoshop:(?:City|State|Country)|Iptc4xmpCore:(?:Location|CountryCode)|Iptc4xmpExt:Location(?:Created|Shown))";
     let [attr, elem] = RE.get_or_init(|| {
         [
             regex::bytes::Regex::new(&format!(r#"\s+{names}\s*=\s*("[^"]*"|'[^']*')"#)).unwrap(),
@@ -210,6 +210,14 @@ mod tests {
             "Norway",
             "Iptc4xmpCore",
         ] {
+            assert!(!out.contains(gone), "{gone} still in {out}");
+        }
+
+        // The IPTC Extension's location structures and the country code.
+        let xmp = br#"<rdf:Description Iptc4xmpCore:CountryCode="NOR" dc:format="image/jpeg"><Iptc4xmpExt:LocationCreated><rdf:Bag><rdf:li Iptc4xmpExt:City="ExtCity"/></rdf:Bag></Iptc4xmpExt:LocationCreated><Iptc4xmpExt:LocationShown><rdf:Bag><rdf:li><Iptc4xmpExt:CountryName>ExtCountry</Iptc4xmpExt:CountryName></rdf:li></rdf:Bag></Iptc4xmpExt:LocationShown></rdf:Description>"#;
+        let out = String::from_utf8(strip_xmp_location(xmp)).unwrap();
+        assert!(out.contains(r#"dc:format="image/jpeg""#));
+        for gone in ["NOR", "ExtCity", "ExtCountry", "Location"] {
             assert!(!out.contains(gone), "{gone} still in {out}");
         }
     }

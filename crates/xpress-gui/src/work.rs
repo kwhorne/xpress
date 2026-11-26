@@ -46,10 +46,12 @@ pub enum Msg {
         source: crate::markup::Source,
         image: Result<image::RgbaImage, String>,
     },
-    /// The marked-up image, written as a PNG (to optimise and copy).
+    /// The marked-up image, written as a PNG (to optimise and copy). On an
+    /// error the marks come back, to reopen the mark-up with them.
     Annotated {
         result: Result<PathBuf, String>,
         source: crate::markup::Source,
+        marks: Vec<xpress_core::annotate::Mark>,
     },
 }
 

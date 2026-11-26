@@ -65,8 +65,8 @@ xpress is free and open source under the [MIT License](LICENSE).
 ## Install
 
 ```sh
-brew install --cask kwhorne/tap/xpress    # the menu-bar app (macOS)
-brew install kwhorne/tap/xpress           # the command line (macOS, Linux)
+brew install --cask kwhorne/tap/xpress    # the menu-bar app (macOS, Apple silicon)
+brew install kwhorne/tap/xpress           # the command line (macOS on Apple silicon, Linux)
 ```
 
 Or download the signed `.dmg` / `.tar.gz` (or the Windows `.zip` of the
@@ -124,7 +124,10 @@ cargo run -p xpress-gui --release
 * **Lives in the macOS menu bar** — a status-bar icon (Open / Optimise clipboard
   / Check for updates / Quit). Closing the window hides it there; it keeps running.
 * **Global hotkeys**: **⌘⇧O** optimises the clipboard image, **⌘⇧X** brings the
-  window to the front — from anywhere.
+  window to the front, **⌃⌘V** opens the clipboard history and **⇧⌘2** takes a
+  screenshot — from anywhere.
+* **Screenshots and Mark up…**: pick an area or window, draw arrows, boxes and
+  text, black out secrets, and the small PNG is on the clipboard.
 * **Drag and drop** images, videos, PDFs or audio to optimise them; result cards
   show the saving, a thumbnail, and **Reveal** / **Copy** actions.
 * An interactive **Crop** tool, a **compression** slider, *aggressive* / *backup*
@@ -163,7 +166,8 @@ released build needs nothing installed). Exceptions: reading **AVIF** files on
 Linux and Windows decodes them with `ffmpeg` (macOS uses its built-in `sips`;
 writing AVIF is pure Rust everywhere), and HEIC input is macOS-only. A few extras are optional: `ghostscript`
 (PDF `extract-pages`), `heif-enc`/`cjxl` (HEIC/JXL conversion), `gifski`
-(higher-quality video→GIF), `exiftool` (metadata).
+(higher-quality video→GIF), `exiftool` (removing metadata from TIFF, AVIF and
+JXL, and HEIC outside macOS).
 
 When running the CLI or from source, xpress finds a tool in this order:
 `$XPRESS_BIN_DIR/<tool>` → a `bin/` dir next to the executable → the per-user

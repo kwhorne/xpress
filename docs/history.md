@@ -18,7 +18,8 @@ switch on *Clipboard history* in **Preferences**. From then on, xpress records:
 - **What you copy** in any app: text, links, code, colours, images, and files
   copied in Finder.
 - **New screenshots** (⌘⇧3, ⌘⇧4, ⌘⇧5), from the folder macOS saves them to.
-  Screenshots copied straight to the clipboard (⌃⌘⇧4) are recorded as images.
+  Screenshots copied straight to the clipboard (⌃⌘⇧4) are recorded as images,
+  and those taken with xpress (⇧⌘2) once they're marked up and copied.
 
 Only what you copy *after* turning it on is recorded; your existing files and
 screenshots aren't imported.
@@ -64,6 +65,7 @@ line, and *kind · app · when · size*. Copying a clip again moves it to the to
 |------|------|
 | Copy | Put it on the clipboard |
 | Copy text in image | Copy the words recognised in a screenshot or image |
+| Mark up… | Draw arrows, boxes, text or redactions on an image clip; the result is copied (see [Take screenshot](gui.md#take-screenshot)) |
 | Apple Intelligence ▸ | Summarise, proofread or rewrite the text (see [below](#apple-intelligence)) |
 | Open link | Open a link clip in your browser |
 | Show items | For a multi-clip: list what's in it (← Back returns) |

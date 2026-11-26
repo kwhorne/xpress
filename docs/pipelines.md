@@ -30,7 +30,7 @@ in the [desktop app](gui.md). The [common options](cli.md#common-options)
 | `downscale` | `factor:` (`0.5` or `50%`) | images, video | Scale down, keeping the aspect ratio |
 | `crop` | `width:`, `height:`, `longEdge:`, `ratio:` (`16:9`), `smart: true` | images, video | Resize/crop — same rules as [`xpress crop`](resizing-and-cropping.md) |
 | `watermark` | `image:`, `position:`, `opacity:`, `scale:` | images, video | Overlay a logo (see below) |
-| `stripExif` | — | images | Remove metadata without re-encoding (AVIF/JXL need `exiftool`; HEIC/TIFF too outside macOS) |
+| `stripExif` | — | images | Remove metadata without re-encoding (TIFF/AVIF/JXL need `exiftool`; HEIC too outside macOS) |
 | `removeAudio` | — | video | Drop the audio track |
 | `changeSpeed` | `factor:` (0.25–8) | video | `2.0` = twice as fast; audio follows |
 | `capFps` | `fps:` | video | Limit the frame rate |

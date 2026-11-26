@@ -6,6 +6,34 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **Strip metadata on TIFF** no longer keeps the camera, software, artist,
+  owner, serial number, copyright and dates. On macOS, TIFF goes through
+  exiftool again (ImageIO keeps a TIFF's own tags); and exiftool, on every
+  system, now also clears the TIFF's first IFD, which `-all=` leaves alone.
+  HEIC still uses ImageIO, and the result is now checked to hold nothing but
+  the image's layout and orientation.
+- **Remove location** also removes the IPTC content location and country
+  code, and the IPTC Extension's *location created* / *location shown*, in
+  JPEG, PNG, WebP, HEIC and (through exiftool) other formats.
+- A JPEG whose Photoshop block gains a pad byte when rewritten no longer
+  fails to strip (multi-picture offsets can now move both ways).
+- **Redact** in Mark up… covers at least what the preview shows at full size;
+  shapes start where the mouse was pressed, not a few points later.
+- **Pixelate** no longer leaves a thin, barely-changed strip at the edges,
+  and transparent pixels no longer darken it.
+- A mark-up whose copy fails opens again with its marks instead of losing
+  the screenshot. A crop still loading no longer pops up after you've moved
+  on, and ⇧⌘2 brings back an open crop instead of discarding it.
+- A grey or CMYK colour profile is no longer attached to a marked-up (RGB)
+  image.
+- After upgrading, a new default shortcut that one of yours already uses
+  starts off instead of failing to register.
+
+### Changed
+- CI: `cargo audit` installs a prebuilt cargo-audit; new tests remove
+  a TIFF's metadata through the real exiftool.
+
 ## [1.1.2] - 2026-11-25
 
 Old clipboard images are cleaned up.

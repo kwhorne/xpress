@@ -72,6 +72,30 @@ pub fn block_size(width: u32, height: u32) -> f32 {
     (width.min(height) as f32 / 40.0).max(12.0)
 }
 
+/// The corners of the box between `a` and `b`, moved outwards onto the pixel
+/// grid of an image `size` big. The mark-up editor snaps redact and pixelate
+/// boxes to its preview's pixels: the preview then shows exactly the area,
+/// and the full-size image, whose pixels are smaller, covers at least that.
+pub fn snap_box(a: Point, b: Point, size: (u32, u32)) -> (Point, Point) {
+    let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
+    let lo = |u: f32, v: f32, n: f32| ((u.min(v) * n).floor() / n).clamp(0.0, 1.0);
+    let hi = |u: f32, v: f32, n: f32| ((u.max(v) * n).ceil() / n).clamp(0.0, 1.0);
+    (
+        Point::new(lo(a.x, b.x, w), lo(a.y, b.y, h)),
+        Point::new(hi(a.x, b.x, w), hi(a.y, b.y, h)),
+    )
+}
+
+/// Whether every coordinate of the mark is a finite number.
+fn is_finite(mark: &Mark) -> bool {
+    let ok = |p: &Point| p.x.is_finite() && p.y.is_finite();
+    match mark {
+        Mark::Arrow { from, to, .. } => ok(from) && ok(to),
+        Mark::Rect { a, b, .. } | Mark::Redact { a, b } | Mark::Pixelate { a, b } => ok(a) && ok(b),
+        Mark::Text { at, .. } => ok(at),
+    }
+}
+
 /// Draw `marks` into `img`, in order. Text needs `font`; without one, text
 /// marks are skipped.
 pub fn render(img: &mut RgbaImage, marks: &[Mark], font: Option<&FontArc>) {
@@ -88,9 +112,16 @@ pub fn render_for(img: &mut RgbaImage, marks: &[Mark], font: Option<&FontArc>, f
         return;
     }
     let k = w as f32 / full.0 as f32;
-    let px = |p: Point| (p.x * w as f32, p.y * h as f32);
+    // Far outside the image is as good as just outside it, and keeps the
+    // maths below from overflowing.
+    let px = |p: Point| {
+        (
+            p.x.clamp(-1.0, 2.0) * w as f32,
+            p.y.clamp(-1.0, 2.0) * h as f32,
+        )
+    };
     let stroke = stroke_width(full.0, full.1) * k;
-    for mark in marks {
+    for mark in marks.iter().filter(|m| is_finite(m)) {
         match mark {
             Mark::Arrow { from, to, color } => arrow(img, px(*from), px(*to), stroke, *color),
             Mark::Rect { a, b, color } => {
@@ -135,9 +166,9 @@ pub fn render_for(img: &mut RgbaImage, marks: &[Mark], font: Option<&FontArc>, f
     }
 }
 
-/// Mark up the image at `src` (upright) and write it as a PNG to `out`. The
-/// colour profile stays — a Mac's screenshots are in Display P3 — but no
-/// other metadata.
+/// Mark up the image at `src` (upright) and write it as an 8-bit RGBA PNG to
+/// `out`. An RGB colour profile stays — a Mac's screenshots are in Display
+/// P3 — but no other metadata.
 pub fn annotate_file(
     src: &Path,
     out: &Path,
@@ -148,7 +179,8 @@ pub fn annotate_file(
     let mut img = img.to_rgba8();
     render(&mut img, marks, font);
     let meta = crate::image::Meta {
-        icc: meta.icc,
+        // The pixels are now RGB: a grey or CMYK profile wouldn't fit them.
+        icc: meta.icc.filter(|icc| icc.get(16..20) == Some(b"RGB ")),
         exif: None,
         xmp: None,
     };
@@ -185,7 +217,7 @@ pub fn system_font() -> Option<FontArc> {
 /// in its (meaningless) black.
 fn blend(img: &mut RgbaImage, x: u32, y: u32, color: Color, coverage: f32) {
     let a = coverage.clamp(0.0, 1.0) * color[3] as f32 / 255.0;
-    if a <= 0.0 {
+    if a.is_nan() || a <= 0.0 {
         return;
     }
     let p = img.get_pixel_mut(x, y);
@@ -293,35 +325,59 @@ fn arrow(img: &mut RgbaImage, from: (f32, f32), to: (f32, f32), width: f32, colo
 }
 
 /// The whole pixels between two corners, rounded outwards, or `None` when
-/// that is empty.
+/// that is empty. A corner a rounding error away from a pixel edge counts as
+/// on it, so a box snapped to a preview's grid ([`snap_box`]) isn't widened
+/// there by a pixel the full image doesn't get.
 fn pixel_box(img: &RgbaImage, p: (f32, f32), q: (f32, f32)) -> Option<(u32, u32, u32, u32)> {
+    const EPS: f32 = 1e-3;
     let (w, h) = img.dimensions();
-    let x0 = p.0.min(q.0).floor().clamp(0.0, w as f32) as u32;
-    let y0 = p.1.min(q.1).floor().clamp(0.0, h as f32) as u32;
-    let x1 = p.0.max(q.0).ceil().clamp(0.0, w as f32) as u32;
-    let y1 = p.1.max(q.1).ceil().clamp(0.0, h as f32) as u32;
+    let x0 = (p.0.min(q.0) + EPS).floor().clamp(0.0, w as f32) as u32;
+    let y0 = (p.1.min(q.1) + EPS).floor().clamp(0.0, h as f32) as u32;
+    let x1 = (p.0.max(q.0) - EPS).ceil().clamp(0.0, w as f32) as u32;
+    let y1 = (p.1.max(q.1) - EPS).ceil().clamp(0.0, h as f32) as u32;
     (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
 }
 
-/// Replace each `block`×`block` square of the area with its average colour.
+/// Where the block starting at `start` ends: `block` on, or at `end` when
+/// less than half a block would be left over (a sliver of a block would keep
+/// most of what it covers).
+fn block_end(start: u32, end: u32, block: u32) -> u32 {
+    let next = start.saturating_add(block);
+    if next >= end || end - next < block.div_ceil(2) {
+        end
+    } else {
+        next
+    }
+}
+
+/// Replace each `block`×`block` square of the area with its average colour
+/// (weighted by alpha, so transparent pixels don't darken it).
 fn pixelate(img: &mut RgbaImage, (x0, y0, x1, y1): (u32, u32, u32, u32), block: u32) {
     let mut by = y0;
     while by < y1 {
-        let ey = (by + block).min(y1);
+        let ey = block_end(by, y1, block);
         let mut bx = x0;
         while bx < x1 {
-            let ex = (bx + block).min(x1);
-            let mut sum = [0u64; 4];
+            let ex = block_end(bx, x1, block);
+            // Colour premultiplied by alpha, and alpha.
+            let (mut sum, mut alpha) = ([0u64; 3], 0u64);
             for y in by..ey {
                 for x in bx..ex {
                     let p = img.get_pixel(x, y);
-                    for i in 0..4 {
-                        sum[i] += p[i] as u64;
+                    let a = p[3] as u64;
+                    for i in 0..3 {
+                        sum[i] += p[i] as u64 * a;
                     }
+                    alpha += a;
                 }
             }
             let n = ((ex - bx) * (ey - by)) as u64;
-            let avg = image::Rgba(sum.map(|s| (s / n) as u8));
+            let avg = if alpha == 0 {
+                image::Rgba([0, 0, 0, 0])
+            } else {
+                let [r, g, b] = sum.map(|s| ((s + alpha / 2) / alpha) as u8);
+                image::Rgba([r, g, b, ((alpha + n / 2) / n) as u8])
+            };
             for y in by..ey {
                 for x in bx..ex {
                     img.put_pixel(x, y, avg);
@@ -562,7 +618,9 @@ mod tests {
     fn the_colour_profile_stays() {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("p3.png");
-        let profile = b"fake ICC profile bytes".to_vec();
+        // An ICC header says its colour space at bytes 16..20.
+        let mut profile = vec![0u8; 128];
+        profile[16..20].copy_from_slice(b"RGB ");
         let mut enc_out = Vec::new();
         {
             use image::ImageEncoder;
@@ -576,7 +634,108 @@ mod tests {
         let out = dir.path().join("out.png");
         annotate_file(&src, &out, &[], None).unwrap();
         let (_, meta) = crate::image::load(&out).unwrap();
-        assert_eq!(meta.icc, Some(profile));
+        assert_eq!(meta.icc, Some(profile.clone()));
+
+        // A grey profile doesn't describe RGB pixels: it goes.
+        profile[16..20].copy_from_slice(b"GRAY");
+        let mut enc_out = Vec::new();
+        {
+            use image::ImageEncoder;
+            let mut enc = image::codecs::png::PngEncoder::new(&mut enc_out);
+            enc.set_icc_profile(profile).unwrap();
+            enc.write_image(&[128u8; 16 * 16], 16, 16, image::ExtendedColorType::L8)
+                .unwrap();
+        }
+        std::fs::write(&src, enc_out).unwrap();
+        annotate_file(&src, &out, &[], None).unwrap();
+        let (_, meta) = crate::image::load(&out).unwrap();
+        assert_eq!(meta.icc, None);
+    }
+
+    #[test]
+    fn a_snapped_redaction_covers_at_full_size_what_the_preview_shows() {
+        let (full, preview) = ((4200, 2800), (1400, 933));
+        let (a, b) = snap_box(Point::new(0.2, 0.3), Point::new(0.5003, 0.6), preview);
+        let mark = Mark::Redact { a, b };
+        let mut small = RgbaImage::from_pixel(preview.0, preview.1, image::Rgba([255; 4]));
+        render_for(&mut small, std::slice::from_ref(&mark), None, full);
+        let mut big = RgbaImage::from_pixel(full.0, full.1, image::Rgba([255; 4]));
+        render(&mut big, &[mark], None);
+        let black = |img: &RgbaImage, x: u32, y: u32| img.get_pixel(x, y).0 == [0, 0, 0, 255];
+        // Every full-size pixel under a black preview pixel is black.
+        for py in 0..preview.1 {
+            for pxl in 0..preview.0 {
+                if black(&small, pxl, py) {
+                    let (x0, x1) = (pxl * 3, (pxl + 1) * 3);
+                    let y0 = (py as f32 * full.1 as f32 / preview.1 as f32) as u32;
+                    let y1 = (((py + 1) as f32 * full.1 as f32 / preview.1 as f32).ceil() as u32)
+                        .min(full.1);
+                    for y in y0..y1 {
+                        for x in x0..x1 {
+                            assert!(black(&big, x, y), "({x}, {y}) under ({pxl}, {py})");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pixelate_leaves_no_sliver_at_the_edge() {
+        // 13 px wide with 12 px blocks: one block, not 12 + a 1 px sliver.
+        let mut img = noise(480, 480);
+        let mark = Mark::Pixelate {
+            a: Point::new(0.0, 0.0),
+            b: Point::new(13.0 / 480.0, 1.0 / 480.0),
+        };
+        render(&mut img, &[mark], None);
+        assert_eq!(img.get_pixel(12, 0), img.get_pixel(0, 0));
+    }
+
+    #[test]
+    fn pixelate_ignores_the_colour_of_transparent_pixels() {
+        let mut img = RgbaImage::from_fn(24, 24, |x, _| {
+            if x % 2 == 0 {
+                image::Rgba([255, 255, 255, 255])
+            } else {
+                image::Rgba([0, 0, 0, 0])
+            }
+        });
+        let mark = Mark::Pixelate {
+            a: Point::new(0.0, 0.0),
+            b: Point::new(0.5, 0.5),
+        };
+        render(&mut img, &[mark], None);
+        let p = img.get_pixel(0, 0).0;
+        assert_eq!([p[0], p[1], p[2]], [255, 255, 255], "white, not grey");
+        assert_eq!(p[3], 128);
+    }
+
+    #[test]
+    fn nonsense_coordinates_draw_nothing_and_dont_panic() {
+        let mut img = RgbaImage::from_pixel(40, 40, image::Rgba([255; 4]));
+        let before = img.clone();
+        let marks = [
+            Mark::Rect {
+                a: Point::new(f32::NAN, 0.1),
+                b: Point::new(0.5, 0.5),
+                color: RED,
+            },
+            Mark::Redact {
+                a: Point::new(0.0, f32::INFINITY),
+                b: Point::new(0.5, 0.5),
+            },
+        ];
+        render(&mut img, &marks, None);
+        assert_eq!(img, before);
+        // Far away but finite: drawn as if just outside, no transparent holes.
+        let far = Mark::Arrow {
+            from: Point::new(-1e30, -1e30),
+            to: Point::new(0.5, 0.5),
+            color: RED,
+        };
+        render(&mut img, &[far], None);
+        assert!(img.pixels().all(|p| p[3] == 255));
     }
 
     #[test]

@@ -151,6 +151,7 @@ turn **xpress** on, and reopen xpress. Screenshots are macOS only.
 | Keep a backup | on | Save the original as `.<name>.orig` next to it. |
 | Strip metadata | off | Remove EXIF and XMP (camera, date, location). The colour profile is always kept. |
 | Remove location | off | Remove only *where* a photo or video was taken (GPS); keep everything else. See [Sharing and privacy](sharing-and-privacy.md). |
+| Keep clipboard images | 1 month | The copies of clipboard images, screenshots and mark-ups saved in `~/Pictures/xpress` (`clip-*`) are deleted after this long (1 day to *Forever*). The history keeps its own copy. |
 | Quality target | Off | For images: instead of the compression slider, find the **smallest file that still looks** visually lossless / high / medium / low. See [quality targets](optimising.md#quality-targets). |
 | Skip already-optimised files | on | Leave files xpress already optimised with these settings (instant, no extra quality loss). |
 | Aggressive by default | off | Start with the aggressive preset. |

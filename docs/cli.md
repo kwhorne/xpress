@@ -244,8 +244,8 @@ xpress strip-exif [-r] <ITEMS>...
 
 Removes metadata (EXIF, XMP, IPTC, comments) from images in place without
 re-encoding (keeps orientation and colour profile). JPEG, PNG and WebP need no
-extra tools, nor do HEIC and TIFF on macOS; AVIF and JXL (and HEIC/TIFF on
-Linux and Windows) need `exiftool`.
+extra tools, nor does HEIC on macOS; TIFF, AVIF and JXL (and HEIC on Linux and
+Windows) need `exiftool`.
 
 ## Information
 

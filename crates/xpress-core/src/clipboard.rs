@@ -34,7 +34,7 @@ pub fn png_data(path: &Path) -> Option<Vec<u8>> {
 }
 
 /// Put the file at `path` on the clipboard (see [`parts_for_file`]).
-/// Returns true on success; always false off macOS (see [`write`]).
+/// Returns true on success; always false off macOS (see [`write()`]).
 pub fn copy_file(path: &Path) -> bool {
     write(&parts_for_file(path))
 }
@@ -216,7 +216,7 @@ pub fn write(_parts: &[Part]) -> bool {
     false
 }
 
-/// [`write`] to a given pasteboard (tests use a private one).
+/// [`write()`] to a given pasteboard (tests use a private one).
 #[cfg(target_os = "macos")]
 pub fn write_to(pb: &objc2_app_kit::NSPasteboard, parts: &[Part]) -> bool {
     use objc2::rc::Retained;

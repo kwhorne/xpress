@@ -59,17 +59,19 @@ pub fn strip_file(src: &Path, out: &Path, strip: Strip) -> Result<bool, Optimise
     Ok(true)
 }
 
-/// HEIC, AVIF, TIFF, JXL, …: (macOS) ImageIO, or `exiftool` on a copy.
+/// HEIC, AVIF, TIFF, JXL, …: (macOS, HEIC) ImageIO, or `exiftool` on a copy.
 fn strip_with_exiftool(
     src: &Path,
     out: &Path,
     strip: Strip,
     ext: &str,
 ) -> Result<bool, OptimiseError> {
-    // ImageIO first (much quicker than starting exiftool); exiftool for
-    // what it can't write (AVIF, JXL).
+    // ImageIO first for HEIC (much quicker than starting exiftool). Not for
+    // TIFF: copying one keeps its own TIFF and EXIF tags (camera, owner,
+    // serial number) whatever the metadata option says. AVIF and JXL it
+    // can't write.
     #[cfg(target_os = "macos")]
-    if imageio::strip(src, out, strip).is_ok() {
+    if matches!(ext, "heic" | "heif") && imageio::strip(src, out, strip).is_ok() {
         return Ok(true);
     }
     if !tools::is_available(Tool::Exiftool) {
@@ -82,9 +84,16 @@ fn strip_with_exiftool(
     let tags: &[&str] = match strip {
         Strip::Keep => return Ok(false),
         // Delete everything, then copy the colour profile and orientation
-        // back from the original (`@`).
+        // back from the original (`@`). `-all=` leaves a TIFF's first IFD
+        // (the image's own) alone: `-CommonIFD0=` is exiftool's shortcut
+        // for its camera, software, artist, copyright, date and description
+        // tags, and a few more go by name. The layout tags stay.
         Strip::All => &[
             "-all=",
+            "-CommonIFD0=",
+            "-IFD0:HostComputer=",
+            "-IFD0:DocumentName=",
+            "-IFD0:PageName=",
             "-tagsFromFile",
             "@",
             "-icc_profile",
@@ -101,6 +110,12 @@ fn strip_with_exiftool(
             "-iptc:Sub-location=",
             "-iptc:Province-State=",
             "-iptc:Country-PrimaryLocationName=",
+            "-iptc:Country-PrimaryLocationCode=",
+            "-iptc:ContentLocationName=",
+            "-iptc:ContentLocationCode=",
+            "-xmp-iptcCore:CountryCode=",
+            "-xmp-iptcExt:LocationCreated=",
+            "-xmp-iptcExt:LocationShown=",
         ],
     };
     args.extend(tags.iter().map(Into::into));
@@ -168,7 +183,25 @@ mod imageio {
         "Iptc4xmpCore:CountryCode",
         "Iptc4xmpExt:LocationCreated",
         "Iptc4xmpExt:LocationShown",
+        // IPTC content location name and code, as ImageIO names them.
+        "Iptc4xmpCore:IIM2-026",
+        "Iptc4xmpCore:IIM2-027",
     ];
+
+    /// What may be left in an image's properties after removing everything:
+    /// its layout and orientation. Anything else (camera, owner, dates,
+    /// IPTC, maker notes) means the copy kept more than it should.
+    const BARE_TIFF: &[&str] = &[
+        "Orientation",
+        "TileWidth",
+        "TileLength",
+        "XResolution",
+        "YResolution",
+        "ResolutionUnit",
+        "Compression",
+        "PhotometricInterpretation",
+    ];
+    const BARE_EXIF: &[&str] = &["PixelXDimension", "PixelYDimension", "ColorSpace"];
 
     /// Copy `src` to `out` without the metadata `strip` asks to remove. The
     /// image data is copied, not re-encoded. `Err` when ImageIO can't, or
@@ -230,7 +263,52 @@ mod imageio {
             let _ = std::fs::remove_file(out);
             return Err("the location was still there".into());
         }
+        if strip == Strip::All && !is_bare(out) {
+            let _ = std::fs::remove_file(out);
+            return Err("metadata was still there".into());
+        }
         Ok(())
+    }
+
+    /// Whether no image in the file has more than [`BARE_TIFF`] and
+    /// [`BARE_EXIF`] in its metadata dictionaries. Unreadable counts as no.
+    fn is_bare(path: &Path) -> bool {
+        let Some(url) = CFURL::from_file_path(path) else {
+            return false;
+        };
+        // SAFETY: as above; property dictionaries have string keys.
+        unsafe {
+            let Some(source) = CGImageSource::with_url(&url, None) else {
+                return false;
+            };
+            (0..source.count()).all(|i| {
+                let Some(props) = source.properties_at_index(i, None) else {
+                    return false;
+                };
+                let props = props.cast_unchecked::<CFString, CFType>();
+                let (keys, values) = props.to_vecs();
+                keys.iter().zip(values).all(|(key, value)| {
+                    let key = key.to_string();
+                    // Plain values (size, depth, colour model) aren't metadata.
+                    if !key.starts_with('{') {
+                        return true;
+                    }
+                    let allowed = match key.as_str() {
+                        "{TIFF}" => BARE_TIFF,
+                        "{Exif}" => BARE_EXIF,
+                        _ => return false,
+                    };
+                    value
+                        .downcast_ref::<CFDictionary>()
+                        .map(|d| d.cast_unchecked::<CFString, CFType>().to_vecs().0)
+                        .is_some_and(|inner| {
+                            inner
+                                .iter()
+                                .all(|k| allowed.contains(&k.to_string().as_str()))
+                        })
+                })
+            })
+        }
     }
 
     /// The paths (`prefix:name`) of the top-level tags in `metadata`.
@@ -301,11 +379,15 @@ mod imageio {
         /// An iPhone-like HEIC: GPS, camera make, capture time, IPTC city,
         /// and a sideways orientation.
         fn heic_with_metadata(dir: &Path) -> std::path::PathBuf {
+            image_with_metadata(dir, "photo.heic", "public.heic")
+        }
+
+        fn image_with_metadata(dir: &Path, name: &str, uti: &str) -> std::path::PathBuf {
             let jpg = dir.join("src.jpg");
             image::RgbImage::from_fn(64, 48, |x, y| image::Rgb([x as u8 * 4, y as u8 * 5, 90]))
                 .save(&jpg)
                 .unwrap();
-            let heic = dir.join("photo.heic");
+            let heic = dir.join(name);
             unsafe {
                 let s = |v: &str| CFString::from_str(v);
                 let lat = CFNumber::new_f64(63.43);
@@ -334,7 +416,7 @@ mod imageio {
                     CGImageSource::with_url(&CFURL::from_file_path(&jpg).unwrap(), None).unwrap();
                 let dest = CGImageDestination::with_url(
                     &CFURL::from_file_path(&heic).unwrap(),
-                    &s("public.heic"),
+                    &s(uti),
                     1,
                     None,
                 )
@@ -363,6 +445,26 @@ mod imageio {
                     Some(s) => s.to_string(),
                     None => v.downcast_ref::<CFNumber>()?.as_i64()?.to_string(),
                 })
+            }
+        }
+
+        #[test]
+        fn a_tiff_that_keeps_its_own_tags_is_refused() {
+            // Copying a TIFF keeps its TIFF/EXIF tags: removing everything
+            // must not report success with the camera still in it.
+            let dir = tempfile::tempdir().unwrap();
+            let tiff = image_with_metadata(dir.path(), "photo.tiff", "public.tiff");
+            let out = dir.path().join("all.tiff");
+            assert!(strip(&tiff, &out, Strip::All).is_err());
+            assert!(!out.exists());
+            // And `strip_file` doesn't use ImageIO for it at all.
+            let out = dir.path().join("file.tiff");
+            match super::super::strip_file(&tiff, &out, Strip::All) {
+                Ok(_) => assert!(!std::fs::read(&out)
+                    .unwrap()
+                    .windows(7)
+                    .any(|w| w == b"TestCam")),
+                Err(e) => assert!(e.to_string().contains("exiftool"), "{e}"),
             }
         }
 
@@ -514,9 +616,10 @@ fn strip_jpeg(data: &[u8], strip: Strip) -> Option<Vec<u8>> {
     if let Some((orig_at, out_at)) = mpf {
         // Bytes removed between the MPF header and the image data shift the
         // secondary images; their offsets are relative to the MPF header.
-        let removed = (data.len() - orig_at) - (out.len() - out_at);
-        if removed > 0 {
-            patch_mpf_offsets(&mut out, out_at, removed as u32)?;
+        // (A rewritten APP13 can also grow by a pad byte.)
+        let shift = (out.len() - out_at) as i64 - (data.len() - orig_at) as i64;
+        if shift != 0 {
+            patch_mpf_offsets(&mut out, out_at, shift)?;
         }
     }
     Some(out)
@@ -612,9 +715,9 @@ fn iptc_without_location(data: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Subtract `shift` from every non-zero image offset in an MPF index whose
-/// TIFF header starts at `base`.
-fn patch_mpf_offsets(buf: &mut [u8], base: usize, shift: u32) -> Option<()> {
+/// Add `shift` (negative when bytes were removed) to every non-zero image
+/// offset in an MPF index whose TIFF header starts at `base`.
+fn patch_mpf_offsets(buf: &mut [u8], base: usize, shift: i64) -> Option<()> {
     let le = match buf.get(base..base + 2)? {
         b"II" => true,
         b"MM" => false,
@@ -649,7 +752,7 @@ fn patch_mpf_offsets(buf: &mut [u8], base: usize, shift: u32) -> Option<()> {
             let at = entries + j * 16 + 8;
             let off = rd32(buf, at)?;
             if off != 0 {
-                let new = off.checked_sub(shift)?;
+                let new = u32::try_from(i64::from(off) + shift).ok()?;
                 let b = if le {
                     new.to_le_bytes()
                 } else {
@@ -994,6 +1097,45 @@ mod tests {
     }
 
     #[test]
+    fn mpf_offsets_follow_a_segment_that_grows() {
+        // An APP13 whose odd-sized IPTC block lacks its pad byte gets one
+        // when rewritten: the output is longer after the MPF header.
+        let mut m = b"MPF\0II\x2a\0\x08\0\0\0".to_vec();
+        m.extend_from_slice(&1u16.to_le_bytes());
+        m.extend_from_slice(&0xB002u16.to_le_bytes());
+        m.extend_from_slice(&7u16.to_le_bytes());
+        m.extend_from_slice(&32u32.to_le_bytes());
+        m.extend_from_slice(&26u32.to_le_bytes());
+        m.extend_from_slice(&0u32.to_le_bytes());
+        m.resize(4 + 26, 0);
+        for off in [0u32, 5000] {
+            m.extend_from_slice(&[0; 8]);
+            m.extend_from_slice(&off.to_le_bytes());
+            m.extend_from_slice(&[0; 4]);
+        }
+        let caption = iptc(2, 120, b"Hi"); // 7 bytes
+        let mut p = PHOTOSHOP_HEADER.to_vec();
+        p.extend_from_slice(b"8BIM\x04\x04\0\0");
+        p.extend_from_slice(&(caption.len() as u32).to_be_bytes());
+        p.extend_from_slice(&caption); // no pad byte
+        let src = jpeg(&[]);
+        let mut data = src[..2].to_vec();
+        data.extend(jpeg_segment(0xE2, &m).unwrap());
+        data.extend(jpeg_segment(0xED, &p).unwrap());
+        data.extend_from_slice(&src[2..]);
+
+        let out = strip_jpeg(&data, Strip::Location).expect("rewritten");
+        assert!(has(&out, b"Hi"), "caption kept");
+        let hdr = out.windows(4).position(|w| w == b"MPF\0").unwrap() + 4;
+        let second = hdr + 26 + 16 + 8;
+        let shift = out.len() as i64 - data.len() as i64;
+        assert_eq!(
+            &out[second..second + 4],
+            &((5000 + shift) as u32).to_le_bytes()
+        );
+    }
+
+    #[test]
     fn mpf_offsets_follow_removed_bytes() {
         // MPF TIFF (LE) with one MP Entry list of two images.
         let mut m = b"II\x2a\0\x08\0\0\0".to_vec();
@@ -1011,7 +1153,7 @@ mod tests {
         }
         let mut buf = vec![0u8; 8];
         buf.extend_from_slice(&m);
-        patch_mpf_offsets(&mut buf, 8, 40).unwrap();
+        patch_mpf_offsets(&mut buf, 8, -40).unwrap();
         let second = 8 + 26 + 16 + 8;
         assert_eq!(&buf[second..second + 4], &960u32.to_le_bytes());
         let first = 8 + 26 + 8;
