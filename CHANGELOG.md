@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-11-26
+
+Fixes from a quality review: metadata removal, redaction, and mark-up.
+
 ### Fixed
 - **Strip metadata on TIFF** no longer keeps the camera, software, artist,
   owner, serial number, copyright and dates. On macOS, TIFF goes through
@@ -734,7 +738,8 @@ Intel), and the command line for macOS, Linux and now Windows.
 - xpress is an independent project under the MIT License, inspired by the
   functionality of Clop. It contains no Clop source code. See `NOTICE.md`.
 
-[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/kwhorne/xpress/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/kwhorne/xpress/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/kwhorne/xpress/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/kwhorne/xpress/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/kwhorne/xpress/compare/v1.0.3...v1.1.0
